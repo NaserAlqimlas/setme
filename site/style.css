@@ -130,6 +130,7 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .field { display: grid; gap: 4px; }
 .field > span { font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .roster-card.out { opacity: .55; }
+.fields .seg button { flex: 1 0 auto; padding: 4px 12px; }
 
 /* ---------- teams ---------- */
 .build-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
@@ -176,7 +177,7 @@ tbody tr:hover { background: var(--surface-2); }
   form.row > input, form.row > select { flex: 1 1 140px; }
   form.row > button, .build-bar > button { flex: 1 1 100%; }
   .seg button { min-height: 42px; }
-  .skill-row .seg button, .fields .seg button { min-width: 0; padding: 4px 2px; }
+  .skill-row .seg button, .fields .seg button { flex: 1 1 0; min-width: 0; padding: 4px 2px; }
   .skill-row { grid-template-columns: 1fr; gap: 4px; }
   .fields { display: grid; grid-template-columns: 1fr 1.7fr; }
   .fields .seg { width: 100%; }
