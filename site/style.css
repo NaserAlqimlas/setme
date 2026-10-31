@@ -94,6 +94,10 @@ button:disabled { opacity: .55; cursor: default; filter: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 3px 3px 12px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-weight: 600; font-size: .9rem; }
 .chip.off { opacity: .55; text-decoration: line-through; }
+.chip.plain { padding: 5px 12px; }
+.chip.plain.off { text-decoration: none; }
+textarea { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; color: inherit; resize: vertical; }
+textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
 .chip button { min-height: 30px; width: 30px; padding: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1; }
 .chip button:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); filter: none; }
 .progress { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
@@ -167,7 +171,7 @@ tbody tr:hover { background: var(--surface-2); }
   main { padding: 16px 12px 80px; }
   .page-head h2 { font-size: 1.9rem; }
   .card { padding: 14px; border-radius: 12px; }
-  input[type=text], input[type=email], input[type=password], input[type=search], select { font-size: 16px; }
+  input[type=text], input[type=email], input[type=password], input[type=search], select, textarea { font-size: 16px; }
   form.row > input, form.row > select { flex: 1 1 140px; }
   form.row > button, .build-bar > button { flex: 1 1 100%; }
   .seg button { min-height: 42px; }

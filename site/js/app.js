@@ -1,5 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 import { SKILLS, combineRatings } from './teams.mjs';
+import { matchPasted } from './paste.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -254,6 +255,33 @@ async function playersPage() {
     try { await q(sb.from('players').insert({ name: name.value.trim() })); toast('Added'); render(); }
     catch (err) { toast(err.message); }
   };
+  // Paste the WhatsApp list; matches show live, and nothing changes until "Set playing list".
+  const box = h('textarea', { rows: 5, placeholder: 'Paste the list from the WhatsApp group…', 'aria-label': 'Pasted list' });
+  const pasteResult = h('div');
+  const checkPaste = () => {
+    const { matched, waitlist, unmatched } = matchPasted(box.value, players);
+    if (!matched.length && !waitlist.length && !unmatched.length) return pasteResult.replaceChildren();
+    const apply = async () => {
+      try {
+        await q(sb.from('players').update({ playing: false }).eq('playing', true));
+        if (matched.length) await q(sb.from('players').update({ playing: true, active: true }).in('id', matched.map(m => m.player.id)));
+        toast(`${matched.length} players set as playing`); render();
+      } catch (err) { toast(err.message); }
+    };
+    pasteResult.replaceChildren(
+      h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, `${matched.length} matched`)),
+      h('div', { class: 'chips' }, matched.map(m => h('span', { class: 'chip plain', title: m.line }, m.player.name))),
+      waitlist.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' }, h('b', {}, `${waitlist.length} on the waitlist`), ' (not ticked)'),
+      waitlist.length > 0 && h('div', { class: 'chips' }, waitlist.map(m => h('span', { class: 'chip plain off', title: m.line }, m.player.name))),
+      unmatched.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' },
+        h('b', {}, `${unmatched.length} not recognized`), me.role === 'super' ? ' (ignored; add them as players first if they should count)' : ' (ignored)'),
+      unmatched.length > 0 && h('div', { class: 'chips' }, unmatched.map(l => h('span', { class: 'chip plain off' }, l))),
+      h('div', { class: 'row', style: 'margin-top:14px' },
+        h('button', { class: 'ball', onclick: apply, disabled: !matched.length }, `Set playing list (${matched.length})`),
+        h('span', { class: 'muted small' }, 'Replaces the current playing list.')));
+  };
+  box.addEventListener('input', checkPaste);
+
   const clearPlaying = async () => {
     if (!confirm('Untick everyone from the Playing list?')) return;
     try { await q(sb.from('players').update({ playing: false }).eq('playing', true)); render(); }
@@ -265,6 +293,10 @@ async function playersPage() {
     h('div', { class: 'card toolbar' },
       h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
       h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
+    h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Paste from WhatsApp'),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Paste the group\'s list to tick everyone who\'s playing.'))),
+      box, pasteResult),
     me.role === 'super' && h('form', { class: 'card row', onsubmit: add }, name, h('button', {}, 'Add player')),
     grid,
     h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team. Turn off "On roster" to hide a player without deleting their ratings.'));
