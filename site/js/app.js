@@ -12,7 +12,6 @@ const VALUES = [0, .25, .5, .75, 1];
 const PAGES = [
   { id: 'rate', label: 'Rate players', roles: ['rater', 'organizer', 'super'], view: ratePage },
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
-  { id: 'combos', label: 'Combos', roles: ['organizer', 'super'], view: combosPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
   { id: 'ratings', label: 'All ratings', roles: ['super'], view: ratingsPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
@@ -203,7 +202,7 @@ async function playersPage() {
   return h('div', {},
     h('h2', {}, 'Players'),
     h('div', { class: 'card row' },
-      h('form', { class: 'row', onsubmit: add }, name, h('button', {}, 'Add player')),
+      me.role === 'super' && h('form', { class: 'row', onsubmit: add }, name, h('button', {}, 'Add player')),
       countEl, h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
     h('div', { class: 'card scroll' }, stacked(h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Gender'), h('th', {}, 'Setting'), h('th', { class: 'num' }, 'Playing'), h('th', { class: 'num' }, 'On roster'))),
@@ -211,35 +210,52 @@ async function playersPage() {
     h('p', { class: 'muted' }, 'Setting: M = main setter (one per team), B = backup (at most one per team), N = not a setter. Untick "On roster" to hide a player without deleting their ratings.'));
 }
 
-// ---------- combos (organizers) ----------
-async function combosPage() {
-  const [players, combos] = await Promise.all([
-    q(sb.from('players').select('id,name').eq('active', true).order('name')),
-    q(sb.from('combos').select('id,player_a,player_b')),
-  ]);
-  const name = new Map(players.map(p => [p.id, p.name]));
-  const sel = () => h('select', {}, h('option', { value: '' }, 'Choose…'), players.map(p => h('option', { value: p.id }, p.name)));
-  const a = sel(), b = sel();
-  const add = async e => {
-    e.preventDefault();
-    if (!a.value || !b.value || a.value === b.value) return toast('Pick two different players');
-    try { await q(sb.from('combos').insert({ player_a: Number(a.value), player_b: Number(b.value) })); render(); }
-    catch (err) { toast(err.message); }
+// ---------- teams (organizers) ----------
+// Combos are set here, just before building. They're saved, so the next session starts from the last one's.
+function comboCard(playing, combos) {
+  const name = new Map(playing.map(p => [p.id, p.name]));
+  const card = h('div', { class: 'card' });
+  const draw = () => {
+    const sel = () => h('select', {}, h('option', { value: '' }, 'Choose…'), playing.map(p => h('option', { value: p.id }, p.name)));
+    const a = sel(), b = sel();
+    const add = async e => {
+      e.preventDefault();
+      if (!a.value || !b.value || a.value === b.value) return toast('Pick two different players');
+      try { combos.push(await q(sb.from('combos').insert({ player_a: Number(a.value), player_b: Number(b.value) }).select().single())); draw(); }
+      catch (err) { toast(err.message.includes('duplicate') ? 'That combo already exists' : err.message); }
+    };
+    const remove = async c => {
+      try { await q(sb.from('combos').delete().eq('id', c.id)); combos.splice(combos.indexOf(c), 1); draw(); }
+      catch (err) { toast(err.message); }
+    };
+    const clear = async () => {
+      if (!combos.length || !confirm('Remove all combos?')) return;
+      try { await q(sb.from('combos').delete().in('id', combos.map(c => c.id))); combos.length = 0; draw(); }
+      catch (err) { toast(err.message); }
+    };
+    const label = c => {
+      const out = [c.player_a, c.player_b].filter(id => !name.has(id));
+      return out.length ? h('span', { class: 'muted' }, `${name.get(c.player_a) ?? c.name_a} + ${name.get(c.player_b) ?? c.name_b} (skipped: not playing)`)
+        : `${name.get(c.player_a)} + ${name.get(c.player_b)}`;
+    };
+    card.replaceChildren(
+      h('div', { class: 'row' }, h('h3', {}, 'Combos'), h('button', { class: 'ghost', onclick: clear }, 'Clear all')),
+      h('p', { class: 'muted' }, 'Players who want to be on the same team this session.'),
+      h('form', { class: 'row', onsubmit: add }, a, '+', b, h('button', {}, 'Add combo')),
+      combos.length ? h('table', {}, h('tbody', {}, combos.map(c => h('tr', {}, h('td', {}, label(c)),
+        h('td', { class: 'num' }, h('button', { class: 'danger', onclick: () => remove(c) }, 'Remove'))))))
+        : h('p', { class: 'muted' }, 'No combos.'));
   };
-  const remove = async id => { await q(sb.from('combos').delete().eq('id', id)); render(); };
-  return h('div', {},
-    h('h2', {}, 'Combos'),
-    h('p', { class: 'muted' }, "Players who want to be on the same team. A combo is skipped when one of them isn't playing."),
-    h('form', { class: 'card row', onsubmit: add }, a, '+', b, h('button', {}, 'Add combo')),
-    h('div', { class: 'card' }, combos.length ? h('table', {}, h('tbody', {}, combos.map(c => h('tr', {},
-      h('td', {}, `${name.get(c.player_a) ?? '?'} + ${name.get(c.player_b) ?? '?'}`),
-      h('td', { class: 'num' }, h('button', { class: 'danger', onclick: () => remove(c.id) }, 'Remove'))))))
-      : h('p', { class: 'muted' }, 'No combos yet.')));
+  draw();
+  return card;
 }
 
-// ---------- teams (organizers) ----------
 async function teamsPage() {
-  const playing = await q(sb.from('players').select('id').eq('playing', true).eq('active', true));
+  const [playing, combos] = await Promise.all([
+    q(sb.from('players').select('id,name').eq('playing', true).eq('active', true).order('name')),
+    q(sb.from('combos').select('id,player_a,player_b,a:players!combos_player_a_fkey(name),b:players!combos_player_b_fkey(name)')),
+  ]);
+  for (const c of combos) { c.name_a = c.a?.name ?? '?'; c.name_b = c.b?.name ?? '?'; }
   const num = h('select', {}, [2, 3, 4, 5, 6].map(n => h('option', { value: n, selected: n === 4 }, `${n} teams`)));
   const useCombos = h('input', { type: 'checkbox', checked: true });
   const out = h('div');
@@ -252,6 +268,7 @@ async function teamsPage() {
   };
   return h('div', {},
     h('h2', {}, 'Teams'),
+    comboCard(playing, combos),
     h('div', { class: 'card row' }, h('span', {}, `${playing.length} playing`), num,
       h('label', { class: 'row' }, useCombos, 'Use combos'), btn),
     out);

@@ -75,11 +75,13 @@ create policy profiles_super_update on public.profiles for update to authenticat
   using (public.my_role() = 'super')
   with check (role in ('rater', 'organizer') or id = auth.uid());
 
--- players: everyone signed in can read; organizers and super manage.
+-- players: everyone signed in can read; organizers edit (playing, gender, setting); only super adds or deletes.
 create policy players_read on public.players for select to authenticated using (true);
-create policy players_write on public.players for all to authenticated
+create policy players_update on public.players for update to authenticated
   using (public.my_role() in ('organizer', 'super'))
   with check (public.my_role() in ('organizer', 'super'));
+create policy players_insert on public.players for insert to authenticated with check (public.my_role() = 'super');
+create policy players_delete on public.players for delete to authenticated using (public.my_role() = 'super');
 
 -- ratings: you read and write only your own; super reads all.
 create policy ratings_read on public.ratings for select to authenticated
