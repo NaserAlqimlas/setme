@@ -129,7 +129,6 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .fields { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
 .field { display: grid; gap: 4px; }
 .field > span { font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
-.roster-card.out { opacity: .55; }
 .fields .seg button { flex: 1 0 auto; padding: 4px 12px; }
 
 /* ---------- teams ---------- */

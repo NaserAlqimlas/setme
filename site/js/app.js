@@ -230,7 +230,7 @@ async function playersPage() {
   const grid = h('div', { class: 'grid' });
 
   const card = p => {
-    const el = h('div', { class: `card roster-card${p.active ? '' : ' out'}` });
+    const el = h('div', { class: 'card roster-card' });
     el.append(
       h('header', {}, avatar(p.name),
         h('input', { type: 'text', value: p.name, 'aria-label': 'Name', onchange: e => update(p, { name: e.target.value.trim() }) })),
@@ -239,8 +239,16 @@ async function playersPage() {
         h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, v => update(p, { setting: v }), `${p.name} setter role`))),
       h('div', { class: 'row' },
         toggle('Playing', p.playing, v => update(p, { playing: v })),
-        toggle('On roster', p.active, async v => { if (await update(p, { active: v }) === false) return false; el.classList.toggle('out', !v); })));
+        h('span', { class: 'grow' }),
+        me.role === 'super' && h('button', { class: 'danger sm', onclick: () => removePlayer(p) }, 'Delete')));
     return el;
+  };
+  const removePlayer = async p => {
+    if (!confirm(`Delete ${p.name}? Their ratings and combos are deleted too.`)) return;
+    try {
+      await q(sb.from('players').delete().eq('id', p.id));
+      players.splice(players.indexOf(p), 1); draw(); count(); toast(`${p.name} deleted`);
+    } catch (e) { toast(e.message); }
   };
   const draw = () => {
     const list = players.filter(p => p.name.toLowerCase().includes(search));
@@ -299,7 +307,7 @@ async function playersPage() {
       box, pasteResult),
     me.role === 'super' && h('form', { class: 'card row', onsubmit: add }, name, h('button', {}, 'Add player')),
     grid,
-    h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team. Turn off "On roster" to hide a player without deleting their ratings.'));
+    h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team.'));
 }
 
 // ---------- teams (organizers) ----------
