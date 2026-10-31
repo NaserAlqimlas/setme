@@ -114,15 +114,16 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .legend b { color: var(--fg); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .toolbar input[type=search] { flex: 1 1 200px; }
-.player-card { display: grid; gap: 8px; }
+.player-card { display: grid; gap: 8px; min-width: 0; }
 .player-card header { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .player-card header b { flex: 1; font-size: 1.02rem; }
-.skill-row { display: grid; grid-template-columns: 76px 1fr; align-items: center; gap: 8px; }
+.skill-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; }
 .skill-row > span { font-size: .8rem; font-weight: 700; color: var(--muted); }
-.skill-row .seg { width: 100%; }
+.skill-row .seg { width: 100%; min-width: 0; }
+.skill-row .seg button { min-width: 0; padding: 4px 2px; }
 
 /* ---------- players ---------- */
-.roster-card { display: grid; gap: 12px; }
+.roster-card { display: grid; gap: 12px; min-width: 0; }
 .roster-card header { display: flex; align-items: center; gap: 10px; }
 .roster-card header input { flex: 1; font-weight: 600; }
 .fields { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
