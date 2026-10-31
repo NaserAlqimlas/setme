@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <symbol id="ball" viewBox="0 0 32 32">
+    <circle cx="16" cy="16" r="14" fill="#ffc531" stroke="#1d3fbf" stroke-width="2.5"/>
+    <path d="M16 2c-2 6-1 12 4 16M30 17c-6-2-12 0-15 5M5 7c4 4 9 6 15 4" fill="none" stroke="#1d3fbf" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+  <use href="#ball"/>
+</svg>
