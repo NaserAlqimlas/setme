@@ -1,0 +1,4 @@
+# Seed files contain everyone's ratings
+private/
+node_modules/
+.netlify/
