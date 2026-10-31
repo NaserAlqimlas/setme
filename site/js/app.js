@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, combineRatings } from './teams.mjs';
+import { SKILLS, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 
@@ -187,15 +187,28 @@ async function ratePage() {
     const row = { ...Object.fromEntries(SKILLS.map(s => [s, null])), ...byPlayer.get(pid), [skill]: value };
     try {
       const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(SKILLS.map(s => [s, row[s]])) }).select().single());
-      byPlayer.set(pid, saved); progress(); toast('Saved');
+      byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); toast('Saved');
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
+  // Totals follow the doc's rule: U if any skill is unknown.
+  const totals = new Map();
   const card = p => {
     const r = byPlayer.get(p.id);
+    const totalEl = h('div', { class: 'totals' });
+    const paint = () => {
+      const row = byPlayer.get(p.id);
+      const known = row && SKILLS.every(s => row[s] != null);
+      const sk = known ? Object.fromEntries(SKILLS.map(s => [s, Number(row[s])])) : null;
+      totalEl.replaceChildren(
+        h('span', {}, h('small', {}, 'Total'), h('b', {}, known ? fmt(SKILLS.reduce((a, s) => a + sk[s], 0)) : 'U')),
+        h('span', {}, h('small', {}, 'Weighted'), h('b', {}, known ? fmt(weightedTotal(sk)) : 'U')));
+    };
+    totals.set(p.id, paint); paint();
     return h('div', { class: 'card player-card' },
       h('header', {}, avatar(p.name), h('b', {}, p.name), p.playing && h('span', { class: 'badge on' }, 'Playing')),
       SKILLS.map(s => h('div', { class: 'skill-row' }, h('span', {}, LABEL[s]),
-        seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))));
+        seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
+      totalEl);
   };
   const draw = () => {
     const list = players.filter(p => (!onlyPlaying || p.playing) && p.name.toLowerCase().includes(search));
@@ -459,6 +472,7 @@ async function ratingsPage() {
       const unknown = rid ? vals.some(v => v == null) : combined.get(p.id).raters === 0;
       return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing')), vals.map(v => h('td', { class: 'num' }, fmt(v))),
         h('td', { class: 'num' }, h('b', {}, unknown ? 'U' : fmt(vals.reduce((a, b) => a + b, 0)))),
+        h('td', { class: 'num' }, unknown ? 'U' : fmt(weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))))),
         h('td', { class: 'num' }, rid ? '' : `${combined.get(p.id).raters}`));
     }));
   };
@@ -467,7 +481,7 @@ async function ratingsPage() {
   return h('div', {},
     pageHead('All ratings', 'Only you can see this page.', view),
     h('div', { class: 'card scroll' }, stacked(h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Raters'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
       body))),
     h('div', { class: 'grid' },
       h('div', { class: 'card' },

@@ -120,6 +120,10 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .skill-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; }
 .skill-row > span { font-size: .8rem; font-weight: 700; color: var(--muted); }
 .skill-row .seg { width: 100%; min-width: 0; }
+.totals { display: flex; gap: 18px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px; }
+.totals span { display: flex; align-items: baseline; gap: 6px; }
+.totals small { font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.totals b { font: 700 1.35rem/1 var(--display); font-variant-numeric: tabular-nums; }
 .skill-row .seg button { flex: 1 1 0; min-width: 0; padding: 4px 2px; }
 
 /* ---------- players ---------- */
