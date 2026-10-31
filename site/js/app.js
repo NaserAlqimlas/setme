@@ -1,6 +1,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 import { SKILLS, combineRatings } from './teams.mjs';
 import { matchPasted } from './paste.mjs';
+import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -202,8 +203,53 @@ async function ratePage() {
   };
   progress(); draw();
 
+  // CSV import: preview first, save on confirm. Super can import on behalf of another rater.
+  const importBox = h('div');
+  const fileInput = h('input', { type: 'file', accept: '.csv,text/csv', hidden: true });
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    const { rows, unmatched, blank, errors } = readRatingsCsv(await file.text(), players);
+    let raterId = me.id;
+    const raterPick = me.role === 'super'
+      ? await q(sb.from('profiles').select('id,display_name').order('display_name')).then(ps =>
+        h('div', { class: 'field' }, h('span', {}, 'Import as'), h('select', { 'aria-label': 'Import as', onchange: e => { raterId = e.target.value; } },
+          ps.map(p => h('option', { value: p.id, selected: p.id === me.id }, p.id === me.id ? `${p.display_name} (me)` : p.display_name)))))
+      : null;
+    const apply = async () => {
+      try {
+        await q(sb.from('ratings').upsert(rows.map(r => ({ rater_id: raterId, player_id: r.player.id, ...r.values }))));
+        toast(`${rows.length} ratings imported`);
+        if (raterId === me.id) render(); else importBox.replaceChildren();
+      } catch (e) { toast(`Not imported: ${e.message}`); }
+    };
+    const list = (title, items, cls) => items.length > 0 && [
+      h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, title)),
+      h('div', { class: 'chips' }, items.map(t => h('span', { class: `chip plain ${cls}` }, t)))];
+    importBox.replaceChildren(h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Import CSV'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, file.name)),
+        h('button', { class: 'ghost sm', onclick: () => importBox.replaceChildren() }, 'Cancel')),
+      errors.map(e => h('p', { class: 'warn small' }, e)),
+      list(`${rows.length} players with ratings`, rows.map(r => r.player.name), ''),
+      list(`${blank.length} left blank (skipped)`, blank, 'off'),
+      list(`${unmatched.length} names not recognized (skipped)`, unmatched, 'off'),
+      h('div', { class: 'row', style: 'margin-top:14px; align-items:end' }, raterPick,
+        h('button', { class: 'ball', onclick: apply, disabled: !rows.length }, `Import ${rows.length} ratings`),
+        h('span', { class: 'muted small' }, 'Replaces existing ratings for these players. Empty cells and U count as unknown.'))));
+    importBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const downloadTemplate = () => {
+    const url = URL.createObjectURL(new Blob([ratingsTemplate(players)], { type: 'text/csv' }));
+    h('a', { href: url, download: 'setme-ratings-template.csv' }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   return h('div', {},
-    pageHead('Rate players', 'Only the site owner sees your ratings. Every tap saves.'),
+    pageHead('Rate players', 'Only the site owner sees your ratings. Every tap saves.',
+      h('button', { class: 'ghost sm', onclick: downloadTemplate }, 'CSV template'),
+      h('button', { class: 'ghost sm', onclick: () => fileInput.click() }, 'Import CSV'), fileInput),
+    importBox,
     h('div', { class: 'card' },
       h('div', { class: 'legend' },
         h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' inconsistent'),

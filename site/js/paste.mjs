@@ -11,6 +11,24 @@ function cleanLine(line) {
     .trim();
 }
 
+// Exact name, else the longest roster name the text starts with ("Abdullah Hamad" -> "Abdullah H"),
+// else the only roster name that starts with the text ("Fuwa" -> "Fuwaires").
+function lookup(key, roster) {
+  let hit = roster.find(r => r.key === key);
+  if (!hit) hit = roster.filter(r => key.startsWith(r.key)).sort((a, b) => b.key.length - a.key.length)[0];
+  if (!hit) {
+    const starts = roster.filter(r => r.key.startsWith(key));
+    if (starts.length === 1 && key.length >= 3) hit = starts[0];
+  }
+  return hit;
+}
+
+// One name -> player, or undefined.
+export function findPlayer(name, players) {
+  const key = compact(name);
+  return key ? lookup(key, players.map(p => ({ p, key: compact(p.name) })).filter(r => r.key))?.p : undefined;
+}
+
 // players: [{id, name}] -> { matched: [{line, player}], waitlist: [{line, player}], unmatched: [line] }
 // Everyone after a "Waitlist" line goes to waitlist instead of matched.
 export function matchPasted(text, players) {
@@ -22,14 +40,7 @@ export function matchPasted(text, players) {
     const key = compact(line);
     if (!key) continue;
     if (/^(wait\s*-?\s*list|waiting\s+list|reserves?)\b/i.test(line)) { target = waitlist; continue; }
-    // Exact name, else the longest roster name the line starts with ("Abdullah Hamad" -> "Abdullah H"),
-    // else the only roster name that starts with the line ("Fuwa" -> "Fuwaires").
-    let hit = roster.find(r => r.key === key);
-    if (!hit) hit = roster.filter(r => key.startsWith(r.key)).sort((a, b) => b.key.length - a.key.length)[0];
-    if (!hit) {
-      const starts = roster.filter(r => r.key.startsWith(key));
-      if (starts.length === 1 && key.length >= 3) hit = starts[0];
-    }
+    const hit = lookup(key, roster);
     if (!hit) { unmatched.push(line); continue; }
     if (seen.has(hit.p.id)) continue;
     seen.add(hit.p.id);

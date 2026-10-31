@@ -90,6 +90,9 @@ create policy ratings_insert on public.ratings for insert to authenticated with 
 create policy ratings_update on public.ratings for update to authenticated
   using (rater_id = auth.uid()) with check (rater_id = auth.uid());
 create policy ratings_delete on public.ratings for delete to authenticated using (rater_id = auth.uid());
+-- super can also import ratings on behalf of another rater (CSV import).
+create policy ratings_super_write on public.ratings for all to authenticated
+  using (public.my_role() = 'super') with check (public.my_role() = 'super');
 
 -- combos: organizers and super only.
 create policy combos_all on public.combos for all to authenticated
