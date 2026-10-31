@@ -24,6 +24,11 @@ const PAGES = [
 let session = null, me = null;
 // Arriving from an invite or reset link means a password needs setting.
 let mustSetPassword = /type=(invite|recovery)/.test(location.hash);
+// Invite/reset links carry a token that is only used when the person taps Continue (see netlify/functions/admin.mjs).
+const query = new URLSearchParams(location.search);
+let pendingLink = query.get('token_hash') ? { token_hash: query.get('token_hash'), type: query.get('type') === 'recovery' ? 'recovery' : 'invite' } : null;
+// Supabase reports expired or used links in the URL hash.
+let linkError = new URLSearchParams(location.hash.slice(1)).get('error_description');
 
 // ---------- helpers ----------
 function h(tag, attrs = {}, ...kids) {
@@ -111,13 +116,14 @@ window.addEventListener('hashchange', render);
 async function boot() {
   session = (await sb.auth.getSession()).data.session;
   if (session?.user?.user_metadata?.password_set !== true && session) mustSetPassword = true;
-  if (/access_token|type=/.test(location.hash)) history.replaceState(null, '', location.pathname);
+  if (/access_token|type=|error/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   render();
 }
 
 async function render() {
   const nav = document.getElementById('nav'), who = document.getElementById('who');
   nav.replaceChildren(); who.replaceChildren();
+  if (pendingLink) return app.replaceChildren(linkPage());
   if (!session) return app.replaceChildren(loginPage());
   if (mustSetPassword) return app.replaceChildren(passwordPage());
   try {
@@ -141,6 +147,21 @@ async function render() {
 
 const brand = () => h('div', { class: 'brand' }, document.querySelector('.brand svg').cloneNode(true), h('h1', {}, 'Set', h('span', {}, 'Me')));
 
+function linkPage() {
+  const invite = pendingLink.type === 'invite';
+  const msg = h('p', { class: 'muted small' }, invite ? "Tap Continue, then choose a password." : 'Tap Continue to choose a new password.');
+  const btn = h('button', { class: 'big' }, 'Continue');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const { data, error } = await sb.auth.verifyOtp({ token_hash: pendingLink.token_hash, type: pendingLink.type });
+    pendingLink = null;
+    history.replaceState(null, '', location.pathname);
+    if (error) { linkError = 'This link has expired or was already used. Ask the organizer for a new one.'; session = null; me = null; return render(); }
+    session = data.session; me = null; mustSetPassword = true; render();
+  };
+  return h('div', { class: 'login card' }, brand(), h('p', { class: 'tag' }, invite ? "You're invited to SetMe." : 'Reset your password.'), btn, msg);
+}
+
 function loginPage() {
   const email = h('input', { type: 'email', placeholder: 'Email', autocomplete: 'email', 'aria-label': 'Email' });
   const pw = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password', 'aria-label': 'Password' });
@@ -151,7 +172,9 @@ function loginPage() {
     if (error) return msg.replaceChildren(h('span', { class: 'warn' }, error.message));
     session = data.session; render();
   };
-  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Fair teams, every session.'), email, pw, h('button', { class: 'big' }, 'Sign in'), msg);
+  const err = linkError && h('p', { class: 'warn small' }, /expired|invalid|used/i.test(linkError) ? 'This link has expired or was already used. Ask the organizer for a new one.' : linkError);
+  linkError = null;
+  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Fair teams, every session.'), err, email, pw, h('button', { class: 'big' }, 'Sign in'), msg);
 }
 
 function passwordPage() {

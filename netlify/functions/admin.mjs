@@ -1,5 +1,7 @@
 // POST /.netlify/functions/admin  (super only)
 //   { action: 'invite', email, name }  -> { link }   invite link to send yourself (no email is sent)
+// Links point at the site, which only signs in when the person taps Continue. Link previews (WhatsApp etc.)
+// open links automatically, which would use up a one-time Supabase link before the person ever sees it.
 //   { action: 'reset', email }         -> { link }   password reset link
 //   { action: 'remove', id }           -> { ok }     delete the account and its ratings
 import { authAdmin, caller, json } from '../lib/supabase.mjs';
@@ -23,7 +25,9 @@ export default async (req) => {
           ...(body.action === 'invite' ? { data: { display_name: String(body.name || '').trim() || email.split('@')[0] } } : {}),
         }),
       });
-      return json({ link: res.action_link ?? res.properties?.action_link });
+      const hashed = res.hashed_token ?? res.properties?.hashed_token;
+      const type = body.action === 'invite' ? 'invite' : 'recovery';
+      return json({ link: hashed ? `${redirect_to}/?token_hash=${encodeURIComponent(hashed)}&type=${type}` : (res.action_link ?? res.properties?.action_link) });
     }
     if (body.action === 'remove') {
       if (body.id === me.id) return json({ error: "You can't remove yourself" }, 400);
