@@ -80,7 +80,7 @@ button:disabled { opacity: .55; cursor: default; filter: none; }
 
 /* Segmented buttons for picking one value. */
 .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; }
-.seg button { flex: 1; min-width: 40px; min-height: 36px; padding: 4px 8px; border-radius: 8px; background: transparent; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.seg button { flex: 1 0 auto; min-width: 40px; min-height: 36px; padding: 4px 8px; border-radius: 8px; background: transparent; color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
 .seg button:hover { color: var(--fg); filter: none; background: color-mix(in srgb, var(--fg) 7%, transparent); }
 .seg button[aria-pressed=true] { background: var(--primary); color: var(--primary-fg); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .seg button.u[aria-pressed=true] { background: var(--line-strong); color: var(--fg); }
@@ -120,12 +120,13 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .skill-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; }
 .skill-row > span { font-size: .8rem; font-weight: 700; color: var(--muted); }
 .skill-row .seg { width: 100%; min-width: 0; }
-.skill-row .seg button { min-width: 0; padding: 4px 2px; }
+.skill-row .seg button { flex: 1 1 0; min-width: 0; padding: 4px 2px; }
 
 /* ---------- players ---------- */
 .roster-card { display: grid; gap: 12px; min-width: 0; }
 .roster-card header { display: flex; align-items: center; gap: 10px; }
 .roster-card header input { flex: 1; font-weight: 600; }
+.roster-card header .grow { min-width: 0; overflow-wrap: anywhere; }
 .fields { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
 .field { display: grid; gap: 4px; }
 .field > span { font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }

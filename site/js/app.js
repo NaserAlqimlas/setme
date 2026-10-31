@@ -520,8 +520,9 @@ async function usersPage() {
       h('div', { class: 'row' },
         p.role === 'super' ? h('span', { class: 'badge set' }, 'Super') : seg([['rater', 'Rater'], ['organizer', 'Organizer']], p.role, v => setRole(p, v), `${p.display_name} role`),
         h('span', { class: 'grow' }),
-        h('button', { class: 'ghost sm', onclick: () => reset(p) }, 'Reset link'),
-        p.id !== me.id && h('button', { class: 'danger sm', onclick: () => remove(p) }, 'Remove'))))));
+        h('div', { class: 'row', style: 'gap:8px' },
+          h('button', { class: 'ghost sm', onclick: () => reset(p) }, 'Reset link'),
+          p.id !== me.id && h('button', { class: 'danger sm', onclick: () => remove(p) }, 'Remove')))))));
 }
 
 boot();
