@@ -1,4 +1,4 @@
-# Volleyball Teams
+# SetMe
 
 Invite-only site where people rate players, and organizers build balanced teams.
 
