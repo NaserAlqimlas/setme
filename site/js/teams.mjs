@@ -109,18 +109,23 @@ export function combineRatings(players, ratings) {
 export const weightedTotal = sk => SKILLS.reduce((a, s) => a + sk[s] * WEIGHTS[s], 0);
 
 // players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N', unrated?: bool}], skills: Map id -> {receiving..}
-// combos: [[idA, idB]]; pairs with someone not in `players` are skipped.
-export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
+// combos: [[idA, idB]] play together; apart: [[idA, idB]] must not share a team. Pairs with someone not in `players` are skipped.
+export function buildTeams({ players, skills, combos = [], apart = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
   const n = players.length, T = numTeams;
   if (n < T || n % T) throw new Error(`${n} players can't be split into ${T} equal teams`);
   const size = n / T;
   const idx = new Map(players.map((p, i) => [p.id, i]));
 
-  // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players.
-  const F = 10, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9;
+  // Keep-apart pairs: each gets its own field, 1 for both players, so a team scoring 2 on it has the pair together.
+  const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
+
+  // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players,
+  // then one per keep-apart pair.
+  const BASE = 10, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, F = BASE + apartUsed.length;
   const feat = players.map(p => {
     const sk = skills.get(p.id);
-    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated];
+    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated,
+      ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
   });
 
   // Combos lock players into units that always move together.
@@ -131,6 +136,11 @@ export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBud
     if (!idx.has(a) || !idx.has(b)) continue;
     parent[find(idx.get(a))] = find(idx.get(b));
     usedCombos.push([a, b]);
+  }
+  for (const [a, b] of apartUsed) {
+    if (find(idx.get(a)) === find(idx.get(b))) {
+      throw new Error(`${players[idx.get(a)].name} and ${players[idx.get(b)].name} are set to keep apart, but combos put them together`);
+    }
   }
   const groups = new Map();
   players.forEach((_, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(i); });
@@ -172,6 +182,7 @@ export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBud
     // Unrated players' numbers are guesses; spread them so no team stacks up several.
     const gu = Math.round(guHi - guLo);
     c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
+    for (let t = 0; t < T; t++) for (let f = BASE; f < F; f++) if (agg[t * F + f] > 1.5) c += 100;
     return c;
   }
 
@@ -241,9 +252,14 @@ export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBud
   const mains = players.filter(p => p.setting === 'M').length;
   if (mains < T) warnings.push(`Only ${mains} main setters for ${T} teams.`);
   if (restarts < maxRestarts) warnings.push(`Stopped after ${restarts} tries (time limit).`);
+  for (const [a, b] of apartUsed) {
+    if (picked.some(sol => sol.teams.some(t => t.includes(idx.get(a)) && t.includes(idx.get(b))))) {
+      warnings.push(`Couldn't keep ${players[idx.get(a)].name} and ${players[idx.get(b)].name} apart in every option.`);
+    }
+  }
 
   return {
-    restarts, warnings, combosUsed: usedCombos.length,
+    restarts, warnings, combosUsed: usedCombos.length, apartUsed: apartUsed.length,
     options: picked.map(sol => ({
       score: sol.cost,
       teams: sol.teams.map(t => describeTeam(t.map(i => players[i]), skills)),

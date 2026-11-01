@@ -14,7 +14,7 @@ export default async (req) => {
   const [players, ratings, combos] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=rater_id,player_id,receiving,hitting,hustle,serve,blocking'),
-    rest('combos?select=player_a,player_b'),
+    rest('combos?select=player_a,player_b,kind'),
   ]);
   if (me.role === 'super' && Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);
   const pick = me.role === 'super' && Array.isArray(raters) ? new Set(raters) : null;
@@ -27,7 +27,8 @@ export default async (req) => {
   try {
     result = buildTeams({
       players: playing, skills, numTeams: Number(numTeams),
-      combos: useCombos ? combos.map(c => [c.player_a, c.player_b]) : [],
+      combos: useCombos ? combos.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [],
+      apart: useCombos ? combos.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [],
       timeBudgetMs: 7000,
     });
   } catch (e) {

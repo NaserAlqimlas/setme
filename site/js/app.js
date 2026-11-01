@@ -402,38 +402,49 @@ async function playersPage() {
 
 // ---------- teams (organizers) ----------
 // Combos are set here, just before building. They're saved, so the next session starts from the last one's.
+// Pairs who play together (always same team) or apart (never same team). Saved, so they carry over between builds.
 function comboCard(playing, combos) {
   const name = new Map(playing.map(p => [p.id, p.name]));
   const card = h('div', { class: 'card' });
+  let kind = 'together';
   const draw = () => {
     const sel = label => h('select', { 'aria-label': label }, h('option', { value: '' }, 'Choose player'), playing.map(p => h('option', { value: p.id }, p.name)));
     const a = sel('First player'), b = sel('Second player');
     const add = async e => {
       e.preventDefault();
       if (!a.value || !b.value || a.value === b.value) return toast('Pick two different players');
-      try { combos.push(await q(sb.from('combos').insert({ player_a: Number(a.value), player_b: Number(b.value) }).select().single())); draw(); }
-      catch (err) { toast(err.message.includes('duplicate') ? 'That combo already exists' : err.message); }
+      const [x, y] = [Number(a.value), Number(b.value)];
+      if (combos.some(c => (c.player_a === x && c.player_b === y) || (c.player_a === y && c.player_b === x))) return toast('Those two are already paired');
+      try { combos.push(await q(sb.from('combos').insert({ player_a: x, player_b: y, kind }).select().single())); draw(); }
+      catch (err) { toast(err.message.includes('duplicate') ? 'Those two are already paired' : err.message); }
     };
     const remove = async c => {
       try { await q(sb.from('combos').delete().eq('id', c.id)); combos.splice(combos.indexOf(c), 1); draw(); }
       catch (err) { toast(err.message); }
     };
     const clear = async () => {
-      if (!combos.length || !confirm('Remove all combos?')) return;
+      if (!combos.length || !confirm('Remove all combos, together and apart?')) return;
       try { await q(sb.from('combos').delete().in('id', combos.map(c => c.id))); combos.length = 0; draw(); }
       catch (err) { toast(err.message); }
     };
     const chip = c => {
       const off = !name.has(c.player_a) || !name.has(c.player_b);
-      const text = `${name.get(c.player_a) ?? c.name_a} + ${name.get(c.player_b) ?? c.name_b}`;
-      return h('span', { class: `chip${off ? ' off' : ''}`, title: off ? 'Skipped: not everyone is playing' : null }, text,
+      const apart = c.kind === 'apart';
+      const text = `${name.get(c.player_a) ?? c.name_a} ${apart ? '≠' : '+'} ${name.get(c.player_b) ?? c.name_b}`;
+      return h('span', { class: `chip${apart ? ' apart' : ''}${off ? ' off' : ''}`, title: off ? 'Skipped: not everyone is playing' : null }, text,
         h('button', { type: 'button', 'aria-label': `Remove ${text}`, onclick: () => remove(c) }, '×'));
     };
+    const section = (title, list, empty) => h('div', { class: 'combo-section' },
+      h('h4', {}, title, h('span', { class: 'muted' }, ` ${list.length || ''}`)),
+      h('div', { class: 'chips' }, list.length ? list.map(chip) : h('span', { class: 'muted small' }, empty)));
     card.replaceChildren(
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Combos'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Players who want to be on the same team.')),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Combos'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Who should play together, and who shouldn\'t.')),
         combos.length > 0 && h('button', { class: 'ghost sm', onclick: clear }, 'Clear all')),
-      h('form', { class: 'row', onsubmit: add }, a, b, h('button', { class: 'ghost' }, 'Add combo')),
-      h('div', { class: 'chips', style: 'margin-top:12px' }, combos.length ? combos.map(chip) : h('span', { class: 'muted small' }, 'No combos.')));
+      h('form', { class: 'row combo-add', onsubmit: add }, a, b,
+        seg([['together', 'Together'], ['apart', 'Apart']], kind, v => { kind = v; }, 'Pair type'),
+        h('button', { class: 'ghost' }, 'Add')),
+      section('Play together', combos.filter(c => c.kind !== 'apart'), 'Nobody paired up.'),
+      section('Keep apart', combos.filter(c => c.kind === 'apart'), 'Nobody kept apart.'));
   };
   draw();
   return card;
@@ -442,7 +453,7 @@ function comboCard(playing, combos) {
 async function teamsPage() {
   const [playing, combos] = await Promise.all([
     q(sb.from('players').select('id,name').eq('playing', true).eq('active', true).order('name')),
-    q(sb.from('combos').select('id,player_a,player_b,a:players!combos_player_a_fkey(name),b:players!combos_player_b_fkey(name)')),
+    q(sb.from('combos').select('id,player_a,player_b,kind,a:players!combos_player_a_fkey(name),b:players!combos_player_b_fkey(name)')),
   ]);
   for (const c of combos) { c.name_a = c.a?.name ?? '?'; c.name_b = c.b?.name ?? '?'; }
   let numTeams = 4, useCombos = true;

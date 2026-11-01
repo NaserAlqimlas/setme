@@ -39,6 +39,8 @@ create table public.combos (
   id bigint generated always as identity primary key,
   player_a bigint not null references public.players on delete cascade,
   player_b bigint not null references public.players on delete cascade,
+  -- together: always on the same team; apart: never on the same team.
+  kind text not null default 'together' check (kind in ('together', 'apart')),
   check (player_a <> player_b),
   unique (player_a, player_b)
 );

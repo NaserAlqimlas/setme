@@ -97,6 +97,9 @@ button:disabled { opacity: .55; cursor: default; filter: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 3px 3px 12px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-weight: 600; font-size: .9rem; }
 .chip.off { opacity: .55; text-decoration: line-through; }
+.chip.apart { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--surface-2)); }
+.combo-section { margin-top: 14px; }
+.combo-section h4 { margin: 0 0 8px; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .chip.plain { padding: 5px 12px; }
 .chip.plain.off { text-decoration: none; }
 textarea { width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; color: inherit; resize: vertical; }
@@ -215,6 +218,8 @@ tbody tr:hover { background: var(--surface-2); }
   input[type=text], input[type=date], input[type=email], input[type=password], input[type=search], select, textarea { font-size: 16px; }
   form.row > input, form.row > select { flex: 1 1 140px; }
   form.row > button, .build-bar > button { flex: 1 1 100%; }
+  .combo-add .seg { flex: 1 1 100%; }
+  .combo-add .seg button { flex: 1 1 0; }
   .seg button { min-height: 42px; }
   .skill-row .seg button, .fields .seg button { flex: 1 1 0; min-width: 0; padding: 4px 2px; }
   .skill-row { grid-template-columns: 1fr; gap: 4px; }
