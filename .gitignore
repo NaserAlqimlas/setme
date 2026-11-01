@@ -3,3 +3,4 @@ private/
 node_modules/
 .netlify/
 .env
+__pycache__/

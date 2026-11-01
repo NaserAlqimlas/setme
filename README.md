@@ -1,68 +1,97 @@
 # SetMe
 
-Invite-only site where people rate players, and organizers build balanced teams.
+Invite-only site for a pickup volleyball group: people rate players, and organizers build balanced teams.
+Live at **https://setme.club** (also https://setme.netlify.app).
+
+How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Who can do what
 
 | Role | Can do |
 |---|---|
-| **rater** | Rate players (sees only their own ratings) |
-| **organizer** | Rate, plus manage players, combos and the Playing list, and build teams (sees lineups, never ratings) |
-| **super** | Everything, plus see all ratings, invite and remove people, set roles |
+| **rater** | Rate players on **Rate**; see their own ratings on **My ratings** |
+| **organizer** | Everything a rater can, plus **Players** (gender, setter role, who's playing, paste the WhatsApp list) and **Teams** (combos, build, share). Never sees anyone's ratings, not even in lineups |
+| **super** | Everything, plus add and delete players, **All ratings** (every rater, combined values, rater leans, disagreements), choose whose ratings a build uses, and **Users** (invite, reset links, roles, remove) |
 
-Ratings never reach an organizer's browser: teams are built on the server (`netlify/functions/build-teams.mjs`), and organizers get back names and setter marks only.
+## What's in the app
 
-## Layout
+- **Rate**: six buttons per skill (U, 0, .25, .5, .75, 1) for receiving, hitting, hustle, serve, blocking and consistency. Every tap saves. A rating guide slides in from the side (up from the bottom on phones) and jumps to the skill you're rating. Filters for this session's players and for players you haven't rated. CSV template and import; super can import on behalf of another rater.
+- **My ratings / All ratings**: sortable table (tap a column, or use Sort by on phones).
+- **Players**: paste the WhatsApp list to set who's playing (names after "Waitlist" are left out). Super adds a new player with a stand-in level (Beginner, Average, Strong) used until someone rates them.
+- **Teams**: combos for this build only (play together / keep apart, not saved), New players card for unrated players, number of teams, date, build. Each option can be copied as text or shared as a court-map image.
+- **Users** (super): create invite and password-reset links to send yourself, change roles, remove people.
 
-```
-site/                  the website (static, no build step)
-  config.js            your Supabase URL and public key   <- edit this
-  js/app.js            pages
-  js/teams.mjs         rating combining + team builder (also used by the server)
-  vendor/supabase.js   supabase-js 2.45.4, self-hosted
-netlify/functions/     build-teams (organizers), admin (super: invite/reset/remove)
-supabase/schema.sql    tables + security rules
-tools/make_seed.py     imports vb_skill.md
-tests/test_teams.mjs   checks the team builder against your real data
-private/               generated seed files (git-ignored: contains ratings)
-```
-
-## Setup
+## Setup from scratch
 
 ### 1. Supabase
 1. Create a project.
 2. **SQL Editor**: paste `supabase/schema.sql` and run it.
-3. **Authentication > Sign In / Providers**: turn **off** "Allow new users to sign up". Invites still work.
+3. **Authentication > Sign In / Providers**: turn **off** "Allow new users to sign up". Invite links still work.
 4. **Authentication > Users > Add user > Create new user**: your email and a password, tick **Auto Confirm**.
 5. **SQL Editor**: make yourself super:
    ```sql
    update profiles set role = 'super' where email = 'YOUR EMAIL';
    ```
-6. **SQL Editor**: paste and run `private/seed.sql` (players, gender, setting roles, playing list, combos).
-7. **SQL Editor**: run `private/seed_ratings.sql` to import the ratings from `vb_skill.md`. Your ratings import now. Reem's import only after she has an account and you've replaced `REEM_EMAIL` with her email, so it's fine to run it again later.
-8. **Project Settings > API**: copy the **Project URL**, the **anon / publishable** key and the **service_role / secret** key.
+6. Optional, to import players and ratings from `vb_skill.md`: run `tools/make_seed.py` (see below), then run `private/seed.sql`, and `private/seed_ratings.sql` once each rater has an account.
+7. **Project Settings > API Keys**: copy the **Project URL**, the **publishable** key and the **secret** key.
 
 ### 2. Site config
-Put the Project URL and anon/publishable key in `site/config.js`. Both are public by design.
+Put the Project URL and publishable key in `site/config.js`. Both are public by design.
 
 ### 3. GitHub + Netlify
-1. Push this folder to a **private** GitHub repo. `private/` is git-ignored.
-2. Netlify: **Add new site > Import from GitHub**, then pick the repo. Leave the build command empty; `netlify.toml` sets everything else.
+1. Push this folder to a **private** GitHub repo. `private/` and `.env` are git-ignored.
+2. Netlify: **Add new site > Import from GitHub**, pick the repo, leave the build command empty. `netlify.toml` sets the rest.
 3. **Site configuration > Environment variables**:
    - `SUPABASE_URL`: the Project URL
-   - `SUPABASE_SERVICE_ROLE_KEY`: the service_role / secret key (**never** put this in `site/`)
-4. Deploy. Copy the site URL (e.g. `https://vb-teams.netlify.app`).
-5. Back in Supabase, **Authentication > URL Configuration**: set **Site URL** to that address and add it under **Redirect URLs**.
+   - `SUPABASE_SERVICE_ROLE_KEY`: the **secret** key. Never put it in `site/` or in the repo.
+4. **Project configuration > General**: turn off the **Powered by Netlify badge** if you don't want it.
+5. Custom domain (optional): **Domain management > Add a domain**. If DNS is on Cloudflare, add `CNAME @ setme.netlify.app` and `CNAME www setme.netlify.app`, both **DNS only** (grey cloud), then let Netlify provision HTTPS.
+6. Back in Supabase, **Authentication > URL Configuration**: set **Site URL** to the site's address and add `https://YOUR-DOMAIN/**` under **Redirect URLs**.
 
 ### 4. Inviting people
-Sign in, go to **Users**, enter a name and email, and press **Create invite link**. Send the link yourself (e.g. on WhatsApp). No email is sent, which avoids Supabase's free email limits. They open it, choose a password, and from then on sign in with email + password. A forgotten password works the same way: press **Reset link** on their row.
+Go to **Users**, enter a name and email, press **Create invite link**, and send the link yourself (WhatsApp is fine). No email is sent, so Supabase's free email limits don't apply. The link opens SetMe; they tap **Continue** and choose a password. Forgotten password: **Reset link** on their card. The Continue step exists because WhatsApp's link preview opens links on its own and would use up a one-time link.
 
-## How teams are built
+## Upgrading an existing database
 
-- **Combining raters:** each rater is first adjusted for how generously they rate compared to the others on the same players (per skill, once they've rated 5+ shared players). Then all ratings are averaged. U is skipped; a skill nobody has rated counts as the group average.
-- **Weights:** receiving 1.5, hitting 1.25, serve 1, hustle .75, blocking .5.
-- **Rules:** one main setter (M) per team, at most one backup (B), women spread evenly, weak passers (receiving ≤ .25) spread, combos kept together, weighted totals within .25.
-- **Search:** up to 3,000 random starts improved by swaps (about half a second), and up to 3 distinct options returned.
+`schema.sql` is for new projects. A database set up before these features needs:
 
-The super's **All ratings** page shows each rater's ratings, the combined values, each rater's adjustment, and players the raters disagree on by a point or more.
+```sql
+alter table public.players add column if not exists tier text check (tier in ('beginner', 'average', 'strong'));
+alter table public.ratings add column if not exists consistency numeric(3,2) check (consistency in (0, .25, .5, .75, 1));
+drop table if exists public.combos;  -- combos are no longer saved
+```
+
+## Running it locally
+
+```
+# .env
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
+```
+
+Then:
+
+```
+npm install -g netlify-cli
+netlify login
+netlify link        # choose "current git remote origin", then the setme site
+netlify dev         # http://localhost:8888
+```
+
+Local runs use the **real** database. Building teams only reads, but ticking players, rating and so on change live data.
+
+## Tests
+
+```
+node tests/test_teams.mjs          # team builder on your real data (needs private/fixture.json)
+node tests/test_unknowns.mjs       # unrated players: inferred skills, levels, spreading
+node tests/test_raters.mjs         # rater leans with several raters
+node tests/test_setters.mjs        # setters spread when short
+node tests/test_apart.mjs          # keep-apart pairs
+node tests/test_consistency.mjs    # consistency: no effect on strength, spread across teams
+node tests/test_paste.mjs          # WhatsApp list matching
+node tests/test_csv.mjs PATH.csv   # ratings CSV import
+```
 
 ## Updating from vb_skill.md
 
@@ -70,3 +99,5 @@ The super's **All ratings** page shows each rater's ratings, the combined values
 python3 tools/make_seed.py ../vb_skill.md --rater "Nasser=YOUR EMAIL" --rater "Reem=REEM EMAIL"
 node tests/test_teams.mjs
 ```
+
+Writes `private/seed.sql` (players), `private/seed_ratings.sql` (each rater's ratings, matched by email) and `private/fixture.json` (for tests). Never commit `private/`: it holds ratings.

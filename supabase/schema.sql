@@ -1,5 +1,5 @@
 -- Run once in Supabase: SQL Editor > New query > paste > Run.
--- Roles: rater (rates players), organizer (also manages players, combos, the Playing list, builds teams),
+-- Roles: rater (rates players), organizer (also manages players and the Playing list, builds teams),
 -- super (everything, and the only role that can see ratings or manage users).
 
 create table public.profiles (
@@ -37,15 +37,7 @@ create table public.ratings (
   primary key (rater_id, player_id)
 );
 
-create table public.combos (
-  id bigint generated always as identity primary key,
-  player_a bigint not null references public.players on delete cascade,
-  player_b bigint not null references public.players on delete cascade,
-  -- together: always on the same team; apart: never on the same team.
-  kind text not null default 'together' check (kind in ('together', 'apart')),
-  check (player_a <> player_b),
-  unique (player_a, player_b)
-);
+-- Combos (play together / keep apart) aren't stored: they're set on the Teams page for each build.
 
 -- Every new auth user gets a profile; the name comes from the invite.
 create function public.handle_new_user() returns trigger
@@ -72,7 +64,6 @@ $$;
 alter table public.profiles enable row level security;
 alter table public.players  enable row level security;
 alter table public.ratings  enable row level security;
-alter table public.combos   enable row level security;
 
 -- profiles: see yourself; super sees and edits everyone but can't create another super.
 create policy profiles_read on public.profiles for select to authenticated
@@ -99,8 +90,3 @@ create policy ratings_delete on public.ratings for delete to authenticated using
 -- super can also import ratings on behalf of another rater (CSV import).
 create policy ratings_super_write on public.ratings for all to authenticated
   using (public.my_role() = 'super') with check (public.my_role() = 'super');
-
--- combos: organizers and super only.
-create policy combos_all on public.combos for all to authenticated
-  using (public.my_role() in ('organizer', 'super'))
-  with check (public.my_role() in ('organizer', 'super'));
