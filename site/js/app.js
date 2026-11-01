@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, TIERS, combineRatings, weightedTotal } from './teams.mjs';
+import { SKILLS, RATED, TIERS, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
@@ -10,8 +10,8 @@ let lockChain = Promise.resolve();
 const lock = (_name, _timeout, fn) => { const run = lockChain.then(fn, fn); lockChain = run.catch(() => {}); return run; };
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { lock } });
 const app = document.getElementById('app');
-const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', blocking: 'Blk' };
-const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking' };
+const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', blocking: 'Blk', consistency: 'Con' };
+const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking', consistency: 'Consistency' };
 const RATING_OPTIONS = [[null, 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
 const TIER_OPTIONS = TIERS.map(t => [t, t[0].toUpperCase() + t.slice(1)]);
 const TEAM_COLORS = ['#2f6fde', '#e8663a', '#18a36f', '#c99400', '#8b5cf6', '#d6407a'];
@@ -193,6 +193,56 @@ function passwordPage() {
 }
 
 // ---------- rate (everyone) ----------
+// What each skill means, and what each step of the scale looks like for it.
+const STEPS = ['0', '.25', '.5', '.75', '1'];
+const GUIDE = {
+  receiving: ['Passing serves and digging attacks up to the setter.',
+    'Can\'t control the ball; passes go anywhere.',
+    'Gets easy serves up, but often off target or out of play.',
+    'Gets most serves up, not always to the setter.',
+    'Usually passes to the setter, even off harder serves.',
+    'Passes tough serves right to the setter, every time.'],
+  hitting: ['Attacking the ball over the net.',
+    'Doesn\'t attack; just bumps or sets it over.',
+    'Swings at times, but mostly tips or pushes it over, with lots of errors.',
+    'Hits with some power, but with errors and easy balls.',
+    'Hits hard and with placement; usually a tough ball to dig.',
+    'Hits hard and smart, finds the floor, rarely errs.'],
+  hustle: ['Effort and movement: chasing balls, covering hitters, calling the ball.',
+    'Stands still and lets balls drop.',
+    'Moves for balls near them; rarely chases or calls.',
+    'Goes for the balls within reach.',
+    'Chases most balls, covers hitters, and calls the ball.',
+    'Chases everything, covers, dives, and talks.'],
+  serve: ['Getting serves in, and making them hard to pass.',
+    'Rarely gets it over the net.',
+    'Gets it in about half the time.',
+    'Reliably in, but easy to pass.',
+    'Almost always in, with some pace or placement that causes trouble.',
+    'Tough serves that win points, with few misses.'],
+  blocking: ['Going up at the net to stop or slow attacks.',
+    'Doesn\'t block.',
+    'Goes up now and then, but usually late or off the hitter.',
+    'Gets up and sometimes gets a touch.',
+    'Blocks well-timed and often gets a hand on it.',
+    'Reads the hitter, times it well, stuffs balls.'],
+  consistency: ['How steady they are from one day to the next. It doesn\'t add to their total; the most unpredictable players are spread across teams instead.',
+    'You never know which version shows up.',
+    'Good days and bad days, often in the same week.',
+    'Plays about the same, with the odd off day.',
+    'Rarely has an off day.',
+    'Same level every single time.'],
+};
+function ratingGuide() {
+  return h('details', { class: 'guide' }, h('summary', {}, 'What each rating means'),
+    h('p', { class: 'muted small' }, 'Rate each player against this group, not against volleyball players in general. Use U if you haven\'t seen enough to say.'),
+    h('div', { class: 'guide-grid' }, RATED.map(s => {
+      const [what, ...steps] = GUIDE[s];
+      return h('div', { class: 'guide-item' }, h('h4', {}, LABEL[s]), h('p', {}, what),
+        h('dl', {}, steps.flatMap((text, i) => [h('dt', {}, STEPS[i]), h('dd', {}, text)])));
+    })));
+}
+
 async function ratePage() {
   const [players, mine] = await Promise.all([
     q(sb.from('players').select('id,name,playing').eq('active', true).order('name')),
@@ -209,9 +259,9 @@ async function ratePage() {
   };
 
   const save = async (pid, skill, value) => {
-    const row = { ...Object.fromEntries(SKILLS.map(s => [s, null])), ...byPlayer.get(pid), [skill]: value };
+    const row = { ...Object.fromEntries(RATED.map(s => [s, null])), ...byPlayer.get(pid), [skill]: value };
     try {
-      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(SKILLS.map(s => [s, row[s]])) }).select().single());
+      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(RATED.map(s => [s, row[s]])) }).select().single());
       byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); toast('Saved');
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
@@ -231,7 +281,7 @@ async function ratePage() {
     totals.set(p.id, paint); paint();
     return h('div', { class: 'card player-card' },
       h('header', {}, avatar(p.name), h('b', {}, p.name), p.playing && h('span', { class: 'badge on' }, 'Playing')),
-      SKILLS.map(s => h('div', { class: 'skill-row' }, h('span', {}, LABEL[s]),
+      RATED.map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}` }, h('span', {}, LABEL[s]),
         seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
       totalEl);
   };
@@ -291,9 +341,10 @@ async function ratePage() {
     importBox,
     h('div', { class: 'card' },
       h('div', { class: 'legend' },
-        h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' inconsistent'),
+        h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' below average'),
         h('span', {}, h('b', {}, '.5'), ' average/consistent'), h('span', {}, h('b', {}, '.75'), ' excels'),
         h('span', {}, h('b', {}, '1'), ' top of the group'), h('span', {}, h('b', {}, 'U'), " don't know")),
+      ratingGuide(),
       h('div', { class: 'progress', style: 'margin:14px 0 6px' }, bar), countEl,
       h('div', { class: 'toolbar', style: 'margin-top:10px' },
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
@@ -620,15 +671,15 @@ async function ratingsPage() {
     const mine = new Map(ratings.filter(r => r.rater_id === rid).map(r => [r.player_id, r]));
     // Combined: nobody has rated them. One rater: that rater left at least one skill as U.
     const rows = players.map(p => {
-      const vals = rid ? SKILLS.map(s => mine.get(p.id)?.[s] ?? null).map(v => v == null ? null : Number(v)) : SKILLS.map(s => combined.get(p.id).skills[s]);
-      return { p, vals, unknown: rid ? vals.some(v => v == null) : !!combined.get(p.id).guess };
+      const vals = rid ? RATED.map(s => mine.get(p.id)?.[s] ?? null).map(v => v == null ? null : Number(v)) : RATED.map(s => combined.get(p.id).skills[s]);
+      return { p, vals, unknown: rid ? vals.slice(0, SKILLS.length).some(v => v == null) : !!combined.get(p.id).guess };
     }).filter(r => !unratedOnly || r.unknown);
-    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: SKILLS.length + 4, class: 'muted' }, 'Everyone is rated.')));
+    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: RATED.length + 4, class: 'muted' }, 'Everyone is rated.')));
     body.replaceChildren(...rows.map(({ p, vals, unknown }) => {
       const guess = !rid && combined.get(p.id).guess;
       return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
         guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map(v => h('td', { class: 'num' }, fmt(v))),
-        h('td', { class: 'num' }, h('b', {}, unknown ? 'U' : fmt(vals.reduce((a, b) => a + b, 0)))),
+        h('td', { class: 'num' }, h('b', {}, unknown ? 'U' : fmt(vals.slice(0, SKILLS.length).reduce((a, b) => a + b, 0)))),
         h('td', { class: 'num' }, unknown ? 'U' : fmt(weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))))),
         h('td', { class: 'num' }, rid ? '' : `${combined.get(p.id).raters}`));
     }));
@@ -639,7 +690,7 @@ async function ratingsPage() {
     pageHead('All ratings', 'Only you can see this page.', view),
     h('div', { class: 'card toolbar' }, toggle('Unrated only', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), RATED.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
       body))),
     raterCard(raters, offsets, stats, short),
     disagreeCard(disagreements, short));
@@ -658,12 +709,12 @@ function raterCard(raters, offsets, stats, short) {
     const misses = SKILLS.map(s => st.miss[s]).filter(v => v != null);
     return h('tr', {},
       h('td', { title: short.full(rid) }, h('b', {}, short(rid))),
-      SKILLS.map(s => st.applied[s]
+      RATED.map(s => st.applied[s]
         ? h('td', { class: `num ${leanClass(o[s]) ?? ''}` }, signed(o[s]))
         : h('td', { class: 'num muted', title: 'Fewer than 5 shared ratings, so not adjusted yet' }, '—')),
       h('td', { class: `num ${overall == null ? 'muted' : leanClass(overall) ?? ''}` }, h('b', {}, overall == null ? '—' : signed(overall))),
       h('td', { class: 'num' }, misses.length ? fmt(avg(misses)) : '—'),
-      h('td', { class: 'num muted' }, String(Math.max(0, ...SKILLS.map(s => st.shared[s])))));
+      h('td', { class: 'num muted' }, String(Math.max(0, ...RATED.map(s => st.shared[s])))));
   });
   return h('div', { class: 'card' },
     h('h3', {}, 'How each rater rates'),
@@ -673,7 +724,7 @@ function raterCard(raters, offsets, stats, short) {
       'a high number means their ratings don\'t line up with everyone else\'s. ', h('b', {}, 'Shared'), ' is how many of their players someone else also rated; ',
       '— means fewer than 5, so no adjustment yet.'),
     rows.length ? h('div', { class: 'scroll' }, stacked(h('table', { class: 'rater-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Rater'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Rater'), RATED.map(s => h('th', { class: 'num' }, SHORT[s])),
         h('th', { class: 'num' }, 'Overall'), h('th', { class: 'num' }, 'Off by'), h('th', { class: 'num' }, 'Shared'))),
       h('tbody', {}, rows))))
       : h('p', { class: 'muted' }, 'No ratings yet.'));
@@ -691,8 +742,8 @@ function disagreeCard(disagreements, short) {
       }, `${short(t.rater_id)} ${fmt(t.total)}`))),
       h('details', {}, h('summary', {}, 'By skill (as entered)'),
         h('table', { class: 'mini' },
-          h('thead', {}, h('tr', {}, h('th', {}), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])))),
-          h('tbody', {}, d.totals.map(t => h('tr', {}, h('td', {}, short(t.rater_id)), SKILLS.map(s => h('td', { class: 'num' }, fmt(t.raw[s])))))))))))
+          h('thead', {}, h('tr', {}, h('th', {}), RATED.map(s => h('th', { class: 'num' }, SHORT[s])))),
+          h('tbody', {}, d.totals.map(t => h('tr', {}, h('td', {}, short(t.rater_id)), RATED.map(s => h('td', { class: 'num' }, fmt(t.raw[s])))))))))))
       : h('p', { class: 'muted' }, 'No player has raters a full point apart.'));
 }
 

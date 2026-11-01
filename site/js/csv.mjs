@@ -1,9 +1,10 @@
-// Read a ratings CSV: name,receiving,hitting,setting,hustle,serve,blocking (extra columns are ignored).
-import { SKILLS } from './teams.mjs';
+// Read a ratings CSV: name,receiving,hitting,setting,hustle,serve,blocking[,consistency] (extra columns are ignored).
+// Consistency is optional, so older files still import; without the column, saved consistency ratings are left alone.
+import { SKILLS, RATED } from './teams.mjs';
 import { findPlayer } from './paste.mjs';
 
 const VALID = [0, .25, .5, .75, 1];
-const ALIASES = { recieving: 'receiving', reception: 'receiving', passing: 'receiving', hit: 'hitting', attack: 'hitting', serving: 'serve', block: 'blocking', player: 'name' };
+const ALIASES = { consistent: 'consistency', consistancy: 'consistency', recieving: 'receiving', reception: 'receiving', passing: 'receiving', hit: 'hitting', attack: 'hitting', serving: 'serve', block: 'blocking', player: 'name' };
 
 // Minimal CSV: quoted fields, commas or semicolons (some Excel locales save with ';').
 export function parseCsv(text) {
@@ -44,7 +45,7 @@ export function readRatingsCsv(text, players) {
     if (!name) continue;
     const values = {};
     let bad = false;
-    for (const s of SKILLS) {
+    for (const s of RATED.filter(s => cols.includes(s))) {
       const raw = (line[cols.indexOf(s)] ?? '').trim();
       if (raw === '' || /^u$/i.test(raw)) { values[s] = null; continue; }
       const v = Number(raw.replace(',', '.'));
@@ -56,7 +57,7 @@ export function readRatingsCsv(text, players) {
     if (!player) { unmatched.push(name); continue; }
     if (seen.has(player.id)) { errors.push(`${name}: ${player.name} appears more than once; using the first row`); continue; }
     seen.add(player.id);
-    if (SKILLS.every(s => values[s] == null)) { blank.push(player.name); continue; }
+    if (Object.values(values).every(v => v == null)) { blank.push(player.name); continue; }
     rows.push({ player, values });
   }
   return { rows, unmatched, blank, errors };
@@ -65,5 +66,5 @@ export function readRatingsCsv(text, players) {
 // A blank template with every current player's name.
 export function ratingsTemplate(players) {
   const esc = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  return '\uFEFF' + ['name,receiving,hitting,setting,hustle,serve,blocking', ...players.map(p => `${esc(p.name)},,,,,,`)].join('\r\n') + '\r\n';
+  return '\uFEFF' + ['name,receiving,hitting,setting,hustle,serve,blocking,consistency', ...players.map(p => `${esc(p.name)},,,,,,,`)].join('\r\n') + '\r\n';
 }

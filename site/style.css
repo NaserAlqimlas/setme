@@ -99,6 +99,8 @@ button:disabled { opacity: .55; cursor: default; filter: none; }
 .chip.off { opacity: .55; text-decoration: line-through; }
 .chip.apart { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--surface-2)); }
 .combo-section { margin-top: 14px; }
+/* Consistency sits apart from the skills: it doesn't count toward the total. */
+.skill-row.trait { margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .combo-section h4 { margin: 0 0 8px; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .chip.plain { padding: 5px 12px; }
 .chip.plain.off { text-decoration: none; }
@@ -118,12 +120,29 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 /* ---------- rate ---------- */
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem; color: var(--muted); }
 .legend b { color: var(--fg); }
+/* "What each rating means": collapsed by default under the key. */
+.guide { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.guide summary { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 16px; border-radius: 10px; cursor: pointer;
+  font-weight: 700; font-size: 1rem; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); list-style: none; user-select: none; }
+.guide summary::-webkit-details-marker { display: none; }
+.guide summary::before { content: '▸'; font-size: 1.1rem; transition: transform .15s; }
+.guide[open] summary::before { transform: rotate(90deg); }
+.guide summary:hover { background: color-mix(in srgb, var(--primary) 18%, transparent); }
+.guide > p { margin: 10px 0 0; }
+.guide-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+.guide-item { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.guide-item h4 { margin: 0 0 2px; font-size: .9rem; }
+.guide-item p { margin: 0 0 8px; font-size: .85rem; color: var(--muted); }
+.guide-item dl { display: grid; grid-template-columns: 2.2em 1fr; gap: 3px 6px; margin: 0; font-size: .85rem; }
+.guide-item dt { font-weight: 700; }
+.guide-item dd { margin: 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .toolbar input[type=search] { flex: 1 1 200px; }
 .player-card { display: grid; gap: 8px; min-width: 0; }
 .player-card header { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .player-card header b { flex: 1; font-size: 1.02rem; }
-.skill-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; }
+.skill-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 8px; }
 .skill-row > span { font-size: .8rem; font-weight: 700; color: var(--muted); }
 .skill-row .seg { width: 100%; min-width: 0; }
 .totals { display: flex; gap: 18px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px; }

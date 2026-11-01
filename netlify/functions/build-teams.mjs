@@ -13,7 +13,7 @@ export default async (req) => {
   const { numTeams = 4, useCombos = true, check = false, raters = null } = await req.json().catch(() => ({}));
   const [players, ratings, combos] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
-    rest('ratings?select=rater_id,player_id,receiving,hitting,hustle,serve,blocking'),
+    rest('ratings?select=rater_id,player_id,receiving,hitting,hustle,serve,blocking,consistency'),
     rest('combos?select=player_a,player_b,kind'),
   ]);
   if (me.role === 'super' && Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);

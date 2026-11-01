@@ -3,6 +3,9 @@
 
 export const SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking'];
 export const WEIGHTS = { receiving: 1.5, hitting: 1.25, hustle: .75, serve: 1, blocking: .5 };
+// Everything raters rate. Consistency (how steady a player is day to day) isn't part of strength: it never adds to a
+// total, it only spreads the least steady players across teams.
+export const RATED = [...SKILLS, 'consistency'];
 // Stand-in levels for players nobody has rated: the group's lower quartile, average and upper quartile.
 export const TIERS = ['beginner', 'average', 'strong'];
 const MIN_RATINGS_FOR_OFFSET = 5; // a rater needs this many shared ratings in a skill before we adjust for them
@@ -19,7 +22,7 @@ export function combineRatings(players, ratings) {
   const offsets = new Map(raterIds.map(id => [id, {}]));
   // Per rater per skill: shared = ratings on players someone else also rated; miss = typical distance from the fit.
   const raters = new Map(raterIds.map(id => [id, { shared: {}, miss: {}, applied: {} }]));
-  for (const s of SKILLS) {
+  for (const s of RATED) {
     const entries = [];
     for (const [pid, rs] of byPlayer) {
       const vs = rs.filter(r => r[s] != null);
@@ -55,7 +58,7 @@ export function combineRatings(players, ratings) {
   const combined = new Map();
   for (const [pid, rs] of byPlayer) {
     const v = {}, unknown = [];
-    for (const s of SKILLS) {
+    for (const s of RATED) {
       const vals = rs.filter(r => r[s] != null).map(r => clamp(Number(r[s]) - (offsets.get(r.rater_id)?.[s] ?? 0)));
       v[s] = vals.length ? avg(vals) : null;
       if (!vals.length) unknown.push(s);
@@ -63,8 +66,8 @@ export function combineRatings(players, ratings) {
     combined.set(pid, { skills: v, unknown, raters: rs.length });
   }
   // Fill the gaps, using the group's spread on each skill among players who have a value.
-  const known = Object.fromEntries(SKILLS.map(s => [s, [...combined.values()].map(c => c.skills[s]).filter(v => v != null).sort((a, b) => a - b)]));
-  const mean = Object.fromEntries(SKILLS.map(s => [s, known[s].length ? avg(known[s]) : .5]));
+  const known = Object.fromEntries(RATED.map(s => [s, [...combined.values()].map(c => c.skills[s]).filter(v => v != null).sort((a, b) => a - b)]));
+  const mean = Object.fromEntries(RATED.map(s => [s, known[s].length ? avg(known[s]) : .5]));
   const tierValue = {
     beginner: s => quantile(known[s], .25) ?? .25,
     average: s => mean[s],
@@ -74,11 +77,14 @@ export function combineRatings(players, ratings) {
     const c = combined.get(p.id);
     c.guess = null;
     if (!c.unknown.length) continue;
+    // Unrated consistency counts as the group's normal; being good doesn't make someone steady.
+    if (c.skills.consistency == null) c.skills.consistency = mean.consistency;
     const have = SKILLS.filter(s => c.skills[s] != null);
+    if (have.length === SKILLS.length) continue;
     if (have.length) {
       // A skill nobody rated: assume they sit as far above or below the group as on the skills we know.
       const lift = avg(have.map(s => c.skills[s] - mean[s]));
-      for (const s of c.unknown) c.skills[s] = clamp(mean[s] + lift);
+      for (const s of SKILLS) if (c.skills[s] == null) c.skills[s] = clamp(mean[s] + lift);
     } else {
       // Nobody has rated them at all: use the tier picked for them, or a cautious Beginner.
       c.guess = TIERS.includes(p.tier) ? p.tier : 'beginner';
@@ -94,7 +100,7 @@ export function combineRatings(players, ratings) {
       .map(r => ({
         rater_id: r.rater_id,
         total: SKILLS.reduce((a, s) => a + clamp(Number(r[s]) - offsets.get(r.rater_id)[s]), 0),
-        raw: Object.fromEntries(SKILLS.map(s => [s, Number(r[s])])),
+        raw: Object.fromEntries(RATED.map(s => [s, r[s] == null ? null : Number(r[s])])),
       }))
       .sort((a, b) => b.total - a.total);
     if (totals.length < 2) continue;
@@ -120,11 +126,11 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
 
   // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players,
-  // then one per keep-apart pair.
-  const BASE = 10, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, F = BASE + apartUsed.length;
+  // inconsistent players, then one per keep-apart pair.
+  const BASE = 11, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, SHAKY = 10, F = BASE + apartUsed.length;
   const feat = players.map(p => {
     const sk = skills.get(p.id);
-    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated,
+    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
       ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
   });
 
@@ -167,7 +173,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
       for (let t = 0; t < T; t++) c += (agg[t * F + f] - cm) ** 2;
     }
     c += 50 * Math.max(0, hi - lo - .25) / .25;
-    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity;
+    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity, shHi = -Infinity, shLo = Infinity;
     for (let t = 0; t < T; t++) {
       const o = t * F;
       if (Math.round(agg[o + MAIN]) !== 1) c += 100;
@@ -175,6 +181,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
       wkHi = Math.max(wkHi, agg[o + WEAK]); wkLo = Math.min(wkLo, agg[o + WEAK]);
       woHi = Math.max(woHi, agg[o + WOMEN]); woLo = Math.min(woLo, agg[o + WOMEN]);
       guHi = Math.max(guHi, agg[o + GUESS]); guLo = Math.min(guLo, agg[o + GUESS]);
+      shHi = Math.max(shHi, agg[o + SHAKY]); shLo = Math.min(shLo, agg[o + SHAKY]);
     }
     const wk = Math.round(wkHi - wkLo);
     c += 20 * Math.max(0, wk - 1) + .5 * wk * wk;
@@ -182,6 +189,9 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
     // Unrated players' numbers are guesses; spread them so no team stacks up several.
     const gu = Math.round(guHi - guLo);
     c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
+    // Inconsistent players (consistency .25 or less) too, so no team leans on several on the same night.
+    const sh = Math.round(shHi - shLo);
+    c += 20 * Math.max(0, sh - 1) + .5 * sh * sh;
     for (let t = 0; t < T; t++) for (let f = BASE; f < F; f++) if (agg[t * F + f] > 1.5) c += 100;
     return c;
   }

@@ -31,6 +31,8 @@ create table public.ratings (
   hustle    numeric(3,2) check (hustle    in (0, .25, .5, .75, 1)),
   serve     numeric(3,2) check (serve     in (0, .25, .5, .75, 1)),
   blocking  numeric(3,2) check (blocking  in (0, .25, .5, .75, 1)),
+  -- How steady they are day to day. Not part of strength; the team builder spreads low ones out.
+  consistency numeric(3,2) check (consistency in (0, .25, .5, .75, 1)),
   updated_at timestamptz not null default now(),
   primary key (rater_id, player_id)
 );
