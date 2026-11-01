@@ -2,6 +2,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 import { SKILLS, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
+import { courtImage } from './courtimg.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -439,6 +440,8 @@ async function teamsPage() {
   for (const c of combos) { c.name_a = c.a?.name ?? '?'; c.name_b = c.b?.name ?? '?'; }
   let numTeams = 4, useCombos = true;
   const out = h('div');
+  const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
+  date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
   const btn = h('button', { class: 'ball big' }, 'Build teams');
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Building…';
@@ -451,9 +454,42 @@ async function teamsPage() {
     comboCard(playing, combos),
     h('div', { class: 'card build-bar' },
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
+      h('label', { class: 'field' }, h('span', {}, 'Date'), date),
       toggle('Use combos', true, v => { useCombos = v; }),
       h('span', { class: 'grow' }), btn),
     out);
+}
+
+let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
+const dayTitle = iso => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return iso ? new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : '';
+};
+
+// Rendered as soon as the teams show (and again when the date changes), so a tap can share straight away;
+// iOS drops the tap if we draw first.
+function shareButton(teams, i) {
+  let blob = null, ready, name, btn;
+  const prep = () => {
+    if (btn && !btn.isConnected) return document.removeEventListener('gamedate', prep);
+    name = `teams-${gameDate || 'lineup'}${i ? `-${i + 1}` : ''}.png`;
+    blob = null;
+    ready = courtImage(teams, { title: dayTitle(gameDate), colors: TEAM_COLORS }).then(b => (blob = b));
+  };
+  prep();
+  document.addEventListener('gamedate', prep);
+  const share = async () => {
+    const b = blob ?? await ready;
+    const file = new File([b], name, { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('Could not share'); }
+      return;
+    }
+    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); toast('Image copied, paste it in WhatsApp'); }
+    catch { h('a', { href: URL.createObjectURL(b), download: name }).click(); toast('Image downloaded'); }
+  };
+  btn = h('button', { class: 'sm', onclick: share }, 'Share image');
+  return btn;
 }
 
 function showTeams(res) {
@@ -463,7 +499,9 @@ function showTeams(res) {
     const text = opt.teams.map((t, k) => `Team ${k + 1}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
     parts.push(h('section', { class: 'option' },
       h('div', { class: 'card-head' }, h('h3', {}, `Option ${i + 1}`),
-        h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy for WhatsApp')),
+        h('div', { class: 'actions' },
+          h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
+          shareButton(opt.teams, i))),
       h('div', { class: 'team-grid' }, opt.teams.map((t, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total' }, h('small', {}, 'TOTAL'), fmt(t.weighted))),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', {}, p.name),

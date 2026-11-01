@@ -49,6 +49,7 @@ h3 { margin: 0; font: 700 1.3rem/1.1 var(--display); text-transform: uppercase; 
 .small { font-size: .85rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 0 0 14px; box-shadow: var(--shadow); }
 .card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.card-head .actions { display: flex; gap: 8px; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .grow { flex: 1; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
@@ -56,7 +57,7 @@ h3 { margin: 0; font: 700 1.3rem/1.1 var(--display); text-transform: uppercase; 
 .scroll { overflow-x: auto; }
 
 /* ---------- controls ---------- */
-input[type=text], input[type=email], input[type=password], input[type=search], select {
+input[type=text], input[type=date], input[type=email], input[type=password], input[type=search], select {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-width: 0; min-height: 44px; }
 input:focus, select:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
 button { background: var(--primary); color: var(--primary-fg); border: 0; border-radius: 10px; padding: 9px 16px; min-height: 44px; font-weight: 600; cursor: pointer; transition: transform .05s, filter .15s, background .15s; }
@@ -177,7 +178,7 @@ tbody tr:hover { background: var(--surface-2); }
   main { padding: 16px 12px 80px; }
   .page-head h2 { font-size: 1.9rem; }
   .card { padding: 14px; border-radius: 12px; }
-  input[type=text], input[type=email], input[type=password], input[type=search], select, textarea { font-size: 16px; }
+  input[type=text], input[type=date], input[type=email], input[type=password], input[type=search], select, textarea { font-size: 16px; }
   form.row > input, form.row > select { flex: 1 1 140px; }
   form.row > button, .build-bar > button { flex: 1 1 100%; }
   .seg button { min-height: 42px; }
