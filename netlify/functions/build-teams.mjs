@@ -1,4 +1,5 @@
 // POST /.netlify/functions/build-teams  { numTeams?: number, useCombos?: boolean }
+// Super can pass raters: [ids] to build from those raters' ratings only (ignored for organizers).
 // POST { check: true } instead lists who's playing with no ratings yet, so the organizer can pick a tier for them.
 // Organizers get lineups only; super also gets skill numbers. Ratings never leave the server for organizers.
 import { buildTeams, combineRatings } from '../../site/js/teams.mjs';
@@ -9,13 +10,15 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null } = await req.json().catch(() => ({}));
   const [players, ratings, combos] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=rater_id,player_id,receiving,hitting,hustle,serve,blocking'),
     rest('combos?select=player_a,player_b'),
   ]);
-  const { combined } = combineRatings(players, ratings);
+  if (me.role === 'super' && Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);
+  const pick = me.role === 'super' && Array.isArray(raters) ? new Set(raters) : null;
+  const { combined } = combineRatings(players, pick ? ratings.filter(r => pick.has(r.rater_id)) : ratings);
   const playing = players.filter(p => p.playing).map(p => ({ ...p, unrated: !!combined.get(p.id).guess }));
   if (check) return json({ unrated: playing.filter(p => p.unrated).map(({ id, name }) => ({ id, name, tier: combined.get(id).guess })) });
   const skills = new Map([...combined].map(([id, c]) => [id, c.skills]));

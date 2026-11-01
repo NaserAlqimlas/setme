@@ -2,6 +2,7 @@
   --bg: #f3f4f8; --surface: #ffffff; --surface-2: #f7f8fb; --fg: #0f1630; --muted: #5d6680; --line: #e3e6ef; --line-strong: #c9cfde;
   --primary: #1d3fbf; --primary-fg: #ffffff; --ball: #ffc531; --ball-fg: #2a1f00;
   --danger: #c0352b; --ok: #13804f; --warn-bg: #fff4d6; --warn-fg: #6b4b00;
+  --up: #b8530b; --down: #1d3fbf;
   --shadow: 0 1px 2px rgba(15, 22, 48, .06), 0 4px 16px rgba(15, 22, 48, .06);
   --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -12,6 +13,7 @@
     --bg: #0b1020; --surface: #141b30; --surface-2: #1a2238; --fg: #eef1f8; --muted: #9aa3bb; --line: #26304a; --line-strong: #3a4664;
     --primary: #6f93ff; --primary-fg: #0b1020;
     --danger: #ff7a6e; --ok: #3cc488; --warn-bg: #3a2e0d; --warn-fg: #ffd98a;
+    --up: #ffa463; --down: #8fb0ff;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
     color-scheme: dark;
   }
@@ -144,6 +146,19 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 
 /* ---------- teams ---------- */
 .build-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+/* Super's "Ratings from" chips: on = filled with a tick, off = faded and crossed out. */
+.build-bar .raters { flex: 1 1 100%; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.rater-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rater-chips > button.sm { min-height: 36px; }
+.build-bar .need-rater { flex: 1 1 100%; margin: 0; }
+.need-rater[hidden] { display: none; }
+.rater-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 12px 4px 5px; border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent); font-weight: 600; }
+.rater-chip .tick { color: var(--primary); font-weight: 800; }
+.rater-chip[aria-pressed=false] { background: transparent; border-color: var(--line-strong); border-style: dashed; color: var(--muted); }
+.rater-chip[aria-pressed=false] > span:not(.tick) { text-decoration: line-through; }
+.rater-chip[aria-pressed=false] .avatar { filter: grayscale(1); opacity: .5; }
+.rater-chip[aria-pressed=false] .tick { visibility: hidden; }
 .option { margin: 22px 0 8px; }
 .team-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 235px), 1fr)); }
 .team { --tc: var(--primary); background: var(--surface); border: 1px solid var(--line); border-top: 5px solid var(--tc); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); display: grid; gap: 10px; align-content: start; }
@@ -164,6 +179,20 @@ table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nu
 th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-weight: 700; font-size: .7rem; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
 td.num, th.num { text-align: center; }
+
+/* Rater leans and disagreements (All ratings page). */
+.lean-up { color: var(--up); font-weight: 700; }
+.lean-down { color: var(--down); font-weight: 700; }
+td.muted { color: var(--muted); }
+.disagree { display: grid; }
+.disagree-item { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.disagree-item:first-child { border-top: 0; padding-top: 4px; }
+.disagree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chip.hi { border-color: var(--up); color: var(--up); }
+.chip.lo { border-color: var(--down); color: var(--down); }
+.disagree details summary { cursor: pointer; color: var(--muted); font-size: .85rem; font-weight: 600; }
+table.mini { margin-top: 6px; font-size: .9rem; }
+table.mini th, table.mini td { padding: 5px 6px; }
 tbody tr:hover { background: var(--surface-2); }
 
 /* ---------- login ---------- */

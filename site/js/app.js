@@ -446,21 +446,33 @@ async function teamsPage() {
   ]);
   for (const c of combos) { c.name_a = c.a?.name ?? '?'; c.name_b = c.b?.name ?? '?'; }
   let numTeams = 4, useCombos = true;
+  // Super only: whose ratings to build from. null = everyone's.
+  let raterIds = null;
+  const newPlayers = newPlayersCard(() => raterIds);
+  // An empty list means every rater is switched off: nothing to build from until one is back on.
+  const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Please select at least one rater.');
+  const raterPick = me.role === 'super' ? await raterPicker(ids => {
+    raterIds = ids;
+    const none = ids?.length === 0;
+    btn.disabled = none; needRater.hidden = !none;
+    if (!none) newPlayers.refresh();
+  }) : null;
   const out = h('div');
   const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
   const btn = h('button', { class: 'ball big' }, 'Build teams');
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Building…';
-    try { out.replaceChildren(...showTeams(await callFn('build-teams', { numTeams, useCombos }))); out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    try { out.replaceChildren(...showTeams(await callFn('build-teams', { numTeams, useCombos, raters: raterIds }))); out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
-    btn.disabled = false; btn.textContent = 'Build teams';
+    btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
   return h('div', {},
     pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
     comboCard(playing, combos),
-    newPlayersCard(),
+    newPlayers,
     h('div', { class: 'card build-bar' },
+      raterPick, needRater,
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
       h('label', { class: 'field' }, h('span', {}, 'Date'), date),
       toggle('Use combos', true, v => { useCombos = v; }),
@@ -522,10 +534,10 @@ function showTeams(res) {
 }
 
 // Playing tonight with no ratings yet: whoever builds picks a stand-in level for each.
-function newPlayersCard() {
+function newPlayersCard(getRaters) {
   const card = h('div', { class: 'card', hidden: true });
-  callFn('build-teams', { check: true }).then(({ unrated }) => {
-    if (!unrated.length) return;
+  card.refresh = () => callFn('build-teams', { check: true, raters: getRaters() }).then(({ unrated }) => {
+    card.hidden = !unrated.length;
     card.replaceChildren(
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'New players'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Nobody has rated them yet. Pick how good they look; they\'re spread across teams either way.'))),
@@ -534,9 +546,45 @@ function newPlayersCard() {
           try { await q(sb.from('players').update({ tier: v }).eq('id', p.id)); toast('Saved'); }
           catch (e) { toast(`Not saved: ${e.message}`); return false; }
         }, `${p.name} level`)))));
-    card.hidden = false;
   }).catch(() => {});
+  card.refresh();
   return card;
+}
+
+// Super only: tap raters on or off; teams are built from the ones left on. Everyone is on to start.
+async function raterPicker(onchange) {
+  const [rows, profiles] = await Promise.all([
+    q(sb.from('ratings').select('rater_id')),
+    q(sb.from('profiles').select('id,display_name').order('display_name')),
+  ]);
+  const has = new Set(rows.map(r => r.rater_id));
+  const raters = profiles.filter(p => has.has(p.id));
+  if (raters.length < 2) return null;
+  const on = new Set(raters.map(r => r.id));
+  const reset = h('button', { type: 'button', class: 'ghost sm', disabled: true }, 'Select all');
+  const clear = h('button', { type: 'button', class: 'ghost sm' }, 'Deselect all');
+  const chips = raters.map(r => {
+    const name = (r.display_name ?? '?').split(/[\s.@]/)[0];
+    const b = h('button', { type: 'button', class: 'rater-chip', 'aria-pressed': 'true', title: r.display_name },
+      avatar(r.display_name ?? '?', 24), h('span', {}, r.id === me.id ? `${name} (me)` : name), h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'));
+    b.onclick = () => {
+      on.has(r.id) ? on.delete(r.id) : on.add(r.id);
+      paint();
+    };
+    return [r.id, b];
+  });
+  const paint = () => {
+    for (const [id, b] of chips) b.setAttribute('aria-pressed', String(on.has(id)));
+    const all = on.size === raters.length;
+    reset.disabled = all;
+    clear.disabled = !on.size;
+    onchange(all ? null : [...on]);
+  };
+  reset.onclick = () => { raters.forEach(r => on.add(r.id)); paint(); };
+  clear.onclick = () => { on.clear(); paint(); };
+  return h('div', { class: 'field raters' },
+    h('span', {}, 'Ratings from'),
+    h('div', { class: 'rater-chips', role: 'group', 'aria-label': 'Raters to use' }, chips.map(([, b]) => b), reset, clear));
 }
 
 // ---------- all ratings (super) ----------
@@ -548,7 +596,11 @@ async function ratingsPage() {
   ]);
   const pname = new Map(profiles.map(p => [p.id, p.display_name]));
   const raters = [...new Set(ratings.map(r => r.rater_id))];
-  const { combined, offsets, disagreements } = combineRatings(players, ratings);
+  // First name only ("Reem Al-Khaled" -> "Reem"), unless two raters share it.
+  const first = id => (pname.get(id) ?? '?').split(/[\s.@]/)[0];
+  const short = id => raters.filter(r => first(r) === first(id)).length > 1 ? pname.get(id) : first(id);
+  short.full = id => pname.get(id) ?? id;
+  const { combined, offsets, raters: stats, disagreements } = combineRatings(players, ratings);
   const view = h('select', { 'aria-label': 'Whose ratings' }, h('option', { value: '' }, 'Combined (adjusted)'), raters.map(r => h('option', { value: r }, pname.get(r) ?? r)));
   const body = h('tbody');
   let unratedOnly = false;
@@ -578,15 +630,59 @@ async function ratingsPage() {
     h('div', { class: 'card scroll' }, stacked(h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Player'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
       body))),
-    h('div', { class: 'grid' },
-      h('div', { class: 'card' },
-        h('h3', {}, 'Big disagreements'),
-        disagreements.length ? h('ul', {}, disagreements.map(d => h('li', {}, h('b', {}, d.name), ': ', d.totals.map(t => `${pname.get(t.rater_id) ?? '?'} ${fmt(t.total)}`).join(', '))))
-          : h('p', { class: 'muted' }, 'None of a full point or more.')),
-      h('div', { class: 'card' },
-        h('h3', {}, 'Rater adjustment'),
-        h('p', { class: 'muted small' }, 'How far each rater sits above (+) or below (−) the others on the same players. Combined ratings subtract this first.'),
-        h('table', {}, h('tbody', {}, [...offsets].map(([rid, o]) => h('tr', {}, h('td', {}, pname.get(rid) ?? rid), SKILLS.map(s => h('td', { class: 'num' }, `${SHORT[s]} ${fmt(o[s])}`)))))))));
+    raterCard(raters, offsets, stats, short),
+    disagreeCard(disagreements, short));
+}
+
+const avg = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v));
+const leanClass = v => Math.abs(v) < .05 ? null : v > 0 ? 'lean-up' : 'lean-down';
+
+// One row per rater: their lean per skill (taken out of combined ratings), how far off the group they land, and on how much.
+function raterCard(raters, offsets, stats, short) {
+  const rows = [...raters].sort((a, b) => short(a).localeCompare(short(b))).map(rid => {
+    const st = stats.get(rid), o = offsets.get(rid);
+    const used = SKILLS.filter(s => st.applied[s]);
+    const overall = used.length ? avg(used.map(s => o[s])) : null;
+    const misses = SKILLS.map(s => st.miss[s]).filter(v => v != null);
+    return h('tr', {},
+      h('td', { title: short.full(rid) }, h('b', {}, short(rid))),
+      SKILLS.map(s => st.applied[s]
+        ? h('td', { class: `num ${leanClass(o[s]) ?? ''}` }, signed(o[s]))
+        : h('td', { class: 'num muted', title: 'Fewer than 5 shared ratings, so not adjusted yet' }, '—')),
+      h('td', { class: `num ${overall == null ? 'muted' : leanClass(overall) ?? ''}` }, h('b', {}, overall == null ? '—' : signed(overall))),
+      h('td', { class: 'num' }, misses.length ? fmt(avg(misses)) : '—'),
+      h('td', { class: 'num muted' }, String(Math.max(0, ...SKILLS.map(s => st.shared[s])))));
+  });
+  return h('div', { class: 'card' },
+    h('h3', {}, 'How each rater rates'),
+    h('p', { class: 'muted small' },
+      h('b', { class: 'lean-up' }, '+'), ' rates higher than the group on the same players, ', h('b', { class: 'lean-down' }, '−'), ' lower. ',
+      'Combined ratings take this out. ', h('b', {}, 'Off by'), ' is how far they typically land from the group after that; ',
+      'a high number means their ratings don\'t line up with everyone else\'s. ', h('b', {}, 'Shared'), ' is how many of their players someone else also rated; ',
+      '— means fewer than 5, so no adjustment yet.'),
+    rows.length ? h('div', { class: 'scroll' }, stacked(h('table', { class: 'rater-table' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Rater'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])),
+        h('th', { class: 'num' }, 'Overall'), h('th', { class: 'num' }, 'Off by'), h('th', { class: 'num' }, 'Shared'))),
+      h('tbody', {}, rows))))
+      : h('p', { class: 'muted' }, 'No ratings yet.'));
+}
+
+// Players whose raters are a point or more apart, with each rater's total and, on tap, what they entered per skill.
+function disagreeCard(disagreements, short) {
+  return h('div', { class: 'card' },
+    h('h3', {}, 'Raters disagree'),
+    h('p', { class: 'muted small' }, 'Totals after each rater\'s lean is taken out, so these are real differences of opinion. Gap of 1 or more.'),
+    disagreements.length ? h('div', { class: 'disagree' }, disagreements.map(d => h('div', { class: 'disagree-item' },
+      h('div', { class: 'disagree-head' }, h('b', {}, d.name), h('span', { class: 'badge' }, `Gap ${fmt(d.gap)}`)),
+      h('div', { class: 'chips' }, d.totals.map((t, i) => h('span', {
+        class: `chip plain ${i === 0 ? 'hi' : i === d.totals.length - 1 ? 'lo' : ''}`, title: short.full(t.rater_id),
+      }, `${short(t.rater_id)} ${fmt(t.total)}`))),
+      h('details', {}, h('summary', {}, 'By skill (as entered)'),
+        h('table', { class: 'mini' },
+          h('thead', {}, h('tr', {}, h('th', {}), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])))),
+          h('tbody', {}, d.totals.map(t => h('tr', {}, h('td', {}, short(t.rater_id)), SKILLS.map(s => h('td', { class: 'num' }, fmt(t.raw[s])))))))))))
+      : h('p', { class: 'muted' }, 'No player has raters a full point apart.'));
 }
 
 // ---------- users (super) ----------

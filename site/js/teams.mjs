@@ -8,32 +8,48 @@ export const TIERS = ['beginner', 'average', 'strong'];
 const MIN_RATINGS_FOR_OFFSET = 5; // a rater needs this many shared ratings in a skill before we adjust for them
 
 // Combine every rater's ratings into one value per player per skill.
-// Each rater is first shifted by how far they sit above/below the other raters on the same players,
+// Each rating is treated as the player's level plus the rater's lean (some rate high, some low). Leans are
+// fitted per skill from players that 2+ people rated, centred so the average rater has none, then taken out,
 // so a generous or harsh rater doesn't skew players only they have rated.
 export function combineRatings(players, ratings) {
   const byPlayer = new Map(players.map(p => [p.id, []]));
   for (const r of ratings) byPlayer.get(r.player_id)?.push(r);
+  const raterIds = [...new Set(ratings.filter(r => byPlayer.has(r.player_id)).map(r => r.rater_id))];
 
-  const rawMean = new Map();
-  for (const [pid, rs] of byPlayer) {
-    const m = {};
-    for (const s of SKILLS) {
-      const vals = rs.map(r => r[s]).filter(v => v != null).map(Number);
-      m[s] = { mean: vals.length ? avg(vals) : null, count: vals.length };
+  const offsets = new Map(raterIds.map(id => [id, {}]));
+  // Per rater per skill: shared = ratings on players someone else also rated; miss = typical distance from the fit.
+  const raters = new Map(raterIds.map(id => [id, { shared: {}, miss: {}, applied: {} }]));
+  for (const s of SKILLS) {
+    const entries = [];
+    for (const [pid, rs] of byPlayer) {
+      const vs = rs.filter(r => r[s] != null);
+      if (vs.length > 1) for (const r of vs) entries.push({ pid, rid: r.rater_id, v: Number(r[s]) });
     }
-    rawMean.set(pid, m);
-  }
-
-  const diffs = new Map(); // rater -> skill -> [diff]
-  for (const r of ratings) {
-    const m = rawMean.get(r.player_id);
-    if (!m) continue;
-    if (!diffs.has(r.rater_id)) diffs.set(r.rater_id, Object.fromEntries(SKILLS.map(s => [s, []])));
-    for (const s of SKILLS) if (r[s] != null && m[s].count > 1) diffs.get(r.rater_id)[s].push(Number(r[s]) - m[s].mean);
-  }
-  const offsets = new Map();
-  for (const [rid, d] of diffs) {
-    offsets.set(rid, Object.fromEntries(SKILLS.map(s => [s, d[s].length >= MIN_RATINGS_FOR_OFFSET ? avg(d[s]) : 0])));
+    const n = new Map(raterIds.map(id => [id, 0]));
+    for (const e of entries) n.set(e.rid, n.get(e.rid) + 1);
+    const fitted = raterIds.filter(id => n.get(id) >= MIN_RATINGS_FOR_OFFSET);
+    const lean = new Map(raterIds.map(id => [id, 0]));
+    const level = new Map();
+    for (let it = 0; it < 50; it++) {
+      const acc = new Map();
+      for (const e of entries) { const a = acc.get(e.pid) ?? [0, 0]; a[0] += e.v - lean.get(e.rid); a[1]++; acc.set(e.pid, a); }
+      for (const [pid, [sum, k]] of acc) level.set(pid, sum / k);
+      if (!fitted.length) break;
+      const sums = new Map(fitted.map(id => [id, 0]));
+      for (const e of entries) if (sums.has(e.rid)) sums.set(e.rid, sums.get(e.rid) + e.v - level.get(e.pid));
+      const raw = fitted.map(id => sums.get(id) / n.get(id));
+      const centre = avg(raw);
+      fitted.forEach((id, i) => lean.set(id, raw[i] - centre));
+    }
+    const miss = new Map(raterIds.map(id => [id, []]));
+    for (const e of entries) miss.get(e.rid).push(Math.abs(e.v - lean.get(e.rid) - level.get(e.pid)));
+    for (const id of raterIds) {
+      offsets.get(id)[s] = lean.get(id);
+      const st = raters.get(id);
+      st.shared[s] = n.get(id);
+      st.applied[s] = fitted.includes(id);
+      st.miss[s] = miss.get(id).length ? avg(miss.get(id)) : null;
+    }
   }
 
   const combined = new Map();
@@ -70,19 +86,24 @@ export function combineRatings(players, ratings) {
     }
   }
 
-  // Players whose raters disagree by a full point or more on their total.
+  // Players whose raters disagree by a full point or more on their total, after taking out each rater's lean.
   const disagreements = [];
   for (const p of players) {
     const totals = byPlayer.get(p.id)
       .filter(r => SKILLS.every(s => r[s] != null))
-      .map(r => ({ rater_id: r.rater_id, total: SKILLS.reduce((a, s) => a + Number(r[s]), 0) }));
+      .map(r => ({
+        rater_id: r.rater_id,
+        total: SKILLS.reduce((a, s) => a + clamp(Number(r[s]) - offsets.get(r.rater_id)[s]), 0),
+        raw: Object.fromEntries(SKILLS.map(s => [s, Number(r[s])])),
+      }))
+      .sort((a, b) => b.total - a.total);
     if (totals.length < 2) continue;
-    const hi = Math.max(...totals.map(t => t.total)), lo = Math.min(...totals.map(t => t.total));
-    if (hi - lo >= 1) disagreements.push({ player_id: p.id, name: p.name, gap: hi - lo, totals });
+    const gap = totals[0].total - totals[totals.length - 1].total;
+    if (gap >= 1) disagreements.push({ player_id: p.id, name: p.name, gap, totals });
   }
   disagreements.sort((a, b) => b.gap - a.gap);
 
-  return { combined, offsets, disagreements };
+  return { combined, offsets, raters, disagreements };
 }
 
 export const weightedTotal = sk => SKILLS.reduce((a, s) => a + sk[s] * WEIGHTS[s], 0);
