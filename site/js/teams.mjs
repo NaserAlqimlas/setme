@@ -176,8 +176,13 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
     let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity, shHi = -Infinity, shLo = Infinity;
     for (let t = 0; t < T; t++) {
       const o = t * F;
-      if (Math.round(agg[o + MAIN]) !== 1) c += 100;
-      if (Math.round(agg[o + BACK]) > 1) c += 5;
+      // Setters: exactly one main per team. When mains run short, two on one team is worse than none, and a team
+      // without a main should get a backup, so every team has someone who can set.
+      const mains = Math.round(agg[o + MAIN]), backs = Math.round(agg[o + BACK]);
+      if (mains !== 1) c += 100;
+      if (mains > 1) c += 100 * (mains - 1);
+      if (mains === 0 && backs === 0) c += 40;
+      if (backs > 1) c += 5;
       wkHi = Math.max(wkHi, agg[o + WEAK]); wkLo = Math.min(wkLo, agg[o + WEAK]);
       woHi = Math.max(woHi, agg[o + WOMEN]); woLo = Math.min(woLo, agg[o + WOMEN]);
       guHi = Math.max(guHi, agg[o + GUESS]); guLo = Math.min(guLo, agg[o + GUESS]);
@@ -259,8 +264,6 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   }
 
   const warnings = [];
-  const mains = players.filter(p => p.setting === 'M').length;
-  if (mains < T) warnings.push(`Only ${mains} main setters for ${T} teams.`);
   if (restarts < maxRestarts) warnings.push(`Stopped after ${restarts} tries (time limit).`);
   for (const [a, b] of apartUsed) {
     if (picked.some(sol => sol.teams.some(t => t.includes(idx.get(a)) && t.includes(idx.get(b))))) {
