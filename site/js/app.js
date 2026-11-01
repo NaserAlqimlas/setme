@@ -19,7 +19,7 @@ const PAGES = [
   { id: 'rate', label: 'Rate', roles: ['rater', 'organizer', 'super'], view: ratePage },
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
-  { id: 'ratings', label: 'All ratings', roles: ['super'], view: ratingsPage },
+  { id: 'ratings', label: role => role === 'super' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
 ];
 
@@ -84,7 +84,7 @@ function toggle(label, checked, onchange) {
 function stacked(table) {
   table.classList.add('stack');
   const label = () => {
-    const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent);
+    const heads = [...table.querySelectorAll('thead th')].map(th => th.dataset.label ?? th.textContent);
     for (const tr of table.querySelectorAll('tbody tr')) [...tr.children].forEach((td, i) => { if (heads[i]) td.dataset.label = heads[i]; });
   };
   label();
@@ -136,7 +136,7 @@ async function render() {
   }
   const pages = PAGES.filter(p => p.roles.includes(me.role));
   const current = pages.find(p => '#' + p.id === location.hash) || pages[0];
-  if (pages.length > 1) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, p.label));
+  if (pages.length > 1) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
   who.append(
     h('div', { class: 'me' }, avatar(me.display_name || '?', 32), h('div', { class: 'who-text' }, h('b', {}, me.display_name), h('small', {}, me.role))),
     h('button', { class: 'ghost sm', onclick: () => sb.auth.signOut() }, 'Sign out'));
@@ -682,11 +682,14 @@ async function raterPicker(onchange) {
 }
 
 // ---------- all ratings (super) ----------
+// Super: everyone's ratings, combined or one rater at a time, plus rater leans and disagreements.
+// Raters and organizers: their own ratings only (the database only returns their rows anyway).
 async function ratingsPage() {
+  const all = me.role === 'super';
   const [players, ratings, profiles] = await Promise.all([
     q(sb.from('players').select('id,name,playing,tier').eq('active', true).order('name')),
-    q(sb.from('ratings').select('*')),
-    q(sb.from('profiles').select('id,display_name')),
+    all ? q(sb.from('ratings').select('*')) : q(sb.from('ratings').select('*').eq('rater_id', me.id)),
+    all ? q(sb.from('profiles').select('id,display_name')) : [],
   ]);
   const pname = new Map(profiles.map(p => [p.id, p.display_name]));
   const raters = [...new Set(ratings.map(r => r.rater_id))];
@@ -694,38 +697,75 @@ async function ratingsPage() {
   const first = id => (pname.get(id) ?? '?').split(/[\s.@]/)[0];
   const short = id => raters.filter(r => first(r) === first(id)).length > 1 ? pname.get(id) : first(id);
   short.full = id => pname.get(id) ?? id;
-  const { combined, offsets, raters: stats, disagreements } = combineRatings(players, ratings);
-  const view = h('select', { 'aria-label': 'Whose ratings' }, h('option', { value: '' }, 'Combined (adjusted)'), raters.map(r => h('option', { value: r }, pname.get(r) ?? r)));
+  const { combined, offsets, raters: stats, disagreements } = all ? combineRatings(players, ratings) : {};
+  const view = all ? h('select', { 'aria-label': 'Whose ratings' }, h('option', { value: '' }, 'Combined (adjusted)'), raters.map(r => h('option', { value: r }, pname.get(r) ?? r))) : null;
+
+  // Sorting: tap a column header, or use the dropdown (the only way on phones, where headers are hidden).
+  const COLS = [['name', 'Player'], ...RATED.map(s => [s, LABEL[s]]), ['total', 'Total'], ['weighted', 'Weighted'], ...(all ? [['raters', 'Raters']] : [])];
+  let sortKey = 'name', desc = false, unratedOnly = false;
+  const sortSel = h('select', { 'aria-label': 'Sort by' }, COLS.map(([k, t]) => h('option', { value: k }, t)));
+  const dirBtn = h('button', { type: 'button', class: 'ghost sm sort-dir' });
+  const heads = new Map(COLS.map(([k, t]) => [k, h('th', { class: k === 'name' ? 'sortable' : 'num sortable', tabindex: 0, 'aria-sort': 'none', 'data-label': RATED.includes(k) ? SHORT[k] : t })]));
+  const sortBy = (k, d) => { sortKey = k; desc = d; draw(); };
+  sortSel.onchange = () => sortBy(sortSel.value, sortSel.value !== 'name');
+  dirBtn.onclick = () => sortBy(sortKey, !desc);
+  for (const [k, th] of heads) {
+    const pick = () => sortBy(k, k === sortKey ? !desc : k !== 'name');
+    th.onclick = pick;
+    th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+  }
+
   const body = h('tbody');
-  let unratedOnly = false;
   const draw = () => {
-    const rid = view.value;
+    const rid = all ? view.value : me.id;
     const mine = new Map(ratings.filter(r => r.rater_id === rid).map(r => [r.player_id, r]));
-    // Combined: nobody has rated them. One rater: that rater left at least one skill as U.
+    // Combined: nobody has rated them. One rater: that rater left a skill as U (consistency doesn't count).
     const rows = players.map(p => {
       const vals = rid ? RATED.map(s => mine.get(p.id)?.[s] ?? null).map(v => v == null ? null : Number(v)) : RATED.map(s => combined.get(p.id).skills[s]);
-      return { p, vals, unknown: rid ? vals.slice(0, SKILLS.length).some(v => v == null) : !!combined.get(p.id).guess };
+      const unknown = rid ? vals.slice(0, SKILLS.length).some(v => v == null) : !!combined.get(p.id).guess;
+      const key = { name: p.name, ...Object.fromEntries(RATED.map((s, i) => [s, vals[i]])),
+        total: unknown ? null : vals.slice(0, SKILLS.length).reduce((a, b) => a + b, 0),
+        weighted: unknown ? null : weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))),
+        raters: all && !rid ? combined.get(p.id).raters : null };
+      return { p, vals, unknown, key };
     }).filter(r => !unratedOnly || r.unknown);
-    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: RATED.length + 4, class: 'muted' }, 'Everyone is rated.')));
-    body.replaceChildren(...rows.map(({ p, vals, unknown }) => {
-      const guess = !rid && combined.get(p.id).guess;
+    // U (unknown) always sorts last, whichever way.
+    rows.sort((a, b) => {
+      const x = a.key[sortKey], y = b.key[sortKey];
+      if (x == null || y == null) return (x == null) - (y == null) || a.p.name.localeCompare(b.p.name);
+      const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+      return (desc ? -c : c) || a.p.name.localeCompare(b.p.name);
+    });
+    sortSel.value = sortKey;
+    dirBtn.textContent = desc ? '↓ High to low' : '↑ Low to high';
+    if (sortKey === 'name') dirBtn.textContent = desc ? '↓ Z to A' : '↑ A to Z';
+    for (const [k, th] of heads) {
+      const label = COLS.find(c => c[0] === k)[1];
+      th.setAttribute('aria-sort', k === sortKey ? (desc ? 'descending' : 'ascending') : 'none');
+      th.replaceChildren(k === 'name' || k === 'total' || k === 'weighted' || k === 'raters' ? label : SHORT[k], h('span', { class: 'arrow' }, k === sortKey ? (desc ? ' ↓' : ' ↑') : ''));
+    }
+    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
+    body.replaceChildren(...rows.map(({ p, vals, key }) => {
+      const guess = all && !rid && combined.get(p.id).guess;
       return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
         guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map(v => h('td', { class: 'num' }, fmt(v))),
-        h('td', { class: 'num' }, h('b', {}, unknown ? 'U' : fmt(vals.slice(0, SKILLS.length).reduce((a, b) => a + b, 0)))),
-        h('td', { class: 'num' }, unknown ? 'U' : fmt(weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))))),
-        h('td', { class: 'num' }, rid ? '' : `${combined.get(p.id).raters}`));
+        h('td', { class: 'num' }, h('b', {}, fmt(key.total))),
+        h('td', { class: 'num' }, fmt(key.weighted)),
+        all && h('td', { class: 'num' }, rid ? '' : `${key.raters}`));
     }));
   };
-  view.onchange = draw; draw();
+  if (view) view.onchange = draw;
+  draw();
 
   return h('div', {},
-    pageHead('All ratings', 'Only you can see this page.', view),
-    h('div', { class: 'card toolbar' }, toggle('Unrated only', false, v => { unratedOnly = v; draw(); })),
-    h('div', { class: 'card scroll' }, stacked(h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), RATED.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
-      body))),
-    raterCard(raters, offsets, stats, short),
-    disagreeCard(disagreements, short));
+    all ? pageHead('All ratings', 'Only you can see this page.', view)
+      : pageHead('My ratings', 'Only you and the site owner can see your ratings. Change them on the Rate page.'),
+    h('div', { class: 'card toolbar' },
+      h('label', { class: 'sort' }, h('span', {}, 'Sort by'), sortSel), dirBtn,
+      toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
+    h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
+    all && raterCard(raters, offsets, stats, short),
+    all && disagreeCard(disagreements, short));
 }
 
 const avg = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
