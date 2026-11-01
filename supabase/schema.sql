@@ -15,6 +15,8 @@ create table public.players (
   name text not null unique,
   gender text not null default 'U' check (gender in ('M', 'F', 'U')),
   setting text not null default 'N' check (setting in ('M', 'B', 'N')),
+  -- Stand-in level until someone rates them; null counts as beginner.
+  tier text check (tier in ('beginner', 'average', 'strong')),
   playing boolean not null default false,
   active boolean not null default true,
   created_at timestamptz not null default now()

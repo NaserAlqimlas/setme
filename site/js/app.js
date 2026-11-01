@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, combineRatings, weightedTotal } from './teams.mjs';
+import { SKILLS, TIERS, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
@@ -13,6 +13,7 @@ const app = document.getElementById('app');
 const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', blocking: 'Blk' };
 const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking' };
 const RATING_OPTIONS = [[null, 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
+const TIER_OPTIONS = TIERS.map(t => [t, t[0].toUpperCase() + t.slice(1)]);
 const TEAM_COLORS = ['#2f6fde', '#e8663a', '#18a36f', '#c99400', '#8b5cf6', '#d6407a'];
 const PAGES = [
   { id: 'rate', label: 'Rate', roles: ['rater', 'organizer', 'super'], view: ratePage },
@@ -198,7 +199,7 @@ async function ratePage() {
     q(sb.from('ratings').select('*').eq('rater_id', me.id)),
   ]);
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
-  let onlyPlaying = false, search = '';
+  let onlyPlaying = false, onlyUnrated = false, search = '';
   const grid = h('div', { class: 'grid' });
   const bar = h('span'), countEl = h('span', { class: 'small muted' });
   const progress = () => {
@@ -235,7 +236,8 @@ async function ratePage() {
       totalEl);
   };
   const draw = () => {
-    const list = players.filter(p => (!onlyPlaying || p.playing) && p.name.toLowerCase().includes(search));
+    // Unrated = no rating saved yet, same as the progress count. A card stays put after a tap until the list is redrawn.
+    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !byPlayer.has(p.id)) && p.name.toLowerCase().includes(search));
     grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, 'No players match.')]));
   };
   progress(); draw();
@@ -290,12 +292,13 @@ async function ratePage() {
     h('div', { class: 'card' },
       h('div', { class: 'legend' },
         h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' inconsistent'),
-        h('span', {}, h('b', {}, '.5'), ' average here'), h('span', {}, h('b', {}, '.75'), ' excels'),
+        h('span', {}, h('b', {}, '.5'), ' average/consistent'), h('span', {}, h('b', {}, '.75'), ' excels'),
         h('span', {}, h('b', {}, '1'), ' top of the group'), h('span', {}, h('b', {}, 'U'), " don't know")),
       h('div', { class: 'progress', style: 'margin:14px 0 6px' }, bar), countEl,
       h('div', { class: 'toolbar', style: 'margin-top:10px' },
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
-        toggle("This session's players only", false, v => { onlyPlaying = v; draw(); }))),
+        toggle("This session's players only", false, v => { onlyPlaying = v; draw(); }),
+        toggle('Not rated yet', false, v => { onlyUnrated = v; draw(); }))),
     grid);
 }
 
@@ -340,10 +343,12 @@ async function playersPage() {
   draw();
 
   const name = h('input', { type: 'text', placeholder: 'New player name', 'aria-label': 'New player name' });
+  let newTier = 'beginner';
+  const tierPick = seg(TIER_OPTIONS, newTier, v => { newTier = v; }, 'New player level');
   const add = async e => {
     e.preventDefault();
     if (!name.value.trim()) return;
-    try { await q(sb.from('players').insert({ name: name.value.trim() })); toast('Added'); render(); }
+    try { await q(sb.from('players').insert({ name: name.value.trim(), tier: newTier })); toast('Added'); render(); }
     catch (err) { toast(err.message); }
   };
   // Paste the WhatsApp list; matches show live, and nothing changes until "Set playing list".
@@ -388,7 +393,9 @@ async function playersPage() {
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Paste from WhatsApp'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Paste the group\'s list to tick everyone who\'s playing.'))),
       box, pasteResult),
-    me.role === 'super' && h('form', { class: 'card row', onsubmit: add }, name, h('button', {}, 'Add player')),
+    me.role === 'super' && h('form', { class: 'card add-player', onsubmit: add },
+      h('div', { class: 'row' }, name, h('button', {}, 'Add player')),
+      h('div', { class: 'field' }, h('span', {}, 'Level until rated'), tierPick)),
     grid,
     h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team.'));
 }
@@ -452,6 +459,7 @@ async function teamsPage() {
   return h('div', {},
     pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
     comboCard(playing, combos),
+    newPlayersCard(),
     h('div', { class: 'card build-bar' },
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
       h('label', { class: 'field' }, h('span', {}, 'Date'), date),
@@ -513,10 +521,28 @@ function showTeams(res) {
   return parts;
 }
 
+// Playing tonight with no ratings yet: whoever builds picks a stand-in level for each.
+function newPlayersCard() {
+  const card = h('div', { class: 'card', hidden: true });
+  callFn('build-teams', { check: true }).then(({ unrated }) => {
+    if (!unrated.length) return;
+    card.replaceChildren(
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'New players'),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Nobody has rated them yet. Pick how good they look; they\'re spread across teams either way.'))),
+      h('div', { class: 'new-players' }, unrated.map(p => h('div', { class: 'new-player' }, h('b', {}, p.name),
+        seg(TIER_OPTIONS, p.tier, async v => {
+          try { await q(sb.from('players').update({ tier: v }).eq('id', p.id)); toast('Saved'); }
+          catch (e) { toast(`Not saved: ${e.message}`); return false; }
+        }, `${p.name} level`)))));
+    card.hidden = false;
+  }).catch(() => {});
+  return card;
+}
+
 // ---------- all ratings (super) ----------
 async function ratingsPage() {
   const [players, ratings, profiles] = await Promise.all([
-    q(sb.from('players').select('id,name,playing').eq('active', true).order('name')),
+    q(sb.from('players').select('id,name,playing,tier').eq('active', true).order('name')),
     q(sb.from('ratings').select('*')),
     q(sb.from('profiles').select('id,display_name')),
   ]);
@@ -525,13 +551,20 @@ async function ratingsPage() {
   const { combined, offsets, disagreements } = combineRatings(players, ratings);
   const view = h('select', { 'aria-label': 'Whose ratings' }, h('option', { value: '' }, 'Combined (adjusted)'), raters.map(r => h('option', { value: r }, pname.get(r) ?? r)));
   const body = h('tbody');
+  let unratedOnly = false;
   const draw = () => {
     const rid = view.value;
     const mine = new Map(ratings.filter(r => r.rater_id === rid).map(r => [r.player_id, r]));
-    body.replaceChildren(...players.map(p => {
+    // Combined: nobody has rated them. One rater: that rater left at least one skill as U.
+    const rows = players.map(p => {
       const vals = rid ? SKILLS.map(s => mine.get(p.id)?.[s] ?? null).map(v => v == null ? null : Number(v)) : SKILLS.map(s => combined.get(p.id).skills[s]);
-      const unknown = rid ? vals.some(v => v == null) : combined.get(p.id).raters === 0;
-      return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing')), vals.map(v => h('td', { class: 'num' }, fmt(v))),
+      return { p, vals, unknown: rid ? vals.some(v => v == null) : !!combined.get(p.id).guess };
+    }).filter(r => !unratedOnly || r.unknown);
+    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: SKILLS.length + 4, class: 'muted' }, 'Everyone is rated.')));
+    body.replaceChildren(...rows.map(({ p, vals, unknown }) => {
+      const guess = !rid && combined.get(p.id).guess;
+      return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
+        guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map(v => h('td', { class: 'num' }, fmt(v))),
         h('td', { class: 'num' }, h('b', {}, unknown ? 'U' : fmt(vals.reduce((a, b) => a + b, 0)))),
         h('td', { class: 'num' }, unknown ? 'U' : fmt(weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))))),
         h('td', { class: 'num' }, rid ? '' : `${combined.get(p.id).raters}`));
@@ -541,6 +574,7 @@ async function ratingsPage() {
 
   return h('div', {},
     pageHead('All ratings', 'Only you can see this page.', view),
+    h('div', { class: 'card toolbar' }, toggle('Unrated only', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Player'), SKILLS.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Total'), h('th', { class: 'num' }, 'Weighted'), h('th', { class: 'num' }, 'Raters'))),
       body))),

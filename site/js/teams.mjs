@@ -3,6 +3,8 @@
 
 export const SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking'];
 export const WEIGHTS = { receiving: 1.5, hitting: 1.25, hustle: .75, serve: 1, blocking: .5 };
+// Stand-in levels for players nobody has rated: the group's lower quartile, average and upper quartile.
+export const TIERS = ['beginner', 'average', 'strong'];
 const MIN_RATINGS_FOR_OFFSET = 5; // a rater needs this many shared ratings in a skill before we adjust for them
 
 // Combine every rater's ratings into one value per player per skill.
@@ -44,11 +46,28 @@ export function combineRatings(players, ratings) {
     }
     combined.set(pid, { skills: v, unknown, raters: rs.length });
   }
-  // Unknown skills fall back to the group's average for that skill.
-  for (const s of SKILLS) {
-    const known = [...combined.values()].map(c => c.skills[s]).filter(v => v != null);
-    const fallback = known.length ? avg(known) : .5;
-    for (const c of combined.values()) if (c.skills[s] == null) c.skills[s] = fallback;
+  // Fill the gaps, using the group's spread on each skill among players who have a value.
+  const known = Object.fromEntries(SKILLS.map(s => [s, [...combined.values()].map(c => c.skills[s]).filter(v => v != null).sort((a, b) => a - b)]));
+  const mean = Object.fromEntries(SKILLS.map(s => [s, known[s].length ? avg(known[s]) : .5]));
+  const tierValue = {
+    beginner: s => quantile(known[s], .25) ?? .25,
+    average: s => mean[s],
+    strong: s => quantile(known[s], .75) ?? .75,
+  };
+  for (const p of players) {
+    const c = combined.get(p.id);
+    c.guess = null;
+    if (!c.unknown.length) continue;
+    const have = SKILLS.filter(s => c.skills[s] != null);
+    if (have.length) {
+      // A skill nobody rated: assume they sit as far above or below the group as on the skills we know.
+      const lift = avg(have.map(s => c.skills[s] - mean[s]));
+      for (const s of c.unknown) c.skills[s] = clamp(mean[s] + lift);
+    } else {
+      // Nobody has rated them at all: use the tier picked for them, or a cautious Beginner.
+      c.guess = TIERS.includes(p.tier) ? p.tier : 'beginner';
+      for (const s of SKILLS) c.skills[s] = tierValue[c.guess](s);
+    }
   }
 
   // Players whose raters disagree by a full point or more on their total.
@@ -68,7 +87,7 @@ export function combineRatings(players, ratings) {
 
 export const weightedTotal = sk => SKILLS.reduce((a, s) => a + sk[s] * WEIGHTS[s], 0);
 
-// players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N'}], skills: Map id -> {receiving..}
+// players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N', unrated?: bool}], skills: Map id -> {receiving..}
 // combos: [[idA, idB]]; pairs with someone not in `players` are skipped.
 export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
   const n = players.length, T = numTeams;
@@ -76,11 +95,11 @@ export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBud
   const size = n / T;
   const idx = new Map(players.map((p, i) => [p.id, i]));
 
-  // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers.
-  const F = 9, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8;
+  // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players.
+  const F = 10, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9;
   const feat = players.map(p => {
     const sk = skills.get(p.id);
-    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25)];
+    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated];
   });
 
   // Combos lock players into units that always move together.
@@ -117,17 +136,21 @@ export function buildTeams({ players, skills, combos = [], numTeams = 4, timeBud
       for (let t = 0; t < T; t++) c += (agg[t * F + f] - cm) ** 2;
     }
     c += 50 * Math.max(0, hi - lo - .25) / .25;
-    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity;
+    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity;
     for (let t = 0; t < T; t++) {
       const o = t * F;
       if (Math.round(agg[o + MAIN]) !== 1) c += 100;
       if (Math.round(agg[o + BACK]) > 1) c += 5;
       wkHi = Math.max(wkHi, agg[o + WEAK]); wkLo = Math.min(wkLo, agg[o + WEAK]);
       woHi = Math.max(woHi, agg[o + WOMEN]); woLo = Math.min(woLo, agg[o + WOMEN]);
+      guHi = Math.max(guHi, agg[o + GUESS]); guLo = Math.min(guLo, agg[o + GUESS]);
     }
     const wk = Math.round(wkHi - wkLo);
     c += 20 * Math.max(0, wk - 1) + .5 * wk * wk;
     c += 100 * Math.max(0, Math.round(woHi - woLo) - 1);
+    // Unrated players' numbers are guesses; spread them so no team stacks up several.
+    const gu = Math.round(guHi - guLo);
+    c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
     return c;
   }
 
@@ -245,4 +268,10 @@ function mulberry32(a) {
 }
 
 const avg = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+// q-th quantile of a sorted list (linear between points), or null if empty.
+const quantile = (xs, q) => {
+  if (!xs.length) return null;
+  const i = (xs.length - 1) * q, lo = Math.floor(i);
+  return xs[lo] + (xs[Math.min(lo + 1, xs.length - 1)] - xs[lo]) * (i - lo);
+};
 const clamp = v => Math.min(1, Math.max(0, v));

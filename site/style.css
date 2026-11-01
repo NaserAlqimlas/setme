@@ -136,6 +136,11 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 .field { display: grid; gap: 4px; }
 .field > span { font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .fields .seg button { flex: 1 0 auto; padding: 4px 12px; }
+.add-player { display: grid; gap: 12px; }
+.add-player .row input { flex: 1; }
+.add-player .seg button, .new-player .seg button { padding: 4px 12px; }
+.new-players { display: grid; gap: 8px; }
+.new-player { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
 
 /* ---------- teams ---------- */
 .build-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
