@@ -120,17 +120,34 @@ textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 
 /* ---------- rate ---------- */
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .85rem; color: var(--muted); }
 .legend b { color: var(--fg); }
-/* "What each rating means": collapsed by default under the key. */
-.guide { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
-.guide summary { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 16px; border-radius: 10px; cursor: pointer;
-  font-weight: 700; font-size: 1rem; color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); list-style: none; user-select: none; }
-.guide summary::-webkit-details-marker { display: none; }
-.guide summary::before { content: '▸'; font-size: 1.1rem; transition: transform .15s; }
-.guide[open] summary::before { transform: rotate(90deg); }
-.guide summary:hover { background: color-mix(in srgb, var(--primary) 18%, transparent); }
-.guide > p { margin: 10px 0 0; }
-.guide-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+/* Rating guide: on desktop a full-height drawer slides in from the right and pushes the whole page (header too) left;
+   on phones it slides up from the bottom. */
+body, .top { transition: padding .28s ease; }
+.guide-panel { position: fixed; z-index: 15; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+  padding: 0 14px 14px; overflow-y: auto; overscroll-behavior: contain; visibility: hidden;
+  transition: transform .28s ease, visibility 0s linear .28s; }
+.guide-panel.open { transform: none; visibility: visible; transition: transform .28s ease, visibility 0s; }
+.guide-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 0 8px; background: var(--surface); }
+.guide-head h3 { margin: 0; }
+.guide-head button { font-size: 1.2rem; width: 36px; padding: 0; }
+.guide-panel > p { margin: 0 0 10px; }
+.guide-panel .guide-item { margin-top: 10px; transition: border-color .2s, background .2s; }
+.guide-panel .guide-item.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--surface-2)); }
+.guide-fab { position: fixed; right: 16px; bottom: 16px; z-index: 15; border-radius: 999px; padding: 10px 18px; box-shadow: var(--shadow); }
+.guide-fab[hidden] { display: none; }
+@media (min-width: 900px) {
+  .guide-panel { top: 0; right: 0; bottom: 0; width: 360px; border: 0; border-left: 1px solid var(--line); border-radius: 0; transform: translateX(100%); }
+  body.guide-open { padding-right: 360px; }
+  body.guide-open .top { padding-inline: max(16px, calc((100vw - 360px - 1100px) / 2)); }
+}
+@media (max-width: 899px) {
+  .guide-panel { left: 0; right: 0; bottom: 0; max-height: 48vh; border-bottom: 0; border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, .3); transform: translateY(100%); }
+  body.guide-open main { padding-bottom: 48vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-panel, .guide-panel.open, body, .top { transition: none; }
+}
 .guide-item { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .guide-item h4 { margin: 0 0 2px; font-size: .9rem; }
 .guide-item p { margin: 0 0 8px; font-size: .85rem; color: var(--muted); }

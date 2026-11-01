@@ -123,6 +123,7 @@ async function boot() {
 }
 
 async function render() {
+  document.body.classList.remove('guide-open'); // only the Rate page has the guide drawer
   const nav = document.getElementById('nav'), who = document.getElementById('who');
   nav.replaceChildren(); who.replaceChildren();
   if (pendingLink) return app.replaceChildren(linkPage());
@@ -233,14 +234,41 @@ const GUIDE = {
     'Rarely has an off day.',
     'Same level every single time.'],
 };
-function ratingGuide() {
-  return h('details', { class: 'guide' }, h('summary', {}, 'What each rating means'),
+// The rubric as a side panel (a bottom sheet on phones) that stays put while you rate. Tapping a rating on a card
+// jumps the panel to that skill. Open or closed is remembered per browser.
+function ratingGuide(onToggle) {
+  let open = false;
+  try { open = localStorage.getItem('setme.guide') === 'open'; } catch { /* storage blocked: start closed */ }
+  const items = new Map(RATED.map(s => {
+    const [what, ...steps] = GUIDE[s];
+    return [s, h('section', { class: 'guide-item' }, h('h4', {}, LABEL[s]), h('p', {}, what),
+      h('dl', {}, steps.flatMap((text, i) => [h('dt', {}, STEPS[i]), h('dd', {}, text)])))];
+  }));
+  const close = h('button', { type: 'button', class: 'ghost sm', 'aria-label': 'Close rating guide' }, '×');
+  const panel = h('aside', { class: 'guide-panel', 'aria-label': 'Rating guide' },
+    h('div', { class: 'guide-head' }, h('h3', {}, 'Rating guide'), close),
     h('p', { class: 'muted small' }, 'Rate each player against this group, not against volleyball players in general. Use U if you haven\'t seen enough to say.'),
-    h('div', { class: 'guide-grid' }, RATED.map(s => {
-      const [what, ...steps] = GUIDE[s];
-      return h('div', { class: 'guide-item' }, h('h4', {}, LABEL[s]), h('p', {}, what),
-        h('dl', {}, steps.flatMap((text, i) => [h('dt', {}, STEPS[i]), h('dd', {}, text)])));
-    })));
+    [...items.values()]);
+  const fab = h('button', { type: 'button', class: 'guide-fab' }, '📖 Rating guide');
+  const button = h('button', { type: 'button', class: 'ghost sm guide-toggle' });
+  const set = v => {
+    open = v;
+    try { localStorage.setItem('setme.guide', v ? 'open' : 'closed'); } catch { /* not remembered, that's fine */ }
+    panel.classList.toggle('open', v); panel.inert = !v; fab.hidden = v;
+    button.textContent = v ? 'Hide rating guide' : 'Show rating guide';
+    onToggle(v);
+  };
+  close.onclick = () => set(false);
+  fab.onclick = button.onclick = () => set(!open);
+  return {
+    panel, fab, button, init: () => set(open),
+    focus(skill) {
+      if (!open) return;
+      for (const [s, el] of items) el.classList.toggle('on', s === skill);
+      const el = items.get(skill);
+      panel.scrollTo({ top: el.offsetTop - panel.querySelector('.guide-head').offsetHeight - 8, behavior: 'smooth' });
+    },
+  };
 }
 
 async function ratePage() {
@@ -251,6 +279,10 @@ async function ratePage() {
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
   let onlyPlaying = false, onlyUnrated = false, search = '';
   const grid = h('div', { class: 'grid' });
+  const layout = h('div', { class: 'rate-layout' }, grid);
+  const guide = ratingGuide(open => document.body.classList.toggle('guide-open', open));
+  layout.append(guide.panel, guide.fab);
+  guide.init();
   const bar = h('span'), countEl = h('span', { class: 'small muted' });
   const progress = () => {
     const n = players.filter(p => byPlayer.has(p.id)).length;
@@ -281,7 +313,7 @@ async function ratePage() {
     totals.set(p.id, paint); paint();
     return h('div', { class: 'card player-card' },
       h('header', {}, avatar(p.name), h('b', {}, p.name), p.playing && h('span', { class: 'badge on' }, 'Playing')),
-      RATED.map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}` }, h('span', {}, LABEL[s]),
+      RATED.map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
         seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
       totalEl);
   };
@@ -344,13 +376,13 @@ async function ratePage() {
         h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' below average'),
         h('span', {}, h('b', {}, '.5'), ' average/consistent'), h('span', {}, h('b', {}, '.75'), ' excels'),
         h('span', {}, h('b', {}, '1'), ' top of the group'), h('span', {}, h('b', {}, 'U'), " don't know")),
-      ratingGuide(),
+      h('div', { style: 'margin-top:12px' }, guide.button),
       h('div', { class: 'progress', style: 'margin:14px 0 6px' }, bar), countEl,
       h('div', { class: 'toolbar', style: 'margin-top:10px' },
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
         toggle("This session's players only", false, v => { onlyPlaying = v; draw(); }),
         toggle('Not rated yet', false, v => { onlyUnrated = v; draw(); }))),
-    grid);
+    layout);
 }
 
 // ---------- players (organizers) ----------
