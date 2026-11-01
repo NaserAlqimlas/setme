@@ -637,11 +637,13 @@ function newPlayersCard(getRaters) {
 }
 
 // Super only: tap raters on or off; teams are built from the ones left on. Everyone is on to start.
-async function raterPicker(onchange) {
-  const [rows, profiles] = await Promise.all([
-    q(sb.from('ratings').select('rater_id')),
-    q(sb.from('profiles').select('id,display_name').order('display_name')),
-  ]);
+// `preload` ({ ratings, profiles }) skips the fetch when the page already has them.
+async function raterPicker(onchange, preload) {
+  const [rows, profiles] = preload ? [preload.ratings, [...preload.profiles].sort((a, b) => (a.display_name ?? '').localeCompare(b.display_name ?? ''))]
+    : await Promise.all([
+      q(sb.from('ratings').select('rater_id')),
+      q(sb.from('profiles').select('id,display_name').order('display_name')),
+    ]);
   const has = new Set(rows.map(r => r.rater_id));
   const raters = profiles.filter(p => has.has(p.id));
   if (raters.length < 2) return null;
@@ -688,8 +690,21 @@ async function ratingsPage() {
   const first = id => (pname.get(id) ?? '?').split(/[\s.@]/)[0];
   const short = id => raters.filter(r => first(r) === first(id)).length > 1 ? pname.get(id) : first(id);
   short.full = id => pname.get(id) ?? id;
-  const { combined, offsets, raters: stats, disagreements } = all ? combineRatings(players, ratings) : {};
-  const view = all ? h('select', { 'aria-label': 'Whose ratings' }, h('option', { value: '' }, 'Combined (adjusted)'), raters.map(r => h('option', { value: r }, pname.get(r) ?? r))) : null;
+  // Super picks whose ratings to look at, like on Teams. Several raters: their ratings combined (leans and
+  // disagreements worked out among just them). One rater: exactly what they entered. null = everyone.
+  let sel = null, combined, offsets, stats, disagreements;
+  const extra = h('div');
+  const recompute = () => {
+    const used = sel ?? raters;
+    ({ combined, offsets, raters: stats, disagreements } = combineRatings(players, ratings.filter(r => used.includes(r.rater_id))));
+    extra.replaceChildren(...(used.length > 1 ? [raterCard(used, offsets, stats, short), disagreeCard(disagreements, short)] : []));
+  };
+  if (all) recompute();
+  const picker = all ? await raterPicker(ids => {
+    sel = ids;
+    if (ids?.length === 0) extra.replaceChildren(); else recompute();
+    draw();
+  }, { ratings, profiles }) : null;
 
   // Sorting: tap a column header, or use the dropdown (the only way on phones, where headers are hidden).
   const COLS = [['name', 'Player'], ...RATED.map(s => [s, LABEL[s]]), ['total', 'Total'], ['weighted', 'Weighted'], ...(all ? [['raters', 'Raters']] : [])];
@@ -708,7 +723,8 @@ async function ratingsPage() {
 
   const body = h('tbody');
   const draw = () => {
-    const rid = all ? view.value : me.id;
+    if (all && sel?.length === 0) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'warn' }, 'Please select at least one rater.')));
+    const rid = !all ? me.id : sel?.length === 1 ? sel[0] : '';
     const mine = new Map(ratings.filter(r => r.rater_id === rid).map(r => [r.player_id, r]));
     // Combined: nobody has rated them. One rater: that rater left a skill as U (consistency doesn't count).
     const rows = players.map(p => {
@@ -745,18 +761,17 @@ async function ratingsPage() {
         all && h('td', { class: 'num' }, rid ? '' : `${key.raters}`));
     }));
   };
-  if (view) view.onchange = draw;
   draw();
 
   return h('div', {},
-    all ? pageHead('All ratings', 'Only you can see this page.', view)
+    all ? pageHead('All ratings', 'Only you can see this page.')
       : pageHead('My ratings', 'Only you and the site owner can see your ratings. Change them on the Rate page.'),
+    picker && h('div', { class: 'card' }, picker),
     h('div', { class: 'card toolbar' },
       h('label', { class: 'sort' }, h('span', {}, 'Sort by'), sortSel), dirBtn,
       toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
-    all && raterCard(raters, offsets, stats, short),
-    all && disagreeCard(disagreements, short));
+    all && extra);
 }
 
 const avg = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
