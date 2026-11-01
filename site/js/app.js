@@ -684,6 +684,9 @@ async function ratingsPage() {
     all ? q(sb.from('ratings').select('*')) : q(sb.from('ratings').select('*').eq('rater_id', me.id)),
     all ? q(sb.from('profiles').select('id,display_name')) : [],
   ]);
+  // Super gets everyone's changes; anyone else only their own (the database enforces this too).
+  const histQ = sb.from('rating_history').select('*').order('changed_at', { ascending: false }).limit(1000);
+  const changeLog = await q(all ? histQ : histQ.eq('rater_id', me.id)).catch(() => null);
   const pname = new Map(profiles.map(p => [p.id, p.display_name]));
   const raters = [...new Set(ratings.map(r => r.rater_id))];
   // First name only ("Reem Al-Khaled" -> "Reem"), unless two raters share it.
@@ -698,11 +701,14 @@ async function ratingsPage() {
     const used = sel ?? raters;
     ({ combined, offsets, raters: stats, disagreements } = combineRatings(players, ratings.filter(r => used.includes(r.rater_id))));
     extra.replaceChildren(...(used.length > 1 ? [raterCard(used, offsets, stats, short), disagreeCard(disagreements, short)] : []));
+    hist?.draw(used);
   };
+  const hist = historyCard(changeLog, players, ratings, raters, pname, short, all);
+  if (!all) hist.draw([me.id]);
   if (all) recompute();
   const picker = all ? await raterPicker(ids => {
     sel = ids;
-    if (ids?.length === 0) extra.replaceChildren(); else recompute();
+    if (ids?.length === 0) { extra.replaceChildren(); hist?.draw([]); } else recompute();
     draw();
   }, { ratings, profiles }) : null;
 
@@ -754,7 +760,7 @@ async function ratingsPage() {
     if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
     body.replaceChildren(...rows.map(({ p, vals, key }) => {
       const guess = all && !rid && combined.get(p.id).guess;
-      return h('tr', {}, h('td', {}, p.name, p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
+      return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name), p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
         guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map(v => h('td', { class: 'num' }, fmt(v))),
         h('td', { class: 'num' }, h('b', {}, fmt(key.total))),
         h('td', { class: 'num' }, fmt(key.weighted)),
@@ -771,7 +777,319 @@ async function ratingsPage() {
       h('label', { class: 'sort' }, h('span', {}, 'Sort by'), sortSel), dirBtn,
       toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
+    hist.el,
     all && extra);
+}
+
+// Who changed what and when, newest first. Changes one person made to one player within a few minutes show as one entry.
+// Super: filtered to the raters picked above. Anyone else: their own changes only, without rater names.
+// Narrowed to one player when their name is tapped in the table.
+function historyCard(changeLog, players, ratings, allRaters, pname, short, all) {
+  const el = h('div', { class: 'card' }, h('h3', {}, 'Rating history'));
+  if (!changeLog) {
+    el.append(h('p', { class: 'muted' }, all ? 'Not set up yet: run the rating history SQL from the README in Supabase.' : 'Not available yet.'));
+    return { el, draw() {}, show() {} };
+  }
+  const known = new Map(players.map(p => [p.id, p]));
+  let used = [], player = '', limit = 30, mode = 'skill', chartRater = null;
+  const playerBox = comboBox([['', 'All players'], ...players.map(p => [String(p.id), p.name])], v => { player = v; limit = 30; paint(); }, 'Player');
+  const list = h('div', { class: 'history' });
+  // Chart for one player: their skills over time from one rater, or each rater's total over time.
+  const modeSeg = seg([['skill', 'By skill'], ['total', all ? 'Total by rater' : 'Total']], mode, v => { mode = v; paintChart(); }, 'Chart');
+  const raterRow = h('div', { class: 'row chart-raters' });
+  const chartBox = h('div', { class: 'chart-box' });
+  const chartWrap = h('div', { class: 'history-chart' }, h('div', { class: 'toolbar' }, modeSeg, raterRow), chartBox);
+  let stopChart = () => {};
+  const paintChart = () => {
+    stopChart(); stopChart = () => {};
+    modeSeg.hidden = !player;
+    if (!player) {
+      raterRow.replaceChildren();
+      const rows = changeLog.filter(c => known.has(c.player_id) && used.includes(c.rater_id));
+      if (!rows.length) return chartBox.replaceChildren();
+      stopChart = changesChart(chartBox, rows, all && used.length > 1 ? short : null);
+      return;
+    }
+    const pid = Number(player);
+    const withRows = used.filter(r => changeLog.some(c => c.rater_id === r && c.player_id === pid));
+    if (!withRows.length) { raterRow.replaceChildren(); chartBox.replaceChildren(h('p', { class: 'muted' }, 'No changes for this player yet.')); return; }
+    if (!withRows.includes(chartRater)) chartRater = changeLog.find(c => c.player_id === pid && withRows.includes(c.rater_id)).rater_id;
+    raterRow.replaceChildren(...(mode === 'skill' && all && withRows.length > 1
+      ? [h('span', { class: 'muted small' }, 'Rater'), seg(withRows.map(r => [r, short(r)]), chartRater, v => { chartRater = v; paintChart(); }, 'Rater for chart')]
+      : mode === 'skill' && all ? [h('span', { class: 'muted small' }, short(chartRater))] : []));
+    stopChart = historyChart(chartBox, { log: changeLog, ratings, pid, mode, raters: mode === 'skill' ? [chartRater] : withRows,
+      slotOf: r => allRaters.indexOf(r), name: all ? short : () => 'Total' });
+  };
+  const more = h('button', { type: 'button', class: 'ghost sm' }, 'Show more');
+  more.onclick = () => { limit += 30; paint(); };
+  const when = t => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+
+  const paint = () => {
+    // Group rows (already newest first) by rater, player and who changed it, within 5 minutes of each other.
+    const groups = [];
+    for (const r of changeLog) {
+      if (!known.has(r.player_id) || !used.includes(r.rater_id)) continue;
+      if (player && String(r.player_id) !== player) continue;
+      const g = groups.at(-1);
+      if (g && g.rater_id === r.rater_id && g.player_id === r.player_id && g.changed_by === r.changed_by && new Date(g.last) - new Date(r.changed_at) < 5 * 60e3) {
+        g.rows.push(r); g.last = r.changed_at;
+      } else groups.push({ rater_id: r.rater_id, player_id: r.player_id, changed_by: r.changed_by, at: r.changed_at, last: r.changed_at, rows: [r] });
+    }
+    list.replaceChildren(...(groups.length ? groups.slice(0, limit).map(g => h('div', { class: 'history-item' },
+      h('div', { class: 'history-head' },
+        h('span', {}, h('b', {}, known.get(g.player_id).name), all && ' · ', all && short(g.rater_id),
+          g.changed_by && g.changed_by !== g.rater_id && h('span', { class: 'muted' }, ` (entered by ${pname.get(g.changed_by) ?? 'someone else'})`)),
+        h('span', { class: 'muted small' }, when(g.at))),
+      h('div', { class: 'chips' }, RATED.filter(s => g.rows.some(r => r.skill === s)).map(s => {
+        // Oldest row's "from" and newest row's "to" for this skill.
+        const rs = g.rows.filter(r => r.skill === s), from = rs.at(-1).old_value, to = rs[0].new_value;
+        const dir = from == null || to == null ? '' : Number(to) > Number(from) ? 'up' : 'down';
+        return h('span', { class: `chip plain ${dir}` }, `${SHORT[s]} ${fmt(from == null ? null : Number(from))} → ${fmt(to == null ? null : Number(to))}`);
+      }))))
+      : [h('p', { class: 'muted' }, used.length ? 'No changes yet.' : 'Please select at least one rater.')]));
+    more.hidden = groups.length <= limit;
+    paintChart();
+  };
+  el.append(
+    h('p', { class: 'muted small' }, 'How many ratings changed each day. Pick a player (or tap their name in the table) to chart just their ratings. Recorded from when history was switched on.'),
+    h('div', { class: 'toolbar' }, h('div', { class: 'sort' }, h('span', {}, 'Player'), playerBox.el)),
+    chartWrap, list, more);
+  return {
+    el,
+    draw(ids) { used = ids; paint(); },
+    show(id) { player = String(id); playerBox.set(player); limit = 30; paint(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+  };
+}
+
+// ---------- rating history chart ----------
+// Step lines: a rating holds its value until someone changes it. U / no rating = a gap in the line.
+// mode 'skill': one rater, a line per skill (0 to 1). mode 'total': a line per rater, total of the five skills (0 to 5),
+// a gap while any of them is U. Colours follow the skill or rater (fixed slots), never their position in the list.
+const svg = (tag, attrs = {}, ...kids) => {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null && v !== false) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+  return el;
+};
+const SLOTS = 6;
+function historyChart(box, { log, ratings, pid, mode, raters, slotOf, name }) {
+  const num = v => v == null ? null : Number(v);
+  const now = Date.now();
+  // Value of each skill over time for one rater: [[time, value], ...], starting before the first change.
+  const timeline = rid => {
+    const rows = log.filter(c => c.rater_id === rid && c.player_id === pid).map(c => ({ ...c, t: new Date(c.changed_at).getTime() })).sort((a, b) => a.t - b.t);
+    const cur = ratings.find(r => r.rater_id === rid && r.player_id === pid);
+    const out = {};
+    for (const sk of RATED) {
+      const rs = rows.filter(r => r.skill === sk);
+      out[sk] = rs.length ? [[-Infinity, num(rs[0].old_value)], ...rs.map(r => [r.t, num(r.new_value)])] : [[-Infinity, num(cur?.[sk])]];
+    }
+    return { rows, out };
+  };
+  const at = (steps, t) => { let v = steps[0][1]; for (const [st, sv] of steps) { if (st <= t) v = sv; else break; } return v; };
+  const lines = raters.map(rid => ({ rid, ...timeline(rid) }));
+  const times = [...new Set(lines.flatMap(l => l.rows.map(r => r.t)))].sort((a, b) => a - b);
+  const series = mode === 'skill'
+    ? RATED.map((sk, i) => ({ key: sk, label: LABEL[sk], slot: i, value: t => at(lines[0].out[sk], t) }))
+    : lines.map(l => ({ key: l.rid, label: name(l.rid), slot: slotOf(l.rid), value: t => {
+        const vs = SKILLS.map(sk => at(l.out[sk], t));
+        return vs.some(v => v == null) ? null : vs.reduce((a, b) => a + b, 0);
+      } }));
+  const yMax = mode === 'skill' ? 1 : SKILLS.length;
+  const yTicks = mode === 'skill' ? [0, .25, .5, .75, 1] : [0, 1, 2, 3, 4, 5];
+  const first = times[0], span = Math.max(now - first, 60e3), pad = Math.max(span * .08, 30 * 60e3);
+  const t0 = first - pad, t1 = now;
+  const stops = [t0, ...times, t1]; // where the crosshair can rest
+  const color = slot => slot >= 0 && slot < SLOTS ? `var(--s${slot + 1})` : 'var(--muted)';
+
+  const legend = h('div', { class: 'chart-legend' }, series.map(se => h('span', {}, h('i', { style: `background:${color(se.slot)}` }), se.label)));
+  const plot = h('div', { class: 'chart-plot' });
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  plot.append(tip);
+  box.replaceChildren(legend, plot);
+
+  let W = 0, svgEl = null, cross = null, xOf, yOf, focusIdx = stops.length - 1;
+  const H = 220, M = { l: 34, r: 12, t: 10, b: 26 };
+  const sameDay = span < 36 * 3600e3;
+  const tickLabel = t => new Date(t).toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { day: 'numeric', month: 'short' });
+  const tipTime = t => t === t0 ? 'Before the first change' : t === t1 ? 'Now' : new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+
+  const render = () => {
+    W = plot.clientWidth; if (!W) return;
+    xOf = t => M.l + (t - t0) / (t1 - t0) * (W - M.l - M.r);
+    yOf = v => M.t + (1 - v / yMax) * (H - M.t - M.b);
+    const grid = yTicks.map(v => svg('g', {},
+      svg('line', { x1: M.l, x2: W - M.r, y1: yOf(v), y2: yOf(v), class: 'grid' }),
+      svg('text', { x: M.l - 6, y: yOf(v), class: 'axis', 'text-anchor': 'end', 'dominant-baseline': 'middle' }, mode === 'skill' ? fmt(v) : String(v))));
+    const n = Math.max(2, Math.min(5, Math.floor((W - M.l - M.r) / 90)));
+    const xt = Array.from({ length: n }, (_, i) => t0 + (t1 - t0) * i / (n - 1));
+    const xAxis = xt.map((t, i) => svg('text', { x: xOf(t), y: H - 6, class: 'axis', 'text-anchor': i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle' }, i === n - 1 ? 'Now' : tickLabel(t)));
+    const paths = series.map(se => {
+      // Steps from t0 to now; a null value lifts the pen.
+      const pts = stops.map(t => [t, se.value(t)]);
+      let d = '', prev = null;
+      for (let i = 0; i < pts.length; i++) {
+        const [t, v] = pts[i], next = pts[i + 1]?.[0] ?? t1;
+        if (v == null) { prev = null; continue; }
+        // The previous step ended at (t, prev): rise or fall straight up/down, then run flat to the next change.
+        if (prev == null) d += `M${xOf(t)},${yOf(v)}`; else if (v !== prev) d += `L${xOf(t)},${yOf(v)}`;
+        d += `L${xOf(next)},${yOf(v)}`;
+        prev = v;
+      }
+      const dots = times.filter(t => { const v = se.value(t), b = se.value(t - 1); return v != null && v !== b; })
+        .map(t => svg('circle', { cx: xOf(t), cy: yOf(se.value(t)), r: 4, class: 'dot', fill: color(se.slot) }));
+      return svg('g', {}, svg('path', { d, class: 'line', stroke: color(se.slot) }), dots);
+    });
+    cross = svg('line', { y1: M.t, y2: H - M.b, class: 'cross', visibility: 'hidden' });
+    const hit = svg('rect', { x: M.l, y: 0, width: W - M.l - M.r, height: H, fill: 'transparent' });
+    svgEl = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', tabindex: 0,
+      'aria-label': `Rating history chart. ${series.length} lines. Use left and right arrow keys to step through changes.` }, grid, xAxis, cross, paths, hit);
+    svgEl.onpointermove = e => { const x = e.clientX - svgEl.getBoundingClientRect().left; show(nearest(x)); };
+    svgEl.onpointerleave = hide;
+    svgEl.onfocus = () => show(focusIdx);
+    svgEl.onblur = hide;
+    svgEl.onkeydown = e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); show(Math.max(0, Math.min(stops.length - 1, focusIdx + (e.key === 'ArrowRight' ? 1 : -1))));
+    };
+    plot.querySelector('svg')?.remove();
+    plot.prepend(svgEl);
+  };
+  const nearest = x => stops.reduce((best, t, i) => Math.abs(xOf(t) - x) < Math.abs(xOf(stops[best]) - x) ? i : best, 0);
+  const show = i => {
+    focusIdx = i; const t = stops[i], x = xOf(t);
+    cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('visibility', 'visible');
+    tip.replaceChildren(h('div', { class: 'chart-tip-head' }, tipTime(t)),
+      ...series.map(se => { const v = se.value(t); return h('div', { class: 'chart-tip-row' }, h('i', { style: `background:${color(se.slot)}` }), h('b', {}, fmt(v)), ' ', se.label); }));
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    tip.style.left = `${Math.max(0, Math.min(W - tw, x > W / 2 ? x - tw - 12 : x + 12))}px`;
+  };
+  const hide = () => { tip.hidden = true; cross?.setAttribute('visibility', 'hidden'); };
+  const ro = new ResizeObserver(() => { if (plot.clientWidth !== W) render(); });
+  ro.observe(plot);
+  render();
+  return () => ro.disconnect();
+}
+
+// All players: how many skill ratings changed each day (last 60 days at most), one column per day.
+// Hover or arrow keys show the day's count, split by rater when byRater is given.
+function changesChart(box, rows, byRater) {
+  const DAY = 864e5, dayOf = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const today = dayOf(Date.now()), firstDay = Math.max(dayOf(Math.min(...rows.map(r => new Date(r.changed_at)))), today - 59 * DAY);
+  const days = [];
+  for (let t = firstDay; t <= today; t = dayOf(t + DAY * 1.5)) days.push({ t, rows: [] });
+  for (const r of rows) { const d = days.find(x => x.t === dayOf(r.changed_at)); if (d) d.rows.push(r); }
+  const max = Math.max(1, ...days.map(d => d.rows.length));
+  const step = max <= 5 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : max <= 50 ? 10 : Math.ceil(max / 5 / 10) * 10;
+  const yMax = Math.ceil(max / step) * step, yTicks = Array.from({ length: yMax / step + 1 }, (_, i) => i * step);
+  const dayLabel = t => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });
+
+  const head = h('div', { class: 'chart-legend' }, 'Rating changes per day');
+  const plot = h('div', { class: 'chart-plot' });
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  plot.append(tip);
+  box.replaceChildren(head, plot);
+
+  let W = 0, bars = [], focusIdx = days.length - 1, xOf, bw;
+  const H = 180, M = { l: 30, r: 8, t: 10, b: 26 };
+  const render = () => {
+    W = plot.clientWidth; if (!W) return;
+    const band = (W - M.l - M.r) / days.length;
+    bw = Math.max(2, Math.min(24, band * .7));
+    xOf = i => M.l + band * i + band / 2;
+    const yOf = v => M.t + (1 - v / yMax) * (H - M.t - M.b);
+    const grid = yTicks.map(v => svg('g', {},
+      svg('line', { x1: M.l, x2: W - M.r, y1: yOf(v), y2: yOf(v), class: 'grid' }),
+      svg('text', { x: M.l - 6, y: yOf(v), class: 'axis', 'text-anchor': 'end', 'dominant-baseline': 'middle' }, String(v))));
+    // Date labels: first, last, and evenly spaced ones in between that fit.
+    const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor((W - M.l - M.r) / 70))));
+    const xAxis = days.map((d, i) => (i === days.length - 1 || (i % every === 0 && days.length - 1 - i >= every / 2)) &&
+      svg('text', { x: xOf(i), y: H - 6, class: 'axis', 'text-anchor': days.length === 1 ? 'middle' : i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle' }, i === days.length - 1 ? 'Today' : dayLabel(d.t)));
+    // Column with a 4px rounded top, square at the baseline.
+    const col = (x, y, w, hgt) => { const r = Math.min(4, w / 2, hgt); return `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt}Z`; };
+    bars = days.map((d, i) => d.rows.length ? svg('path', { d: col(xOf(i) - bw / 2, yOf(d.rows.length), bw, yOf(0) - yOf(d.rows.length)), class: 'bar' }) : null);
+    const hit = svg('rect', { x: M.l, y: 0, width: W - M.l - M.r, height: H, fill: 'transparent' });
+    const el = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', tabindex: 0,
+      'aria-label': `Rating changes per day, ${dayLabel(days[0].t)} to today. Use left and right arrow keys to step through days.` }, grid, xAxis, bars, hit);
+    el.onpointermove = e => { const x = e.clientX - el.getBoundingClientRect().left; show(Math.max(0, Math.min(days.length - 1, Math.floor((x - M.l) / band)))); };
+    el.onpointerleave = hide; el.onblur = hide;
+    el.onfocus = () => show(focusIdx);
+    el.onkeydown = e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); show(Math.max(0, Math.min(days.length - 1, focusIdx + (e.key === 'ArrowRight' ? 1 : -1))));
+    };
+    plot.querySelector('svg')?.remove();
+    plot.prepend(el);
+  };
+  const show = i => {
+    focusIdx = i; const d = days[i];
+    bars.forEach((b, j) => b?.classList.toggle('dim', j !== i));
+    const counts = byRater ? [...d.rows.reduce((m, r) => m.set(r.rater_id, (m.get(r.rater_id) ?? 0) + 1), new Map())] : [];
+    tip.replaceChildren(h('div', { class: 'chart-tip-head' }, dayLabel(d.t)),
+      h('div', {}, h('b', {}, String(d.rows.length)), d.rows.length === 1 ? ' change' : ' changes'),
+      ...counts.sort((a, b) => b[1] - a[1]).map(([rid, n]) => h('div', { class: 'chart-tip-row muted' }, h('b', {}, String(n)), ' ', byRater(rid))));
+    tip.hidden = false;
+    const tw = tip.offsetWidth, x = xOf(i);
+    tip.style.left = `${Math.max(0, Math.min(W - tw, x > W / 2 ? x - bw / 2 - tw - 8 : x + bw / 2 + 8))}px`;
+  };
+  const hide = () => { tip.hidden = true; bars.forEach(b => b?.classList.remove('dim')); };
+  const ro = new ResizeObserver(() => { if (plot.clientWidth !== W) render(); });
+  ro.observe(plot);
+  render();
+  return () => ro.disconnect();
+}
+
+// Dropdown you can type into: tap to see every option, type to narrow the list, arrows + Enter to pick, Esc to close.
+// options: [[value, label], ...]; the first one is the "nothing picked" choice shown when the box is cleared.
+let comboSeq = 0;
+function comboBox(options, onchange, label) {
+  const id = `combo-${++comboSeq}`;
+  let value = options[0][0], shown = [], active = -1;
+  const labelOf = v => options.find(o => o[0] === v)?.[1] ?? '';
+  const input = h('input', { type: 'text', role: 'combobox', 'aria-label': label, 'aria-expanded': 'false', 'aria-controls': id,
+    'aria-autocomplete': 'list', autocomplete: 'off', spellcheck: 'false', value: labelOf(value) });
+  const list = h('ul', { id, role: 'listbox', class: 'combo-list', hidden: true });
+  const arrow = h('button', { type: 'button', class: 'combo-arrow', tabindex: -1, 'aria-label': `Show ${label} options` }, '▾');
+  const el = h('div', { class: 'combo' }, input, arrow, list);
+
+  const render = filter => {
+    const f = filter.trim().toLowerCase();
+    shown = f ? options.filter(([, t]) => t.toLowerCase().includes(f)) : options;
+    active = shown.findIndex(o => o[0] === value);
+    if (active < 0 && f) active = 0;
+    list.replaceChildren(...(shown.length ? shown.map(([v, t], i) => {
+      const li = h('li', { role: 'option', id: `${id}-${i}`, 'aria-selected': String(v === value), class: i === active ? 'active' : '' }, t);
+      li.onmousedown = e => { e.preventDefault(); pick(v); };
+      return li;
+    }) : [h('li', { class: 'muted empty' }, 'No matches')]));
+    mark();
+  };
+  const mark = () => {
+    [...list.children].forEach((li, i) => li.classList.toggle('active', i === active));
+    const cur = list.children[active];
+    if (cur?.id) { input.setAttribute('aria-activedescendant', cur.id); cur.scrollIntoView({ block: 'nearest' }); }
+    else input.removeAttribute('aria-activedescendant');
+  };
+  const open = (filter = '') => { list.hidden = false; input.setAttribute('aria-expanded', 'true'); render(filter); };
+  const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); input.value = labelOf(value); };
+  const pick = v => { const changed = v !== value; value = v; close(); if (changed) onchange(v); };
+
+  input.onfocus = () => { input.select(); open(); };
+  input.onclick = () => { if (list.hidden) open(); };
+  input.oninput = () => open(input.value);
+  input.onblur = close;
+  input.onkeydown = e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.hidden) return open();
+      if (shown.length) { active = (active + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length; mark(); }
+    } else if (e.key === 'Enter') {
+      if (!list.hidden) { e.preventDefault(); if (shown[active]) pick(shown[active][0]); }
+    } else if (e.key === 'Escape') { if (!list.hidden) { e.preventDefault(); close(); } }
+  };
+  arrow.onmousedown = e => { e.preventDefault(); if (list.hidden) { input.focus(); } else close(); };
+  return { el, set(v) { value = v; close(); } };
 }
 
 const avg = xs => xs.reduce((a, b) => a + b, 0) / xs.length;

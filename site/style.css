@@ -3,6 +3,7 @@
   --primary: #1d3fbf; --primary-fg: #ffffff; --ball: #ffc531; --ball-fg: #2a1f00;
   --danger: #c0352b; --ok: #13804f; --warn-bg: #fff4d6; --warn-fg: #6b4b00;
   --up: #b8530b; --down: #1d3fbf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300;
   --shadow: 0 1px 2px rgba(15, 22, 48, .06), 0 4px 16px rgba(15, 22, 48, .06);
   --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -14,6 +15,7 @@
     --primary: #6f93ff; --primary-fg: #0b1020;
     --danger: #ff7a6e; --ok: #3cc488; --warn-bg: #3a2e0d; --warn-fg: #ffd98a;
     --up: #ffa463; --down: #8fb0ff;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
     color-scheme: dark;
   }
@@ -235,6 +237,43 @@ td.muted { color: var(--muted); }
 .disagree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .chip.hi { border-color: var(--up); color: var(--up); }
 .chip.lo { border-color: var(--down); color: var(--down); }
+.history { display: grid; margin-top: 8px; }
+.history-item { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.history-item:first-child { border-top: 0; }
+.history-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.chip.up { border-color: var(--up); color: var(--up); }
+.chip.down { border-color: var(--down); color: var(--down); }
+.combo { position: relative; flex: 1 1 220px; min-width: 0; max-width: 340px; }
+.combo input { width: 100%; padding-right: 40px; cursor: pointer; }
+.combo input:focus { cursor: text; }
+.combo-arrow { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); min-height: 40px; width: 36px; padding: 0; background: transparent; color: var(--muted); font-weight: 400; }
+.combo-arrow:hover { filter: none; color: var(--fg); }
+.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; max-height: 280px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .14); font-weight: 400; }
+.combo-list li { padding: 9px 10px; border-radius: 7px; cursor: pointer; }
+.combo-list li.active { background: var(--surface-2); }
+.combo-list li[aria-selected=true] { font-weight: 600; }
+.combo-list li.empty { cursor: default; }
+.history-chart { margin-top: 12px; }
+.chart-raters { gap: 8px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 6px; font-size: .85rem; color: var(--muted); }
+.chart-legend i, .chart-tip-row i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
+.chart-plot { position: relative; }
+.chart-plot svg { display: block; overflow: visible; touch-action: pan-y; }
+.chart-plot svg:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 6px; }
+.chart-plot .grid { stroke: var(--line); stroke-width: 1; }
+.chart-plot .axis { fill: var(--muted); font-size: 11px; }
+.chart-plot .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-plot .dot { stroke: var(--surface); stroke-width: 2; }
+.chart-plot .cross { stroke: var(--line-strong); stroke-width: 1; }
+.chart-plot .bar { fill: var(--s1); transition: opacity .1s; }
+.chart-plot .bar.dim { opacity: .45; }
+.chart-tip { position: absolute; top: 4px; z-index: 5; pointer-events: none; min-width: 140px; padding: 8px 10px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: .85rem; }
+.chart-tip-head { color: var(--muted); margin-bottom: 4px; }
+.chart-tip-row { white-space: nowrap; }
+.name-link { all: unset; color: inherit; cursor: pointer; font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
+.name-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 .disagree details summary { cursor: pointer; color: var(--muted); font-size: .85rem; font-weight: 600; }
 table.mini { margin-top: 6px; font-size: .9rem; }
 table.mini th, table.mini td { padding: 5px 6px; }

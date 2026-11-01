@@ -54,6 +54,7 @@ tests/                  node scripts, no framework
 | `profiles` | id (auth user), email, display_name, role | Created by a trigger when an auth user is created. Role is rater, organizer or super. |
 | `players` | name, gender (M/F/U), setting (M main / B backup / N), playing, active, tier | `tier` is the stand-in level (beginner, average, strong) for players nobody has rated. |
 | `ratings` | rater_id, player_id, receiving, hitting, hustle, serve, blocking, consistency | One row per rater per player. Values are 0, .25, .5, .75, 1, or null for U. |
+| `rating_history` | rater_id, player_id, skill, old_value, new_value, changed_by, changed_at | Written only by the `ratings_history` trigger, one row per changed skill. Taps on the same skill by the same person within 10 minutes merge into one row. Super reads all rows; everyone else reads their own (rater_id = them). No foreign keys, so it outlives removed players and raters. |
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
 
@@ -75,7 +76,7 @@ Combos (play together / keep apart) are **not stored**. The Teams page keeps the
 | Page | Roles | Talks to |
 |---|---|---|
 | Rate | all | `ratings` (own rows, upsert per tap), `players` |
-| My ratings / All ratings | all; super sees everything | `ratings`; super also runs `combineRatings` in the browser |
+| My ratings / All ratings | all; super sees everything | `ratings`, `rating_history` (own rows; super all); super also runs `combineRatings` in the browser |
 | Players | organizer, super | `players` (update; super insert/delete) |
 | Teams | organizer, super | `build-teams` function |
 | Users | super | `profiles`, `admin` function |

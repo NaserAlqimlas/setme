@@ -16,7 +16,7 @@ How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 ## What's in the app
 
 - **Rate**: six buttons per skill (U, 0, .25, .5, .75, 1) for receiving, hitting, hustle, serve, blocking and consistency. Every tap saves. A rating guide slides in from the side (up from the bottom on phones) and jumps to the skill you're rating. Filters for this session's players and for players you haven't rated. CSV template and import; super can import on behalf of another rater.
-- **My ratings / All ratings**: sortable table (tap a column, or use Sort by on phones).
+- **My ratings / All ratings**: sortable table (tap a column, or use Sort by on phones). Below it, **Rating history**: which rating changed, from what to what, and when. Raters and organizers see their own changes; super sees everyone's, with who made them. A chart shows how many ratings changed each day. Tap a player's name (or pick them in the Player box) to see just theirs, with a chart: their skills over time from one rater, or each rater's total over time.
 - **Players**: paste the WhatsApp list to set who's playing (names after "Waitlist" are left out). Super adds a new player with a stand-in level (Beginner, Average, Strong) used until someone rates them.
 - **Teams**: combos for this build only (play together / keep apart, not saved), New players card for unrated players, number of teams, date, build. Each option can be copied as text or shared as a court-map image.
 - **Users** (super): create invite and password-reset links to send yourself, change roles, remove people.
@@ -60,6 +60,8 @@ alter table public.players add column if not exists tier text check (tier in ('b
 alter table public.ratings add column if not exists consistency numeric(3,2) check (consistency in (0, .25, .5, .75, 1));
 drop table if exists public.combos;  -- combos are no longer saved
 ```
+
+Rating history: paste and run `supabase/rating_history.sql` (safe to run again if you ran an earlier version). It records changes from then on; earlier changes weren't kept.
 
 ## Running it locally
 

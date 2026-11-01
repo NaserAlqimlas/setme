@@ -55,6 +55,51 @@ begin new.updated_at = now(); return new; end $$;
 create trigger ratings_touch before update on public.ratings
   for each row execute function public.touch_updated_at();
 
+-- Every rating change, one row per skill. Filled by a trigger, so taps, CSV imports and SQL edits all land here.
+-- Taps by the same person on the same skill within 10 minutes merge into one row (tapping back to the start removes it).
+-- No foreign keys: history outlives a removed player or rater.
+create table public.rating_history (
+  id bigint generated always as identity primary key,
+  rater_id uuid not null,
+  player_id bigint not null,
+  skill text not null,
+  old_value numeric(3,2),   -- null = U, or no rating yet
+  new_value numeric(3,2),   -- null = U, or rating deleted
+  changed_by uuid,          -- who made the change (super importing for someone else, null from the SQL editor)
+  changed_at timestamptz not null default now()
+);
+create index rating_history_recent on public.rating_history (changed_at desc);
+
+create function public.log_rating_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  oldj jsonb := case when tg_op = 'INSERT' then '{}' else to_jsonb(old) end;
+  newj jsonb := case when tg_op = 'DELETE' then '{}' else to_jsonb(new) end;
+  rid uuid := coalesce(newj->>'rater_id', oldj->>'rater_id')::uuid;
+  pid bigint := coalesce(newj->>'player_id', oldj->>'player_id')::bigint;
+  s text; o numeric; n numeric; prev public.rating_history;
+begin
+  foreach s in array array['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'consistency'] loop
+    o := (oldj->>s)::numeric; n := (newj->>s)::numeric;
+    continue when o is not distinct from n;
+    select * into prev from public.rating_history
+      where rater_id = rid and player_id = pid and skill = s
+        and changed_by is not distinct from auth.uid() and changed_at > now() - interval '10 minutes'
+      order by changed_at desc limit 1;
+    if not found then
+      insert into public.rating_history (rater_id, player_id, skill, old_value, new_value, changed_by)
+      values (rid, pid, s, o, n, auth.uid());
+    elsif prev.old_value is not distinct from n then
+      delete from public.rating_history where id = prev.id;
+    else
+      update public.rating_history set new_value = n, changed_at = now() where id = prev.id;
+    end if;
+  end loop;
+  return null;
+end $$;
+create trigger ratings_history after insert or update or delete on public.ratings
+  for each row execute function public.log_rating_change();
+
 -- Role of the signed-in user (security definer so policies can read it without recursion).
 create function public.my_role() returns text
 language sql stable security definer set search_path = public as $$
@@ -64,6 +109,7 @@ $$;
 alter table public.profiles enable row level security;
 alter table public.players  enable row level security;
 alter table public.ratings  enable row level security;
+alter table public.rating_history enable row level security;
 
 -- profiles: see yourself; super sees and edits everyone but can't create another super.
 create policy profiles_read on public.profiles for select to authenticated
@@ -90,3 +136,7 @@ create policy ratings_delete on public.ratings for delete to authenticated using
 -- super can also import ratings on behalf of another rater (CSV import).
 create policy ratings_super_write on public.ratings for all to authenticated
   using (public.my_role() = 'super') with check (public.my_role() = 'super');
+
+-- rating_history: super reads everything, everyone else their own; only the trigger writes it.
+create policy rating_history_read on public.rating_history for select to authenticated
+  using (public.my_role() = 'super' or rater_id = auth.uid());
