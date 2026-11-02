@@ -1,10 +1,11 @@
 // Read a ratings CSV: name,receiving,hitting,setting,hustle,serve,blocking[,consistency] (extra columns are ignored).
+// The setting column holds setter letters (M/B/N) and is ignored; the Setting rating is setting_skill, optional like consistency.
 // Consistency is optional, so older files still import; without the column, saved consistency ratings are left alone.
 import { SKILLS, RATED } from './teams.mjs';
 import { findPlayer } from './paste.mjs';
 
 const VALID = [0, .25, .5, .75, 1];
-const ALIASES = { consistent: 'consistency', consistancy: 'consistency', recieving: 'receiving', reception: 'receiving', passing: 'receiving', hit: 'hitting', attack: 'hitting', serving: 'serve', block: 'blocking', player: 'name' };
+const ALIASES = { 'setting skill': 'setting_skill', 'setting rating': 'setting_skill', consistent: 'consistency', consistancy: 'consistency', recieving: 'receiving', reception: 'receiving', passing: 'receiving', hit: 'hitting', attack: 'hitting', serving: 'serve', block: 'blocking', player: 'name' };
 
 // Minimal CSV: quoted fields, commas or semicolons (some Excel locales save with ';').
 export function parseCsv(text) {
@@ -66,5 +67,5 @@ export function readRatingsCsv(text, players) {
 // A blank template with every current player's name.
 export function ratingsTemplate(players) {
   const esc = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  return '\uFEFF' + ['name,receiving,hitting,setting,hustle,serve,blocking,consistency', ...players.map(p => `${esc(p.name)},,,,,,,`)].join('\r\n') + '\r\n';
+  return '\uFEFF' + ['name,receiving,hitting,setting,hustle,serve,blocking,consistency,setting_skill', ...players.map(p => `${esc(p.name)},,,,,,,,`)].join('\r\n') + '\r\n';
 }

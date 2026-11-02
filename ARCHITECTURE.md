@@ -54,7 +54,7 @@ tests/                  node scripts, no framework
 |---|---|---|
 | `profiles` | id (auth user), email, display_name, role | Created by a trigger when an auth user is created. Role is rater, organizer or super. |
 | `players` | name, gender (M/F/U), setting (M main / B backup / N), playing, active, tier | `tier` is the stand-in level (beginner, average, strong) for players nobody has rated. |
-| `ratings` | rater_id, player_id, receiving, hitting, hustle, serve, blocking, consistency | One row per rater per player. Values are 0, .25, .5, .75, 1, or null for U. |
+| `ratings` | rater_id, player_id, receiving, hitting, hustle, serve, blocking, setting_skill, consistency | One row per rater per player. Values are 0, .25, .5, .75, 1, or null for U. |
 | `rating_history` | rater_id, player_id, skill, old_value, new_value, changed_by, changed_at | Written only by the `ratings_history` trigger, one row per changed skill. Taps on the same skill by the same person within 10 minutes merge into one row. Super reads all rows; everyone else reads their own (rater_id = them). No foreign keys, so it outlives removed players and raters. |
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
@@ -130,7 +130,7 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
 
 1. Check the caller is organizer or super.
 2. Load active players and all ratings with the secret key. If the super passed `raters`, keep only those raters' ratings.
-3. `combineRatings`, then `buildTeams` with the combos from the request (`useCombos` off sends none).
+3. `combineRatings`, then `teamSkills` with `allGame` (setters who set all game: Setting counts ×`SETTING_WEIGHT`, receiving and hitting shrink by `ALL_GAME`; team strength = `strength(sk)`), then `buildTeams` with the combos from the request (`useCombos` off sends none).
    With `teams: [[playerId, ...], ...]` (Your own teams) it skips building and runs `describeTeam` on each team as given, any active players, so the result looks like one built option. It also returns `problems` (`teamProblems`) and up to three `suggestions` (`suggestSwaps`: every one-for-one swap, then pairs of the 40 best, scored with the same `makeScorer` cost as `buildTeams`; `locked` players and together pairs already on one team stay put; split together pairs add 1e6 each, so reuniting them outranks any balance gain, like combos being a hard rule in `buildTeams`). Super can pass `suggestRater` to get problems and suggestions from one rater's ratings alone (the Show ratings from chip). Organizers get suggestions without `gap` and without the weak-passer / inconsistent-player notes.
 4. Super: each option also gets `byRater`, every picked rater's weighted team totals and skill sums from their ratings alone (`guessed` counts players they haven't rated).
 5. Non-super callers: drop scores, sums, totals and `byRater`; players reduced to `{ name, setting }`.

@@ -31,6 +31,8 @@ create table public.ratings (
   hustle    numeric(3,2) check (hustle    in (0, .25, .5, .75, 1)),
   serve     numeric(3,2) check (serve     in (0, .25, .5, .75, 1)),
   blocking  numeric(3,2) check (blocking  in (0, .25, .5, .75, 1)),
+  -- How well they set. Rated for setters only; counts only while they set all game.
+  setting_skill numeric(3,2) check (setting_skill in (0, .25, .5, .75, 1)),
   -- How steady they are day to day. Not part of strength; the team builder spreads low ones out.
   consistency numeric(3,2) check (consistency in (0, .25, .5, .75, 1)),
   updated_at timestamptz not null default now(),
@@ -79,7 +81,7 @@ declare
   pid bigint := coalesce(newj->>'player_id', oldj->>'player_id')::bigint;
   s text; o numeric; n numeric; prev public.rating_history;
 begin
-  foreach s in array array['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'consistency'] loop
+  foreach s in array array['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'] loop
     o := (oldj->>s)::numeric; n := (newj->>s)::numeric;
     continue when o is not distinct from n;
     select * into prev from public.rating_history

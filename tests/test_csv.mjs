@@ -28,5 +28,7 @@ check(t.blank.join() === 'HQ', 'blank row');
 check(readRatingsCsv('name,receiving\nReem,.5', players).errors[0].startsWith('Missing columns'), 'missing columns');
 const tpl = readRatingsCsv(ratingsTemplate(players), players);
 check(tpl.blank.length === 27 && tpl.errors.length === 0, 'template round-trips');
+const ss = readRatingsCsv('name,receiving,hitting,setting,hustle,serve,blocking,setting skill\nReem,.5,.5,M,.5,.5,.5,.75\nAdi,.5,.5,N,.5,.5,.5,', players);
+check(ss.errors.length === 0 && ss.rows[0].values.setting_skill === .75 && ss.rows[1].values.setting_skill === null, 'setting letters ignored, setting skill read');
 console.log(fail ? `${fail} checks failed` : 'all checks passed');
 process.exit(fail ? 1 : 0);

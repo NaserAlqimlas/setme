@@ -5,7 +5,12 @@ export const SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking'];
 export const WEIGHTS = { receiving: 1.5, hitting: 1.25, hustle: .75, serve: 1, blocking: .5 };
 // Everything raters rate. Consistency (how steady a player is day to day) isn't part of strength: it never adds to a
 // total, it only spreads the least steady players across teams.
-export const RATED = [...SKILLS, 'consistency'];
+// Setting (how well they set) is rated only for setters and only counts while they set all game (see teamSkills).
+export const RATED = [...SKILLS, 'setting_skill', 'consistency'];
+// A setter who sets all game: their setting counts, while hitting and receiving count for less (they rarely attack,
+// and teams hide them from passing serve). Serve, hustle and blocking count in full. Tune here.
+export const SETTING_WEIGHT = 1.25;
+export const ALL_GAME = { receiving: .5, hitting: .25 };
 // Stand-in levels for players nobody has rated: the group's lower quartile, average and upper quartile.
 export const TIERS = ['beginner', 'average', 'strong'];
 const MIN_RATINGS_FOR_OFFSET = 5; // a rater needs this many shared ratings in a skill before we adjust for them
@@ -113,6 +118,23 @@ export function combineRatings(players, ratings) {
 }
 
 export const weightedTotal = sk => SKILLS.reduce((a, s) => a + sk[s] * WEIGHTS[s], 0);
+// A player's worth to a team: weighted skills, plus setting for a setter who sets all game (setEff, from teamSkills).
+export const strength = sk => weightedTotal(sk) + (sk.setEff ?? 0) * SETTING_WEIGHT;
+
+// Skills as they count on a team. allGame: ids of setters who set all game; their receiving and hitting shrink
+// (ALL_GAME) and their setting counts (setEff; unrated setting = the setters' average, or .5). Everyone else: as rated.
+export function teamSkills(players, combined, allGame) {
+  const known = players.filter(p => p.setting !== 'N').map(p => combined.get(p.id)?.skills.setting_skill).filter(v => v != null);
+  const avgSet = known.length ? known.reduce((a, b) => a + b, 0) / known.length : .5;
+  return new Map(players.map(p => {
+    const sk = combined.get(p.id).skills;
+    if (!allGame.has(p.id)) return [p.id, { ...sk, setEff: 0, allGame: false }];
+    return [p.id, { ...sk, receiving: sk.receiving * ALL_GAME.receiving, hitting: sk.hitting * ALL_GAME.hitting,
+      setEff: sk.setting_skill ?? avgSet, allGame: true }];
+  }));
+}
+// Weak passer: receiving .25 or below, unless they set all game (they're kept out of serve receive).
+const weakPasser = sk => !sk.allGame && sk.receiving <= .25;
 
 // players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N', unrated?: bool}], skills: Map id -> {receiving..}
 // combos: [[idA, idB]] play together; apart: [[idA, idB]] must not share a team. Pairs with someone not in `players` are skipped.
@@ -236,13 +258,14 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
 }
 
 // Per-player features and the score of a split (lower is better), shared by buildTeams and suggestSwaps.
-// Fields per player/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players,
-// inconsistent players, then one per keep-apart pair. cost(agg) reads the per-team sums of those fields (T * F).
+// Fields per player/team: 5 weighted skills, weighted setting (all-game setters only), main setters, backup setters,
+// women, weak passers, unrated players, inconsistent players, then one per keep-apart pair. The first NSK fields make
+// up a team's strength. cost(agg) reads the per-team sums of those fields (T * F).
 function makeScorer(players, skills, apartUsed, T) {
-  const BASE = 11, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, SHAKY = 10, F = BASE + apartUsed.length;
+  const NSK = 6, MAIN = 6, BACK = 7, WOMEN = 8, WEAK = 9, GUESS = 10, SHAKY = 11, BASE = 12, F = BASE + apartUsed.length;
   const feat = players.map(p => {
     const sk = skills.get(p.id);
-    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
+    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), (sk.setEff ?? 0) * SETTING_WEIGHT, +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +weakPasser(sk), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
       ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
   });
 
@@ -250,11 +273,11 @@ function makeScorer(players, skills, apartUsed, T) {
 
   function cost(agg) {
     let c = 0, m = 0;
-    for (let t = 0; t < T; t++) { let s = 0; for (let f = 0; f < 5; f++) s += agg[t * F + f]; tot[t] = s; m += s; }
+    for (let t = 0; t < T; t++) { let s = 0; for (let f = 0; f < NSK; f++) s += agg[t * F + f]; tot[t] = s; m += s; }
     m /= T;
     let hi = -Infinity, lo = Infinity;
     for (let t = 0; t < T; t++) { c += 4 * (tot[t] - m) ** 2; hi = Math.max(hi, tot[t]); lo = Math.min(lo, tot[t]); }
-    for (let f = 0; f < 5; f++) {
+    for (let f = 0; f < NSK; f++) {
       let cm = 0; for (let t = 0; t < T; t++) cm += agg[t * F + f]; cm /= T;
       for (let t = 0; t < T; t++) c += (agg[t * F + f] - cm) ** 2;
     }
@@ -292,12 +315,13 @@ function makeScorer(players, skills, apartUsed, T) {
 
 export function describeTeam(members, skills) {
   const rank = p => ({ M: 0, B: 1 })[p.setting] ?? 2;
-  const ps = [...members].sort((a, b) => rank(a) - rank(b) || weightedTotal(skills.get(b.id)) - weightedTotal(skills.get(a.id)));
-  const sums = Object.fromEntries(SKILLS.map(s => [s, ps.reduce((a, p) => a + skills.get(p.id)[s], 0)]));
+  const ps = [...members].sort((a, b) => rank(a) - rank(b) || strength(skills.get(b.id)) - strength(skills.get(a.id)));
+  // sums.setting: setting of the team's all-game setters (0 when nobody sets all game).
+  const sums = Object.fromEntries([...SKILLS.map(s => [s, ps.reduce((a, p) => a + skills.get(p.id)[s], 0)]), ['setting', ps.reduce((a, p) => a + (skills.get(p.id).setEff ?? 0), 0)]]);
   return {
-    players: ps.map(p => ({ id: p.id, name: p.name, setting: p.setting, gender: p.gender, weak: skills.get(p.id).receiving <= .25 })),
+    players: ps.map(p => ({ id: p.id, name: p.name, setting: p.setting, gender: p.gender, weak: weakPasser(skills.get(p.id)), allGame: !!skills.get(p.id).allGame })),
     sums,
-    weighted: ps.reduce((a, p) => a + weightedTotal(skills.get(p.id)), 0),
+    weighted: ps.reduce((a, p) => a + strength(skills.get(p.id)), 0),
   };
 }
 
@@ -338,32 +362,42 @@ const clamp = v => Math.min(1, Math.max(0, v));
 
 // What's off about a split, in plain words, using the same rules buildTeams balances.
 // teams: [[player, ...], ...] (players with id, name, setting, gender, unrated); skills: Map id -> skills.
+// -> [{ key, text, short, rating }]: key stays the same while the problem lasts (to tell fixed from new after a swap),
+// text is the full story with every team's count and names, short fits in a suggestion line, rating = comes from ratings.
 export function teamProblems(teams, skills, apart = [], together = []) {
   const out = [];
   const label = k => `Team ${k + 1}`;
-  const count = fn => teams.map(t => t.filter(fn).length);
+  const names = ps => ps.map(p => p.name).join(', ');
   teams.forEach((t, k) => {
-    const mains = t.filter(p => p.setting === 'M').length, backs = t.filter(p => p.setting === 'B').length;
-    if (!mains && !backs) out.push(`${label(k)} has no setter`);
-    else if (mains > 1) out.push(`${label(k)} has ${mains} main setters`);
+    const mains = t.filter(p => p.setting === 'M'), backs = t.filter(p => p.setting === 'B');
+    if (!mains.length && !backs.length) out.push({ key: `nosetter:${k}`, short: `${label(k)} has no setter`, text: `${label(k)} has no setter or backup setter` });
+    else if (mains.length > 1) out.push({ key: `mains:${k}`, short: `${label(k)} has ${mains.length} main setters`, text: `${label(k)} has ${mains.length} main setters (${names(mains)})` });
   });
-  const spread = (fn, what) => {
-    const c = count(fn), hi = Math.max(...c), lo = Math.min(...c);
-    if (hi - lo >= 2) out.push(`${what} are bunched up (${label(c.indexOf(hi))} has ${hi}, ${label(c.indexOf(lo))} has ${lo})`);
+  // Groups that should be spread out: every team's count and who, when the most and fewest differ by 2 or more.
+  const spread = (key, fn, what, rule, rating) => {
+    const per = teams.map(t => t.filter(fn)), c = per.map(x => x.length), hi = Math.max(...c), lo = Math.min(...c);
+    if (hi - lo < 2) return;
+    const each = per.map((x, k) => `${label(k)} has ${x.length ? `${x.length} (${names(x)})` : 'none'}`).join(' · ');
+    out.push({ key: `spread:${key}`, rating, short: `${what.toLowerCase()} bunched up`,
+      text: `${what}${rule ? ` (${rule})` : ''} are bunched up: ${each}. Best is no more than 1 apart.` });
   };
-  spread(p => skills.get(p.id).receiving <= .25, 'Weak passers');
-  spread(p => p.gender === 'F', 'Women');
-  spread(p => p.unrated, 'Unrated players');
-  spread(p => (skills.get(p.id).consistency ?? .5) <= .25, 'Inconsistent players');
+  spread('weak', p => weakPasser(skills.get(p.id)), 'Weak passers', 'receiving .25 or below, not counting setters who set all game', true);
+  spread('women', p => p.gender === 'F', 'Women', '', false);
+  spread('unrated', p => p.unrated, 'Unrated players', 'no ratings yet, so a stand-in level is used', false);
+  spread('shaky', p => (skills.get(p.id).consistency ?? .5) <= .25, 'Inconsistent players', 'consistency .25 or below', true);
   for (const [a, b] of apart) {
-    const t = teams.find(t => t.some(p => p.id === a) && t.some(p => p.id === b));
-    if (t) out.push(`${t.find(p => p.id === a).name} and ${t.find(p => p.id === b).name} are on the same team (keep apart)`);
+    const k = teams.findIndex(t => t.some(p => p.id === a) && t.some(p => p.id === b));
+    if (k < 0) continue;
+    const pair = `${teams[k].find(p => p.id === a).name} and ${teams[k].find(p => p.id === b).name}`;
+    out.push({ key: `apart:${a}-${b}`, short: `${pair} together`, text: `${pair} are both on ${label(k)} (set to keep apart)` });
   }
   for (const [a, b] of together) {
     const ta = teams.findIndex(t => t.some(p => p.id === a)), tb = teams.findIndex(t => t.some(p => p.id === b));
-    if (ta >= 0 && tb >= 0 && ta !== tb) out.push(`${teams[ta].find(p => p.id === a).name} and ${teams[tb].find(p => p.id === b).name} are on different teams (play together)`);
+    if (ta < 0 || tb < 0 || ta === tb) continue;
+    const pa = teams[ta].find(p => p.id === a).name, pb = teams[tb].find(p => p.id === b).name;
+    out.push({ key: `together:${a}-${b}`, short: `${pa} and ${pb} apart`, text: `${pa} is on ${label(ta)} and ${pb} is on ${label(tb)} (set to play together)` });
   }
-  return out;
+  return out.map(x => ({ rating: false, ...x }));
 }
 
 // Smallest changes that make your own teams better by buildTeams' score: one-for-one swaps, then pairs of swaps.

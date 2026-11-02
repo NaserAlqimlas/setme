@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, RATED, TIERS, WEIGHTS, combineRatings, weightedTotal } from './teams.mjs';
+import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
@@ -10,8 +10,10 @@ let lockChain = Promise.resolve();
 const lock = (_name, _timeout, fn) => { const run = lockChain.then(fn, fn); lockChain = run.catch(() => {}); return run; };
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { lock } });
 const app = document.getElementById('app');
-const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', blocking: 'Blk', consistency: 'Con' };
-const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking', consistency: 'Consistency' };
+const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', blocking: 'Blk', setting_skill: 'Set', consistency: 'Con' };
+const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking', setting_skill: 'Setting', consistency: 'Consistency' };
+// Rated only for players marked as setters (main or backup).
+const forPlayer = (s, p) => s !== 'setting_skill' || (p.setting && p.setting !== 'N');
 const RATING_OPTIONS = [[null, 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
 const TIER_OPTIONS = TIERS.map(t => [t, t[0].toUpperCase() + t.slice(1)]);
 const TEAM_COLORS = ['#2f6fde', '#e8663a', '#18a36f', '#c99400', '#8b5cf6', '#d6407a'];
@@ -228,6 +230,12 @@ const GUIDE = {
     'Gets up and sometimes gets a touch.',
     'Blocks well-timed and often gets a hand on it.',
     'Reads the hitter, times it well, stuffs balls.'],
+  setting_skill: ['How well they set: getting the second ball to a hitter they can attack. Only for setters, and only counts when they set all game.',
+    'Can\'t set a hittable ball yet.',
+    'Gets it up, but often too low, too tight or off the net.',
+    'Hittable most of the time from a decent pass.',
+    'Consistent, well-placed sets, and rescues some bad passes.',
+    'Runs the offence: picks the right hitter, sets anything, hides bad passes.'],
   consistency: ['How steady they are from one day to the next. It doesn\'t add to their total; the most unpredictable players are spread across teams instead.',
     'You never know which version shows up.',
     'Good days and bad days, often in the same week.',
@@ -274,7 +282,7 @@ function ratingGuide(onToggle) {
 
 async function ratePage() {
   const [players, mine] = await Promise.all([
-    q(sb.from('players').select('id,name,playing').eq('active', true).order('name')),
+    q(sb.from('players').select('id,name,playing,setting').eq('active', true).order('name')),
     q(sb.from('ratings').select('*').eq('rater_id', me.id)),
   ]);
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
@@ -293,8 +301,11 @@ async function ratePage() {
 
   const save = async (pid, skill, value) => {
     const row = { ...Object.fromEntries(RATED.map(s => [s, null])), ...byPlayer.get(pid), [skill]: value };
+    // Send Setting only when it's the skill tapped or the saved row has it, so other taps still save before the
+    // setting_skill column is added in Supabase.
+    const cols = RATED.filter(s => s !== 'setting_skill' || skill === s || (byPlayer.get(pid) && s in byPlayer.get(pid)));
     try {
-      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(RATED.map(s => [s, row[s]])) }).select().single());
+      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(cols.map(s => [s, row[s]])) }).select().single());
       byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); toast('Saved');
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
@@ -314,7 +325,7 @@ async function ratePage() {
     totals.set(p.id, paint); paint();
     return h('div', { class: 'card player-card' },
       h('header', {}, avatar(p.name), h('b', {}, p.name), p.playing && h('span', { class: 'badge on' }, 'Playing')),
-      RATED.map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
+      RATED.filter(s => forPlayer(s, p)).map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
         seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
       totalEl);
   };
@@ -489,6 +500,30 @@ async function playersPage() {
 // Pairs who play together (always same team) or apart (never same team), for this build only. Nothing is saved:
 // they last while the page is open (switching tabs keeps them) and are sent along when teams are built.
 let sessionCombos = [];
+// Which setters set all game, for this session (not saved): player id -> true / false. Not set yet = main setters do.
+const setterPlan = new Map();
+const setsAllGame = p => setterPlan.get(p.id) ?? p.setting === 'M';
+const allGameIds = players => players.filter(p => p.setting && p.setting !== 'N' && setsAllGame(p)).map(p => p.id);
+const setterPlanChanged = () => document.dispatchEvent(new Event('setterplan'));
+
+// Tonight's setters: who sets all game (their Setting counts, hitting and receiving count for less) and who rotates.
+function settersCard(playing) {
+  const setters = playing.filter(p => p.setting === 'M' || p.setting === 'B');
+  const card = h('div', { class: 'card', hidden: !setters.length });
+  const paint = () => {
+    if (!card.isConnected && card.dataset.drawn) return document.removeEventListener('setterplan', paint);
+    card.dataset.drawn = '1';
+    card.replaceChildren(
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Setters'),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Who sets the whole game? Their setting counts; their hitting and passing count for less. Rotating setters count like everyone else.'))),
+      h('div', { class: 'new-players' }, setters.map(p => h('div', { class: 'new-player' },
+        h('span', {}, h('b', {}, p.name), ' ', h('span', { class: `badge ${p.setting === 'M' ? 'set' : 'backup'}` }, p.setting === 'M' ? 'Setter' : 'Backup')),
+        seg([[true, 'All game'], [false, 'Rotates']], setsAllGame(p), v => { setterPlan.set(p.id, v); setterPlanChanged(); }, `${p.name} sets`)))));
+  };
+  paint();
+  document.addEventListener('setterplan', paint);
+  return card;
+}
 function comboCard(playing, combos) {
   const name = new Map(playing.map(p => [p.id, p.name]));
   const card = h('div', { class: 'card' });
@@ -529,7 +564,7 @@ function comboCard(playing, combos) {
 }
 
 async function teamsPage() {
-  const playing = await q(sb.from('players').select('id,name').eq('playing', true).eq('active', true).order('name'));
+  const playing = await q(sb.from('players').select('id,name,setting').eq('playing', true).eq('active', true).order('name'));
   const combos = sessionCombos;
   let numTeams = 4, useCombos = true;
   // Super only: whose ratings to build from. null = everyone's.
@@ -551,13 +586,14 @@ async function teamsPage() {
   const btn = h('button', { class: 'ball big' }, 'Build teams');
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Building…';
-    try { out.replaceChildren(...showTeams(await callFn('build-teams', { numTeams, useCombos, raters: raterIds, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }))); out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    try { out.replaceChildren(...showTeams(await callFn('build-teams', { numTeams, useCombos, raters: raterIds, allGame: allGameIds(playing), combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }))); out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
     btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
   return h('div', {},
     pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
     comboCard(playing, combos),
+    settersCard(playing),
     newPlayers,
     ownTeams,
     h('div', { class: 'card build-bar' },
@@ -572,7 +608,7 @@ async function teamsPage() {
 // Teams you made yourself: paste them or upload a text/CSV file, then see the same numbers and sharing as a built option.
 function ownTeamsCard(out, getOptions) {
   let players = null;
-  const roster = () => players ??= q(sb.from('players').select('id,name').eq('active', true).order('name'));
+  const roster = () => players ??= q(sb.from('players').select('id,name,setting').eq('active', true).order('name'));
   const box = h('textarea', { rows: 5, 'aria-label': 'Your teams',
     placeholder: 'Team 1: Reem, Mishal, HQ\nTeam 2: Fuwaires, Nasser, Adi\n\nOr a "Team" line then one name per line.' });
   const fileInput = h('input', { type: 'file', accept: '.txt,.csv,text/plain,text/csv', hidden: true });
@@ -612,10 +648,14 @@ function ownTeamsCard(out, getOptions) {
     const opts = getOptions();
     if (opts.raters?.length === 0) return out.replaceChildren(h('p', { class: 'warn' }, 'Please select at least one rater.'));
     if (viewRater && opts.raters && !opts.raters.includes(viewRater)) viewRater = null;
-    const res = await callFn('build-teams', { teams: current, locked: [...locked], suggestRater: viewRater, ...opts });
+    const res = await callFn('build-teams', { teams: current, locked: [...locked], suggestRater: viewRater, allGame: allGameIds(await roster()), ...opts });
     const toggleLock = id => { locked.has(id) ? locked.delete(id) : locked.add(id); run().catch(e => toast(e.message)); };
     const onView = id => { viewRater = id; run().catch(e => toast(e.message)); };
-    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, extra: suggestionsPanel(res) }));
+    const onSetter = async id => {
+      const p = (await roster()).find(x => x.id === id);
+      setterPlan.set(id, !setsAllGame(p)); setterPlanChanged();
+    };
+    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, extra: suggestionsPanel(res) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   const suggestionsPanel = res => {
@@ -662,6 +702,7 @@ function ownTeamsCard(out, getOptions) {
       preview));
   // Ratings from changed at the top: re-check teams already on screen.
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
+  document.addEventListener('setterplan', () => card.refresh());
   return card;
 }
 
@@ -697,7 +738,17 @@ function shareButton(teams, i) {
   return btn;
 }
 
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, extra } = {}) {
+// Setter / Backup badge with how they play tonight. With onSetter (your own teams) it's a button that flips all game / rotates.
+function setterBadge(p, onSetter) {
+  if (p.setting !== 'M' && p.setting !== 'B') return null;
+  const text = `${p.setting === 'M' ? 'Setter' : 'Backup'}${p.allGame ? ' · all game' : ''}`;
+  const cls = `badge ${p.setting === 'M' ? 'set' : 'backup'}`;
+  if (!onSetter || p.id == null) return h('span', { class: cls }, text);
+  return h('button', { type: 'button', class: `${cls} badge-btn`, 'aria-pressed': String(!!p.allGame),
+    title: p.allGame ? `${p.name} sets all game (tap: rotates)` : `${p.name} rotates (tap: sets all game)`, onclick: () => onSetter(p.id) }, text);
+}
+
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, extra } = {}) {
   const detail = me.role === 'super';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
@@ -706,6 +757,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, ex
     const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
     let view = views.find(v => v.id === viewId) ?? views[0];
+    const withSet = opt.teams.some(t => t.players.some(p => p.allGame));
     const gapLine = h('p', { class: 'muted small', style: 'margin:2px 0 0' });
     const grid = h('div', { class: 'team-grid' });
     const guessNote = h('p', { class: 'muted small', hidden: true });
@@ -716,10 +768,10 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, ex
         h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
           h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', {}, p.name),
-          p.setting === 'M' ? h('span', { class: 'badge set' }, 'Setter') : p.setting === 'B' ? h('span', { class: 'badge backup' }, 'Backup') : null,
+          setterBadge(p, onSetter),
           onLock && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(locked.has(p.id)),
             title: locked.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id) }, locked.has(p.id) ? '🔒' : '🔓')))),
-        detail && h('div', { class: 'stats' }, SKILLS.map(s => h('div', {}, h('small', {}, SHORT[s]), h('b', {}, fmt(view.sums[k][s]))))))));
+        detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', {}, h('small', {}, s === 'setting' ? 'Set' : SHORT[s]), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
       guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their stand-in level was used.`;
     };
@@ -739,7 +791,8 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, ex
       grid, detail && guessNote, i === 0 && extra));
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
-  if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`));
+  if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`,
+    res.options.some(o => o.teams.some(t => t.players.some(p => p.allGame))) && ` Setters who set all game add their Setting ×${fmt(SETTING_WEIGHT)}, with their receiving at ${ALL_GAME.receiving * 100}% and hitting at ${ALL_GAME.hitting * 100}%.`));
   return parts;
 }
 
@@ -805,7 +858,7 @@ async function raterPicker(onchange, preload) {
 async function ratingsPage() {
   const all = me.role === 'super';
   const [players, ratings, profiles] = await Promise.all([
-    q(sb.from('players').select('id,name,playing,tier').eq('active', true).order('name')),
+    q(sb.from('players').select('id,name,playing,tier,setting').eq('active', true).order('name')),
     all ? q(sb.from('ratings').select('*')) : q(sb.from('ratings').select('*').eq('rater_id', me.id)),
     all ? q(sb.from('profiles').select('id,display_name')) : [],
   ]);
@@ -886,7 +939,7 @@ async function ratingsPage() {
     body.replaceChildren(...rows.map(({ p, vals, key }) => {
       const guess = all && !rid && combined.get(p.id).guess;
       return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name), p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
-        guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map(v => h('td', { class: 'num' }, fmt(v))),
+        guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map((v, i) => h('td', { class: 'num' }, forPlayer(RATED[i], p) ? fmt(v) : '–')),
         h('td', { class: 'num' }, h('b', {}, fmt(key.total))),
         h('td', { class: 'num' }, fmt(key.weighted)),
         all && h('td', { class: 'num' }, rid ? '' : `${key.raters}`));
@@ -996,7 +1049,7 @@ const svg = (tag, attrs = {}, ...kids) => {
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
   return el;
 };
-const SLOTS = 6;
+const SLOTS = 7;
 function historyChart(box, { log, ratings, pid, mode, raters, slotOf, name }) {
   const num = v => v == null ? null : Number(v);
   const now = Date.now();
@@ -1016,6 +1069,8 @@ function historyChart(box, { log, ratings, pid, mode, raters, slotOf, name }) {
   const times = [...new Set(lines.flatMap(l => l.rows.map(r => r.t)))].sort((a, b) => a - b);
   const series = mode === 'skill'
     ? RATED.map((sk, i) => ({ key: sk, label: LABEL[sk], slot: i, value: t => at(lines[0].out[sk], t) }))
+      // Setting only for players who have a setting rating at some point.
+      .filter(se => se.key !== 'setting_skill' || lines[0].out.setting_skill.some(([, v]) => v != null))
     : lines.map(l => ({ key: l.rid, label: name(l.rid), slot: slotOf(l.rid), value: t => {
         const vs = SKILLS.map(sk => at(l.out[sk], t));
         return vs.some(v => v == null) ? null : vs.reduce((a, b) => a + b, 0);

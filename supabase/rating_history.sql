@@ -24,7 +24,7 @@ declare
   pid bigint := coalesce(newj->>'player_id', oldj->>'player_id')::bigint;
   s text; o numeric; n numeric; prev public.rating_history;
 begin
-  foreach s in array array['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'consistency'] loop
+  foreach s in array array['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'] loop
     o := (oldj->>s)::numeric; n := (newj->>s)::numeric;
     continue when o is not distinct from n;
     select * into prev from public.rating_history
