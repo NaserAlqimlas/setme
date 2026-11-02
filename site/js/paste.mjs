@@ -48,3 +48,44 @@ export function matchPasted(text, players) {
   }
   return { matched, waitlist, unmatched };
 }
+
+// Teams you made yourself, pasted or from a file. Understands:
+//   "Team 1: Reem, Mishal (S), HQ"      one team per line (also what Copy text produces)
+//   "Team 1" / "Red team:" then one name per line, or teams separated by blank lines
+//   "Reem, Mishal, HQ"                   a line with commas (or tabs/semicolons, e.g. a CSV row) is one team
+// -> { teams: [{ label, players: [player], unmatched: [name] }], dupes: [name] } (a player listed twice stays in the first team)
+const HEADER = /^(team|group|squad|court)\b|\bteam\s*\S{0,3}$/i;
+export function parseTeams(text, players) {
+  const roster = players.map(p => ({ p, key: compact(p.name) })).filter(r => r.key);
+  const teams = [], dupes = [], seen = new Set();
+  let cur = null;
+  const start = label => (cur = { label, players: [], unmatched: [] }, teams.push(cur), cur);
+  const close = () => { cur = null; };
+  const add = name => {
+    const clean = name.replace(/\([^)]*\)|\[[^\]]*\]/g, '').trim();
+    const key = compact(clean);
+    if (!key) return;
+    if (!cur) start('');
+    const hit = lookup(key, roster);
+    if (!hit) return cur.unmatched.push(clean);
+    if (seen.has(hit.p.id)) return dupes.push(hit.p.name);
+    seen.add(hit.p.id); cur.players.push(hit.p);
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = cleanLine(raw.replace(/^﻿/, ''));
+    if (!compact(line)) { close(); continue; }
+    const m = line.match(/^([^:,;\t]{1,30}?)\s*[:：]\s*(.*)$/);
+    if (m && HEADER.test(m[1].trim())) {
+      start(m[1].trim());
+      m[2].split(/[,;\t|،]+/).forEach(add);
+      if (/[,;\t|،]/.test(m[2])) close();
+    } else if (HEADER.test(line) && !/[,;\t|،]/.test(line) && !lookup(compact(line), roster)) {
+      start(line.replace(/[:：]\s*$/, ''));
+    } else if (/[,;\t|،]/.test(line)) {
+      close(); start(''); line.split(/[,;\t|،]+/).forEach(add); close();
+    } else add(line);
+  }
+  const kept = teams.filter(t => t.players.length || t.unmatched.length);
+  kept.forEach((t, i) => { if (!t.label) t.label = `Team ${i + 1}`; });
+  return { teams: kept, dupes };
+}

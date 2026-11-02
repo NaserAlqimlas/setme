@@ -201,6 +201,33 @@ body, .top { transition: padding .28s ease; }
 .rater-chip[aria-pressed=false] .avatar { filter: grayscale(1); opacity: .5; }
 .rater-chip[aria-pressed=false] .tick { visibility: hidden; }
 .option { margin: 22px 0 8px; }
+.raters.view { margin: 0 0 12px; }
+.team li .lock { margin-left: auto; min-height: 32px; width: 32px; padding: 0; background: transparent; border-radius: 8px; font-size: .9rem; opacity: .45; }
+.team li .lock[aria-pressed=true] { opacity: 1; background: var(--surface-2); }
+.team li .badge + .lock { margin-left: 6px; }
+.suggestions { margin-top: 14px; }
+.problems { margin: 0 0 12px; padding-left: 20px; color: var(--warn-fg); }
+.problems li + li { margin-top: 2px; }
+.suggest-list { list-style: none; margin: 0; padding: 0; counter-reset: sg; }
+.suggest-list > li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); counter-increment: sg; }
+.suggest-list > li::before { content: counter(sg) '.'; font-weight: 700; color: var(--muted); align-self: flex-start; }
+.suggest-list > li:first-child { border-top: 0; }
+.warn-text { color: var(--warn-fg); }
+
+/* One at a time here: an unpicked chip is just quieter, not crossed out like in Ratings from. */
+.view-chips .rater-chip { padding-left: 12px; }
+.view-chips .rater-chip:has(.avatar) { padding-left: 5px; }
+.view-chips .rater-chip[aria-pressed=false] { border-style: solid; }
+.view-chips .rater-chip[aria-pressed=false] > span:not(.tick) { text-decoration: none; }
+.view-chips .rater-chip[aria-pressed=false] .avatar { filter: none; opacity: .7; }
+
+details.own summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; cursor: pointer; list-style: none; }
+details.own summary::-webkit-details-marker { display: none; }
+details.own summary h3 { margin: 0; }
+details.own summary h3::before { content: '▸'; display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
+details.own[open] summary h3::before { transform: rotate(90deg); }
+.own-body { margin-top: 12px; }
+
 .team-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 235px), 1fr)); }
 .team { --tc: var(--primary); background: var(--surface); border: 1px solid var(--line); border-top: 5px solid var(--tc); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); display: grid; gap: 10px; align-content: start; }
 .team header { display: flex; align-items: baseline; justify-content: space-between; }

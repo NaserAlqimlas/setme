@@ -125,14 +125,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   // Keep-apart pairs: each gets its own field, 1 for both players, so a team scoring 2 on it has the pair together.
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
 
-  // Fields per player/unit/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players,
-  // inconsistent players, then one per keep-apart pair.
-  const BASE = 11, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, SHAKY = 10, F = BASE + apartUsed.length;
-  const feat = players.map(p => {
-    const sk = skills.get(p.id);
-    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
-      ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
-  });
+  const { F, feat, cost: scoreAgg } = makeScorer(players, skills, apartUsed, T);
 
   // Combos lock players into units that always move together.
   const parent = players.map((_, i) => i);
@@ -160,46 +153,8 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   const rand = mulberry32(seed);
   const agg = new Float64Array(T * F);
   const add = (t, u, sgn) => { for (let f = 0; f < F; f++) agg[t * F + f] += sgn * ua[u * F + f]; };
-  const tot = new Float64Array(T);
 
-  function cost() {
-    let c = 0, m = 0;
-    for (let t = 0; t < T; t++) { let s = 0; for (let f = 0; f < 5; f++) s += agg[t * F + f]; tot[t] = s; m += s; }
-    m /= T;
-    let hi = -Infinity, lo = Infinity;
-    for (let t = 0; t < T; t++) { c += 4 * (tot[t] - m) ** 2; hi = Math.max(hi, tot[t]); lo = Math.min(lo, tot[t]); }
-    for (let f = 0; f < 5; f++) {
-      let cm = 0; for (let t = 0; t < T; t++) cm += agg[t * F + f]; cm /= T;
-      for (let t = 0; t < T; t++) c += (agg[t * F + f] - cm) ** 2;
-    }
-    c += 50 * Math.max(0, hi - lo - .25) / .25;
-    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity, shHi = -Infinity, shLo = Infinity;
-    for (let t = 0; t < T; t++) {
-      const o = t * F;
-      // Setters: exactly one main per team. When mains run short, two on one team is worse than none, and a team
-      // without a main should get a backup, so every team has someone who can set.
-      const mains = Math.round(agg[o + MAIN]), backs = Math.round(agg[o + BACK]);
-      if (mains !== 1) c += 100;
-      if (mains > 1) c += 100 * (mains - 1);
-      if (mains === 0 && backs === 0) c += 40;
-      if (backs > 1) c += 5;
-      wkHi = Math.max(wkHi, agg[o + WEAK]); wkLo = Math.min(wkLo, agg[o + WEAK]);
-      woHi = Math.max(woHi, agg[o + WOMEN]); woLo = Math.min(woLo, agg[o + WOMEN]);
-      guHi = Math.max(guHi, agg[o + GUESS]); guLo = Math.min(guLo, agg[o + GUESS]);
-      shHi = Math.max(shHi, agg[o + SHAKY]); shLo = Math.min(shLo, agg[o + SHAKY]);
-    }
-    const wk = Math.round(wkHi - wkLo);
-    c += 20 * Math.max(0, wk - 1) + .5 * wk * wk;
-    c += 100 * Math.max(0, Math.round(woHi - woLo) - 1);
-    // Unrated players' numbers are guesses; spread them so no team stacks up several.
-    const gu = Math.round(guHi - guLo);
-    c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
-    // Inconsistent players (consistency .25 or less) too, so no team leans on several on the same night.
-    const sh = Math.round(shHi - shLo);
-    c += 20 * Math.max(0, sh - 1) + .5 * sh * sh;
-    for (let t = 0; t < T; t++) for (let f = BASE; f < F; f++) if (agg[t * F + f] > 1.5) c += 100;
-    return c;
-  }
+  const cost = () => scoreAgg(agg);
 
   const seen = new Map();
   const start = Date.now();
@@ -280,7 +235,62 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   };
 }
 
-function describeTeam(members, skills) {
+// Per-player features and the score of a split (lower is better), shared by buildTeams and suggestSwaps.
+// Fields per player/team: 5 weighted skills, main setters, backup setters, women, weak passers, unrated players,
+// inconsistent players, then one per keep-apart pair. cost(agg) reads the per-team sums of those fields (T * F).
+function makeScorer(players, skills, apartUsed, T) {
+  const BASE = 11, MAIN = 5, BACK = 6, WOMEN = 7, WEAK = 8, GUESS = 9, SHAKY = 10, F = BASE + apartUsed.length;
+  const feat = players.map(p => {
+    const sk = skills.get(p.id);
+    return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +(sk.receiving <= .25), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
+      ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
+  });
+
+  const tot = new Float64Array(T);
+
+  function cost(agg) {
+    let c = 0, m = 0;
+    for (let t = 0; t < T; t++) { let s = 0; for (let f = 0; f < 5; f++) s += agg[t * F + f]; tot[t] = s; m += s; }
+    m /= T;
+    let hi = -Infinity, lo = Infinity;
+    for (let t = 0; t < T; t++) { c += 4 * (tot[t] - m) ** 2; hi = Math.max(hi, tot[t]); lo = Math.min(lo, tot[t]); }
+    for (let f = 0; f < 5; f++) {
+      let cm = 0; for (let t = 0; t < T; t++) cm += agg[t * F + f]; cm /= T;
+      for (let t = 0; t < T; t++) c += (agg[t * F + f] - cm) ** 2;
+    }
+    c += 50 * Math.max(0, hi - lo - .25) / .25;
+    let wkHi = -Infinity, wkLo = Infinity, woHi = -Infinity, woLo = Infinity, guHi = -Infinity, guLo = Infinity, shHi = -Infinity, shLo = Infinity;
+    for (let t = 0; t < T; t++) {
+      const o = t * F;
+      // Setters: exactly one main per team. When mains run short, two on one team is worse than none, and a team
+      // without a main should get a backup, so every team has someone who can set.
+      const mains = Math.round(agg[o + MAIN]), backs = Math.round(agg[o + BACK]);
+      if (mains !== 1) c += 100;
+      if (mains > 1) c += 100 * (mains - 1);
+      if (mains === 0 && backs === 0) c += 40;
+      if (backs > 1) c += 5;
+      wkHi = Math.max(wkHi, agg[o + WEAK]); wkLo = Math.min(wkLo, agg[o + WEAK]);
+      woHi = Math.max(woHi, agg[o + WOMEN]); woLo = Math.min(woLo, agg[o + WOMEN]);
+      guHi = Math.max(guHi, agg[o + GUESS]); guLo = Math.min(guLo, agg[o + GUESS]);
+      shHi = Math.max(shHi, agg[o + SHAKY]); shLo = Math.min(shLo, agg[o + SHAKY]);
+    }
+    const wk = Math.round(wkHi - wkLo);
+    c += 20 * Math.max(0, wk - 1) + .5 * wk * wk;
+    c += 100 * Math.max(0, Math.round(woHi - woLo) - 1);
+    // Unrated players' numbers are guesses; spread them so no team stacks up several.
+    const gu = Math.round(guHi - guLo);
+    c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
+    // Inconsistent players (consistency .25 or less) too, so no team leans on several on the same night.
+    const sh = Math.round(shHi - shLo);
+    c += 20 * Math.max(0, sh - 1) + .5 * sh * sh;
+    for (let t = 0; t < T; t++) for (let f = BASE; f < F; f++) if (agg[t * F + f] > 1.5) c += 100;
+    return c;
+  }
+
+  return { F, feat, cost };
+}
+
+export function describeTeam(members, skills) {
   const rank = p => ({ M: 0, B: 1 })[p.setting] ?? 2;
   const ps = [...members].sort((a, b) => rank(a) - rank(b) || weightedTotal(skills.get(b.id)) - weightedTotal(skills.get(a.id)));
   const sums = Object.fromEntries(SKILLS.map(s => [s, ps.reduce((a, p) => a + skills.get(p.id)[s], 0)]));
@@ -325,3 +335,79 @@ const quantile = (xs, q) => {
   return xs[lo] + (xs[Math.min(lo + 1, xs.length - 1)] - xs[lo]) * (i - lo);
 };
 const clamp = v => Math.min(1, Math.max(0, v));
+
+// What's off about a split, in plain words, using the same rules buildTeams balances.
+// teams: [[player, ...], ...] (players with id, name, setting, gender, unrated); skills: Map id -> skills.
+export function teamProblems(teams, skills, apart = []) {
+  const out = [];
+  const label = k => `Team ${k + 1}`;
+  const count = fn => teams.map(t => t.filter(fn).length);
+  teams.forEach((t, k) => {
+    const mains = t.filter(p => p.setting === 'M').length, backs = t.filter(p => p.setting === 'B').length;
+    if (!mains && !backs) out.push(`${label(k)} has no setter`);
+    else if (mains > 1) out.push(`${label(k)} has ${mains} main setters`);
+  });
+  const spread = (fn, what) => {
+    const c = count(fn), hi = Math.max(...c), lo = Math.min(...c);
+    if (hi - lo >= 2) out.push(`${what} are bunched up (${label(c.indexOf(hi))} has ${hi}, ${label(c.indexOf(lo))} has ${lo})`);
+  };
+  spread(p => skills.get(p.id).receiving <= .25, 'Weak passers');
+  spread(p => p.gender === 'F', 'Women');
+  spread(p => p.unrated, 'Unrated players');
+  spread(p => (skills.get(p.id).consistency ?? .5) <= .25, 'Inconsistent players');
+  for (const [a, b] of apart) {
+    const t = teams.find(t => t.some(p => p.id === a) && t.some(p => p.id === b));
+    if (t) out.push(`${t.find(p => p.id === a).name} and ${t.find(p => p.id === b).name} are on the same team (keep apart)`);
+  }
+  return out;
+}
+
+// Smallest changes that make your own teams better by buildTeams' score: one-for-one swaps, then pairs of swaps.
+// locked players never move, and a "together" pair that's already on one team is never split.
+// -> [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double if it beats them.
+export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], top = 3 }) {
+  const T = teams.length, byId = new Map(players.map(p => [p.id, p]));
+  const members = teams.map(t => t.map(id => byId.get(id)));
+  const flat = members.flat();
+  const idx = new Map(flat.map((p, i) => [p.id, i]));
+  const teamOf = new Map(); teams.forEach((t, k) => t.forEach(id => teamOf.set(id, k)));
+  const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
+  const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T);
+  const fixed = new Set(locked);
+  for (const [a, b] of combos) if (teamOf.has(a) && teamOf.get(a) === teamOf.get(b)) { fixed.add(a); fixed.add(b); }
+
+  const agg = new Float64Array(T * F);
+  const move = (id, from, to) => { const f = feat[idx.get(id)]; for (let i = 0; i < F; i++) { agg[from * F + i] -= f[i]; agg[to * F + i] += f[i]; } };
+  flat.forEach(p => { const t = teamOf.get(p.id), f = feat[idx.get(p.id)]; for (let i = 0; i < F; i++) agg[t * F + i] += f[i]; });
+  const base = cost(agg);
+  const swap = ([a, b]) => { const ta = teamOf.get(a), tb = teamOf.get(b); move(a, ta, tb); move(b, tb, ta); teamOf.set(a, tb); teamOf.set(b, ta); };
+
+  const singles = [];
+  for (const a of flat) for (const b of flat) {
+    if (a.id >= b.id || fixed.has(a.id) || fixed.has(b.id) || teamOf.get(a.id) === teamOf.get(b.id)) continue;
+    swap([a.id, b.id]); singles.push({ swaps: [[a.id, b.id]], cost: cost(agg) }); swap([a.id, b.id]);
+  }
+  singles.sort((x, y) => x.cost - y.cost);
+  // Pairs of swaps from the most promising singles (a swap that's flat on its own can still set up a great second one).
+  const pool = singles.slice(0, 40), doubles = [];
+  for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) {
+    const [s1] = pool[i].swaps, [s2] = pool[j].swaps;
+    if (s1.some(id => s2.includes(id))) continue;
+    swap(s1); swap(s2); doubles.push({ swaps: [s1, s2], cost: cost(agg) }); swap(s2); swap(s1);
+  }
+  doubles.sort((x, y) => x.cost - y.cost);
+
+  const better = x => x.cost < base - 1e-6;
+  const picks = singles.filter(better).slice(0, Math.min(2, top));
+  const bestDouble = doubles.find(d => better(d) && d.cost < (picks[0]?.cost ?? base) - 1e-6);
+  if (bestDouble && picks.length < top) picks.push(bestDouble);
+  for (const x of singles.filter(better).slice(picks.filter(p => p.swaps.length === 1).length)) { if (picks.length >= top) break; picks.push(x); }
+  return { base, suggestions: picks.map(x => {
+    const after = teams.map(t => [...t]);
+    for (const [a, b] of x.swaps) {
+      const ta = after.findIndex(t => t.includes(a)), tb = after.findIndex(t => t.includes(b));
+      after[ta][after[ta].indexOf(a)] = b; after[tb][after[tb].indexOf(b)] = a;
+    }
+    return { ...x, teams: after };
+  }) };
+}

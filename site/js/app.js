@@ -1,6 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, RATED, TIERS, combineRatings, weightedTotal } from './teams.mjs';
-import { matchPasted } from './paste.mjs';
+import { SKILLS, RATED, TIERS, WEIGHTS, combineRatings, weightedTotal } from './teams.mjs';
+import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 
@@ -556,6 +556,7 @@ async function teamsPage() {
     pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
     comboCard(playing, combos),
     newPlayers,
+    ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) })),
     h('div', { class: 'card build-bar' },
       raterPick, needRater,
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
@@ -563,6 +564,94 @@ async function teamsPage() {
       toggle('Use combos', true, v => { useCombos = v; }),
       h('span', { class: 'grow' }), btn),
     out);
+}
+
+// Teams you made yourself: paste them or upload a text/CSV file, then see the same numbers and sharing as a built option.
+function ownTeamsCard(out, getOptions) {
+  let players = null;
+  const roster = () => players ??= q(sb.from('players').select('id,name').eq('active', true).order('name'));
+  const box = h('textarea', { rows: 5, 'aria-label': 'Your teams',
+    placeholder: 'Team 1: Reem, Mishal, HQ\nTeam 2: Fuwaires, Nasser, Adi\n\nOr a "Team" line then one name per line.' });
+  const fileInput = h('input', { type: 'file', accept: '.txt,.csv,text/plain,text/csv', hidden: true });
+  const preview = h('div');
+  let parsed = { teams: [], dupes: [] };
+  const check = h('button', { class: 'ball', disabled: true }, 'Check teams');
+
+  const update = async () => {
+    parsed = box.value.trim() ? parseTeams(box.value, await roster()) : { teams: [], dupes: [] };
+    const { teams, dupes } = parsed;
+    const filled = teams.filter(t => t.players.length);
+    check.disabled = filled.length < 2;
+    check.textContent = filled.length ? `Check ${filled.length} teams` : 'Check teams';
+    const unmatched = teams.flatMap(t => t.unmatched);
+    preview.replaceChildren(...(!teams.length ? [] : [
+      h('div', { class: 'own-teams' }, teams.map(t => h('div', {},
+        h('p', { class: 'small', style: 'margin:10px 0 6px' }, h('b', {}, t.label), h('span', { class: 'muted' }, ` · ${t.players.length} players`)),
+        h('div', { class: 'chips' }, t.players.map(p => h('span', { class: 'chip plain' }, p.name)), t.unmatched.map(n => h('span', { class: 'chip plain off', title: 'Not recognized' }, n)))))),
+      unmatched.length > 0 && h('p', { class: 'small muted' }, h('b', {}, `${unmatched.length} not recognized`), ' (greyed out, left out of the check)'),
+      dupes.length > 0 && h('p', { class: 'small muted' }, h('b', {}, `Listed twice: ${dupes.join(', ')}`), ' (kept in their first team)'),
+      filled.length === 1 && h('p', { class: 'small warn' }, 'Only one team found. Put each team on its own "Team" line, or leave a blank line between teams.'),
+    ].filter(Boolean)));
+  };
+  box.oninput = update;
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file) return;
+    box.value = await file.text();
+    update();
+  };
+  // After a check: the teams as they stand now (player ids), earlier versions for Undo, and players locked in place.
+  let current = null, history = [];
+  const locked = new Set();
+  const run = async ({ scroll = false } = {}) => {
+    const opts = getOptions();
+    if (opts.raters?.length === 0) return out.replaceChildren(h('p', { class: 'warn' }, 'Please select at least one rater.'));
+    const res = await callFn('build-teams', { teams: current, locked: [...locked], ...opts });
+    const toggleLock = id => { locked.has(id) ? locked.delete(id) : locked.add(id); run().catch(e => toast(e.message)); };
+    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock }), suggestionsPanel(res));
+    if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const suggestionsPanel = res => {
+    const detail = me.role === 'super';
+    const apply = sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); };
+    const undo = () => { current = history.pop(); run().catch(e => toast(e.message)); };
+    const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
+    return h('div', { class: 'card suggestions' },
+      h('div', { class: 'card-head' },
+        h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
+        history.length > 0 && h('button', { type: 'button', class: 'ghost sm', onclick: undo }, 'Undo')),
+      res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
+      res.suggestions?.length
+        ? h('ol', { class: 'suggest-list' }, res.suggestions.map(sg => h('li', {},
+          h('div', { class: 'grow' },
+            h('div', {}, sg.swaps.length > 1 ? 'Two swaps: ' : 'Swap ', sg.swaps.flatMap(([a, b], n) => [n ? ', and ' : '', who(a), ' ↔ ', who(b)])),
+            h('div', { class: 'muted small' }, [
+              detail && sg.gap && `Gap ${fmt(sg.gap[0])} → ${fmt(sg.gap[1])}`,
+              sg.fixes.length > 0 && `fixes: ${sg.fixes.join('; ')}`,
+              !detail && !sg.fixes.length && 'makes teams more even',
+            ].filter(Boolean).join(' · ')),
+            sg.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${sg.adds.join('; ')}`)),
+          h('button', { type: 'button', class: 'sm', onclick: () => apply(sg) }, 'Apply'))))
+        : h('p', { class: 'muted' }, res.problems?.length ? 'No single or double swap makes these teams better.' : 'These teams look balanced. No swap would make them better.'));
+  };
+  check.onclick = async () => {
+    current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
+    history = []; locked.clear();
+    check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
+    try { await run({ scroll: true }); }
+    catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+    check.disabled = false; check.textContent = label;
+  };
+  return h('details', { class: 'card own' },
+    h('summary', {}, h('h3', {}, 'Your own teams'), h('span', { class: 'muted small' }, 'Paste or upload teams you made to see how they balance')),
+    h('div', { class: 'own-body' },
+      box,
+      h('div', { class: 'row', style: 'margin-top:10px' },
+        h('button', { type: 'button', class: 'ghost sm', onclick: () => fileInput.click() }, 'Upload file'), fileInput,
+        h('span', { class: 'muted small grow' }, '.txt or .csv, one team per line or per block'),
+        check),
+      preview));
 }
 
 let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
@@ -597,24 +686,49 @@ function shareButton(teams, i) {
   return btn;
 }
 
-function showTeams(res) {
+function showTeams(res, { title, locked, onLock } = {}) {
   const detail = me.role === 'super';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
     const text = opt.teams.map((t, k) => `Team ${k + 1}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
+    // Super: whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
+    const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
+      ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
+    let view = views[0];
+    const gapLine = h('p', { class: 'muted small', style: 'margin:2px 0 0' });
+    const grid = h('div', { class: 'team-grid' });
+    const guessNote = h('p', { class: 'muted small', hidden: true });
+    const paint = () => {
+      const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
+      gapLine.textContent = `${view.id ? `${view.name.split(/[\s.@]/)[0]}'s ratings: totals` : 'Totals'} ${fmt(lo)} to ${fmt(hi)}, a gap of ${fmt(hi - lo)}`;
+      grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
+        h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
+          h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
+        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', {}, p.name),
+          p.setting === 'M' ? h('span', { class: 'badge set' }, 'Setter') : p.setting === 'B' ? h('span', { class: 'badge backup' }, 'Backup') : null,
+          onLock && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(locked.has(p.id)),
+            title: locked.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id) }, locked.has(p.id) ? '🔒' : '🔓')))),
+        detail && h('div', { class: 'stats' }, SKILLS.map(s => h('div', {}, h('small', {}, SHORT[s]), h('b', {}, fmt(view.sums[k][s]))))))));
+      guessNote.hidden = !view.guessed?.some(Boolean);
+      guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their stand-in level was used.`;
+    };
+    const chips = views.length > 2 ? h('div', { class: 'rater-chips view-chips', role: 'group', 'aria-label': 'Whose ratings to show' }, views.map(v => {
+      const b = h('button', { type: 'button', class: 'rater-chip', 'aria-pressed': String(v === view), title: v.id ? v.name : 'All picked raters combined' },
+        v.id ? avatar(v.name, 24) : null, h('span', {}, v.id ? v.name.split(/[\s.@]/)[0] : v.name));
+      b.onclick = () => { view = v; chips.querySelectorAll('button').forEach((x, n) => x.setAttribute('aria-pressed', String(views[n] === view))); paint(); };
+      return b;
+    })) : null;
+    paint();
     parts.push(h('section', { class: 'option' },
-      h('div', { class: 'card-head' }, h('h3', {}, `Option ${i + 1}`),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine),
         h('div', { class: 'actions' },
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i))),
-      h('div', { class: 'team-grid' }, opt.teams.map((t, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
-        h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total' }, h('small', {}, 'TOTAL'), fmt(t.weighted))),
-        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', {}, p.name),
-          p.setting === 'M' ? h('span', { class: 'badge set' }, 'Setter') : p.setting === 'B' ? h('span', { class: 'badge backup' }, 'Backup') : null))),
-        detail && h('div', { class: 'stats' }, SKILLS.map(s => h('div', {}, h('small', {}, SHORT[s]), h('b', {}, fmt(t.sums[s]))))))))));
+      detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
+      grid, detail && guessNote));
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
-  if (detail) parts.push(h('p', { class: 'muted small' }, 'Skill numbers are team sums; Total is the weighted total.'));
+  if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`));
   return parts;
 }
 
