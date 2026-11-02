@@ -233,15 +233,17 @@ details.own summary h3::before { content: '▸'; display: inline-block; width: 1
 details.own[open] summary h3::before { transform: rotate(90deg); }
 .own-body { margin-top: 12px; }
 
-.team-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 235px), 1fr)); }
-.team { --tc: var(--primary); background: var(--surface); border: 1px solid var(--line); border-top: 5px solid var(--tc); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); display: grid; gap: 10px; align-content: start; }
+.team-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); }
+.team { --tc: var(--primary); background: var(--surface); border: 1px solid var(--line); border-top: 5px solid var(--tc); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0; }
 .team header { display: flex; align-items: baseline; justify-content: space-between; }
 .team h4 { margin: 0; font: 700 1.4rem/1 var(--display); text-transform: uppercase; color: var(--tc); }
 .team .total { font: 700 1.4rem/1 var(--display); font-variant-numeric: tabular-nums; }
 .team .total small { font: 700 .66rem var(--body); color: var(--muted); letter-spacing: .05em; margin-right: 4px; }
 .team ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
 .team li { display: flex; align-items: center; gap: 8px; font-weight: 500; }
-.team li span:nth-child(2) { flex: 1; }
+/* The name takes what's left and wraps if it must, so a badge and lock never push the row past the card. */
+.team li span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: break-word; }
+.team li .avatar, .team li .badge, .team li .lock { flex-shrink: 0; }
 .team li .avatar { width: 28px; height: 28px; font-size: .7rem; }
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; text-align: center; font-variant-numeric: tabular-nums; }
 .stats small { display: block; font-size: .64rem; color: var(--muted); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }

@@ -741,11 +741,12 @@ function shareButton(teams, i) {
 // Setter / Backup badge with how they play tonight. With onSetter (your own teams) it's a button that flips all game / rotates.
 function setterBadge(p, onSetter) {
   if (p.setting !== 'M' && p.setting !== 'B') return null;
-  const text = `${p.setting === 'M' ? 'Setter' : 'Backup'}${p.allGame ? ' · all game' : ''}`;
+  // Short so it fits beside a long name and the lock; the colour (filled = main, outline = backup) still says which.
+  const text = p.allGame ? 'Sets all game' : p.setting === 'M' ? 'Setter' : 'Backup';
   const cls = `badge ${p.setting === 'M' ? 'set' : 'backup'}`;
   if (!onSetter || p.id == null) return h('span', { class: cls }, text);
   return h('button', { type: 'button', class: `${cls} badge-btn`, 'aria-pressed': String(!!p.allGame),
-    title: p.allGame ? `${p.name} sets all game (tap: rotates)` : `${p.name} rotates (tap: sets all game)`, onclick: () => onSetter(p.id) }, text);
+    title: `${p.setting === 'M' ? 'Main setter' : 'Backup setter'}: ${p.allGame ? 'sets all game (tap: rotates)' : 'rotates (tap: sets all game)'}`, onclick: () => onSetter(p.id) }, text);
 }
 
 function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, extra } = {}) {
