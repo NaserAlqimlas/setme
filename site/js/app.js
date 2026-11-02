@@ -47,6 +47,7 @@ function h(tag, attrs = {}, ...kids) {
 }
 const q = async p => { const { data, error } = await p; if (error) throw error; return data; };
 const fmt = v => v == null ? 'U' : String(Math.round(v * 100) / 100).replace(/^0\./, '.').replace(/^-0\./, '-.');
+const firstName = n => (n ?? '?').split(/[\s.@]/)[0];
 const setterMark = s => s === 'M' ? ' (S)' : s === 'B' ? ' (B)' : '';
 const pageHead = (title, sub, ...right) => h('div', { class: 'page-head' }, h('div', {}, h('h2', {}, title), sub && h('p', {}, sub)), right.length ? h('div', { class: 'row' }, right) : null);
 
@@ -534,15 +535,17 @@ async function teamsPage() {
   // Super only: whose ratings to build from. null = everyone's.
   let raterIds = null;
   const newPlayers = newPlayersCard(() => raterIds);
+  const out = h('div');
+  const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }));
   // An empty list means every rater is switched off: nothing to build from until one is back on.
   const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Please select at least one rater.');
   const raterPick = me.role === 'super' ? await raterPicker(ids => {
     raterIds = ids;
+    ownTeams.refresh();
     const none = ids?.length === 0;
     btn.disabled = none; needRater.hidden = !none;
     if (!none) newPlayers.refresh();
   }) : null;
-  const out = h('div');
   const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
   const btn = h('button', { class: 'ball big' }, 'Build teams');
@@ -556,7 +559,7 @@ async function teamsPage() {
     pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
     comboCard(playing, combos),
     newPlayers,
-    ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) })),
+    ownTeams,
     h('div', { class: 'card build-bar' },
       raterPick, needRater,
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
@@ -602,14 +605,17 @@ function ownTeamsCard(out, getOptions) {
     update();
   };
   // After a check: the teams as they stand now (player ids), earlier versions for Undo, and players locked in place.
-  let current = null, history = [];
+  // viewRater: whose ratings the cards and suggestions use (super, null = the picked raters combined).
+  let current = null, history = [], viewRater = null;
   const locked = new Set();
   const run = async ({ scroll = false } = {}) => {
     const opts = getOptions();
     if (opts.raters?.length === 0) return out.replaceChildren(h('p', { class: 'warn' }, 'Please select at least one rater.'));
-    const res = await callFn('build-teams', { teams: current, locked: [...locked], ...opts });
+    if (viewRater && opts.raters && !opts.raters.includes(viewRater)) viewRater = null;
+    const res = await callFn('build-teams', { teams: current, locked: [...locked], suggestRater: viewRater, ...opts });
     const toggleLock = id => { locked.has(id) ? locked.delete(id) : locked.add(id); run().catch(e => toast(e.message)); };
-    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock }), suggestionsPanel(res));
+    const onView = id => { viewRater = id; run().catch(e => toast(e.message)); };
+    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, extra: suggestionsPanel(res) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   const suggestionsPanel = res => {
@@ -617,9 +623,11 @@ function ownTeamsCard(out, getOptions) {
     const apply = sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); };
     const undo = () => { current = history.pop(); run().catch(e => toast(e.message)); };
     const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
-    return h('div', { class: 'card suggestions' },
+    const basis = !detail ? null : res.suggestRater ? `Based on ${firstName(res.options[0]?.byRater?.find(r => r.rater_id === res.suggestRater)?.name)}'s ratings` : 'Based on the combined ratings';
+    return h('div', { class: 'suggestions' },
       h('div', { class: 'card-head' },
-        h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
+        h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+          basis && h('b', {}, basis, '. '), 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
         history.length > 0 && h('button', { type: 'button', class: 'ghost sm', onclick: undo }, 'Undo')),
       res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
       res.suggestions?.length
@@ -643,7 +651,7 @@ function ownTeamsCard(out, getOptions) {
     catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
     check.disabled = false; check.textContent = label;
   };
-  return h('details', { class: 'card own' },
+  const card = h('details', { class: 'card own' },
     h('summary', {}, h('h3', {}, 'Your own teams'), h('span', { class: 'muted small' }, 'Paste or upload teams you made to see how they balance')),
     h('div', { class: 'own-body' },
       box,
@@ -652,6 +660,9 @@ function ownTeamsCard(out, getOptions) {
         h('span', { class: 'muted small grow' }, '.txt or .csv, one team per line or per block'),
         check),
       preview));
+  // Ratings from changed at the top: re-check teams already on screen.
+  card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
+  return card;
 }
 
 let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
@@ -686,7 +697,7 @@ function shareButton(teams, i) {
   return btn;
 }
 
-function showTeams(res, { title, locked, onLock } = {}) {
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, extra } = {}) {
   const detail = me.role === 'super';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
@@ -694,7 +705,7 @@ function showTeams(res, { title, locked, onLock } = {}) {
     // Super: whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
     const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
-    let view = views[0];
+    let view = views.find(v => v.id === viewId) ?? views[0];
     const gapLine = h('p', { class: 'muted small', style: 'margin:2px 0 0' });
     const grid = h('div', { class: 'team-grid' });
     const guessNote = h('p', { class: 'muted small', hidden: true });
@@ -715,7 +726,7 @@ function showTeams(res, { title, locked, onLock } = {}) {
     const chips = views.length > 2 ? h('div', { class: 'rater-chips view-chips', role: 'group', 'aria-label': 'Whose ratings to show' }, views.map(v => {
       const b = h('button', { type: 'button', class: 'rater-chip', 'aria-pressed': String(v === view), title: v.id ? v.name : 'All picked raters combined' },
         v.id ? avatar(v.name, 24) : null, h('span', {}, v.id ? v.name.split(/[\s.@]/)[0] : v.name));
-      b.onclick = () => { view = v; chips.querySelectorAll('button').forEach((x, n) => x.setAttribute('aria-pressed', String(views[n] === view))); paint(); };
+      b.onclick = () => { if (v === view) return; view = v; chips.querySelectorAll('button').forEach((x, n) => x.setAttribute('aria-pressed', String(views[n] === view))); paint(); onView?.(v.id); };
       return b;
     })) : null;
     paint();
@@ -725,7 +736,7 @@ function showTeams(res, { title, locked, onLock } = {}) {
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
-      grid, detail && guessNote));
+      grid, detail && guessNote, i === 0 && extra));
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
   if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`));

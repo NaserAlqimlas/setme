@@ -3,6 +3,7 @@
 // POST { check: true } instead lists who's playing with no ratings yet, so the organizer can pick a tier for them.
 // POST { teams: [[playerId, ...], ...], locked?: [playerId] } rates teams you made yourself instead of building them (any active
 // players), lists what's off about them, and suggests up to three small swaps (combos are respected the same way).
+// Super can add suggestRater: id to work out problems and suggestions from that one rater's ratings (cards still get all).
 // Organizers get lineups only; super also gets skill numbers. Ratings never leave the server for organizers.
 import { SKILLS, buildTeams, combineRatings, describeTeam, weightedTotal, teamProblems, suggestSwaps } from '../../site/js/teams.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
@@ -12,7 +13,7 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [] } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null } = await req.json().catch(() => ({}));
   const [players, ratings] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=rater_id,player_id,receiving,hitting,hustle,serve,blocking,consistency'),
@@ -48,17 +49,21 @@ export default async (req) => {
     const together = useCombos ? pairs.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [];
     const apart = useCombos ? pairs.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [];
     const asPlayers = ts => ts.map(t => t.map(id => byId.get(id)));
-    const gap = ts => { const tot = ts.map(t => t.reduce((a, id) => a + weightedTotal(skills.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
-    const before = teamProblems(asPlayers(kept), skills, apart);
-    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills, teams: kept, combos: together, apart,
+    // Super looking at one rater: judge the teams by that rater's ratings alone.
+    const solo = me.role === 'super' && typeof suggestRater === 'string' && ratings.some(r => r.rater_id === suggestRater) && (!pick || pick.has(suggestRater));
+    const sk = solo ? new Map([...combineRatings(players, ratings.filter(r => r.rater_id === suggestRater)).combined].map(([id, c]) => [id, c.skills])) : skills;
+    const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + weightedTotal(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
+    result.suggestRater = solo ? suggestRater : null;
+    const before = teamProblems(asPlayers(kept), sk, apart, together);
+    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart,
       locked: (Array.isArray(locked) ? locked : []).filter(id => byId.has(id)) });
     result.problems = before;
     result.suggestions = suggestions.map(sg => {
-      const after = teamProblems(asPlayers(sg.teams), skills, apart);
+      const after = teamProblems(asPlayers(sg.teams), sk, apart, together);
       return {
         swaps: sg.swaps.map(([a, b]) => [a, b].map(id => ({ id, name: byId.get(id).name, team: kept.findIndex(t => t.includes(id)) + 1 }))),
         teams: sg.teams,
-        gap: [gap(kept), gap(sg.teams)],
+        gap: [gapBy(kept), gapBy(sg.teams)],
         fixes: before.filter(x => !after.includes(x)),
         adds: after.filter(x => !before.includes(x)),
       };
@@ -95,6 +100,7 @@ export default async (req) => {
     // Weak passers and inconsistent players come from ratings, which organizers don't see.
     const ok = x => !/^(Weak passers|Inconsistent players)/.test(x);
     if (result.problems) result.problems = result.problems.filter(ok);
+    delete result.suggestRater;
     for (const sg of result.suggestions ?? []) { delete sg.gap; sg.fixes = sg.fixes.filter(ok); sg.adds = sg.adds.filter(ok); }
     for (const opt of result.options) {
       delete opt.score; delete opt.byRater;

@@ -338,7 +338,7 @@ const clamp = v => Math.min(1, Math.max(0, v));
 
 // What's off about a split, in plain words, using the same rules buildTeams balances.
 // teams: [[player, ...], ...] (players with id, name, setting, gender, unrated); skills: Map id -> skills.
-export function teamProblems(teams, skills, apart = []) {
+export function teamProblems(teams, skills, apart = [], together = []) {
   const out = [];
   const label = k => `Team ${k + 1}`;
   const count = fn => teams.map(t => t.filter(fn).length);
@@ -359,11 +359,16 @@ export function teamProblems(teams, skills, apart = []) {
     const t = teams.find(t => t.some(p => p.id === a) && t.some(p => p.id === b));
     if (t) out.push(`${t.find(p => p.id === a).name} and ${t.find(p => p.id === b).name} are on the same team (keep apart)`);
   }
+  for (const [a, b] of together) {
+    const ta = teams.findIndex(t => t.some(p => p.id === a)), tb = teams.findIndex(t => t.some(p => p.id === b));
+    if (ta >= 0 && tb >= 0 && ta !== tb) out.push(`${teams[ta].find(p => p.id === a).name} and ${teams[tb].find(p => p.id === b).name} are on different teams (play together)`);
+  }
   return out;
 }
 
 // Smallest changes that make your own teams better by buildTeams' score: one-for-one swaps, then pairs of swaps.
-// locked players never move, and a "together" pair that's already on one team is never split.
+// locked players never move, a "together" pair that's already on one team is never split, and fewer together pairs
+// on different teams always beats better balance (combos are a rule in buildTeams too), so reuniting swaps come first.
 // -> [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double if it beats them.
 export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], top = 3 }) {
   const T = teams.length, byId = new Map(players.map(p => [p.id, p]));
@@ -375,17 +380,19 @@ export function suggestSwaps({ players, skills, teams, combos = [], apart = [], 
   const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T);
   const fixed = new Set(locked);
   for (const [a, b] of combos) if (teamOf.has(a) && teamOf.get(a) === teamOf.get(b)) { fixed.add(a); fixed.add(b); }
+  const split = combos.filter(([a, b]) => teamOf.has(a) && teamOf.has(b) && teamOf.get(a) !== teamOf.get(b));
+  const score = () => cost(agg) + 1e6 * split.filter(([a, b]) => teamOf.get(a) !== teamOf.get(b)).length;
 
   const agg = new Float64Array(T * F);
   const move = (id, from, to) => { const f = feat[idx.get(id)]; for (let i = 0; i < F; i++) { agg[from * F + i] -= f[i]; agg[to * F + i] += f[i]; } };
   flat.forEach(p => { const t = teamOf.get(p.id), f = feat[idx.get(p.id)]; for (let i = 0; i < F; i++) agg[t * F + i] += f[i]; });
-  const base = cost(agg);
+  const base = score();
   const swap = ([a, b]) => { const ta = teamOf.get(a), tb = teamOf.get(b); move(a, ta, tb); move(b, tb, ta); teamOf.set(a, tb); teamOf.set(b, ta); };
 
   const singles = [];
   for (const a of flat) for (const b of flat) {
     if (a.id >= b.id || fixed.has(a.id) || fixed.has(b.id) || teamOf.get(a.id) === teamOf.get(b.id)) continue;
-    swap([a.id, b.id]); singles.push({ swaps: [[a.id, b.id]], cost: cost(agg) }); swap([a.id, b.id]);
+    swap([a.id, b.id]); singles.push({ swaps: [[a.id, b.id]], cost: score() }); swap([a.id, b.id]);
   }
   singles.sort((x, y) => x.cost - y.cost);
   // Pairs of swaps from the most promising singles (a swap that's flat on its own can still set up a great second one).
@@ -393,7 +400,7 @@ export function suggestSwaps({ players, skills, teams, combos = [], apart = [], 
   for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) {
     const [s1] = pool[i].swaps, [s2] = pool[j].swaps;
     if (s1.some(id => s2.includes(id))) continue;
-    swap(s1); swap(s2); doubles.push({ swaps: [s1, s2], cost: cost(agg) }); swap(s2); swap(s1);
+    swap(s1); swap(s2); doubles.push({ swaps: [s1, s2], cost: score() }); swap(s2); swap(s1);
   }
   doubles.sort((x, y) => x.cost - y.cost);
 

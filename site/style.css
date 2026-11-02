@@ -205,7 +205,7 @@ body, .top { transition: padding .28s ease; }
 .team li .lock { margin-left: auto; min-height: 32px; width: 32px; padding: 0; background: transparent; border-radius: 8px; font-size: .9rem; opacity: .45; }
 .team li .lock[aria-pressed=true] { opacity: 1; background: var(--surface-2); }
 .team li .badge + .lock { margin-left: 6px; }
-.suggestions { margin-top: 14px; }
+.suggestions { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .problems { margin: 0 0 12px; padding-left: 20px; color: var(--warn-fg); }
 .problems li + li { margin-top: 2px; }
 .suggest-list { list-style: none; margin: 0; padding: 0; counter-reset: sg; }

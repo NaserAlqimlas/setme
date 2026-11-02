@@ -29,6 +29,16 @@ ok(locked.suggestions.every(s => s.swaps.flat().every(id => id !== 5 && id !== 1
 // A "together" pair on the same team is never split.
 const tog = suggestSwaps({ players, skills, teams, combos: [[1, 2], [5, 6]] });
 ok(tog.suggestions.every(s => s.swaps.flat().every(id => ![1, 2, 5, 6].includes(id))), 'together pairs stay together');
+// A together pair on different teams: listed, and the top suggestion reunites them.
+const splitPair = [[3, 7]];
+const sp = teamProblems(teams.map(t => t.map(id => byId.get(id))), skills, [], splitPair);
+ok(sp.some(x => x.includes('play together')), `split together pair listed: ${sp}`);
+const re = suggestSwaps({ players, skills, teams, combos: splitPair });
+const tOf = (ts, id) => ts.findIndex(t => t.includes(id));
+ok(re.suggestions.length && tOf(re.suggestions[0].teams, 3) === tOf(re.suggestions[0].teams, 7), 'top suggestion reunites the pair');
+// Reunited, then locked in: the next round never splits them again.
+const next = suggestSwaps({ players, skills, teams: re.suggestions[0].teams, combos: splitPair });
+ok(next.suggestions.every(s => !s.swaps.flat().some(id => id === 3 || id === 7)), 'reunited pair stays together');
 // Keep-apart pair on one team shows up as a problem and gets fixed.
 const ap = teamProblems(teams.map(t => t.map(id => byId.get(id))), skills, [[1, 2]]);
 ok(ap.some(x => x.includes('keep apart')), 'keep-apart problem listed');
