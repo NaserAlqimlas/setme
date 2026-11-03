@@ -3,6 +3,7 @@ import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings
 import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
+import { analyze, playerStats, nextPairing, finished, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET } from './scores.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -21,6 +22,7 @@ const PAGES = [
   { id: 'rate', label: 'Rate', roles: ['rater', 'organizer', 'super'], view: ratePage },
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
+  { id: 'scores', label: 'Scores', roles: ['organizer', 'super'], view: scoresPage },
   { id: 'ratings', label: role => role === 'super' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
 ];
@@ -609,6 +611,7 @@ async function teamsPage() {
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
   const draw = () => out.replaceChildren(...showTeams(built, {
     view, onSwap: edit,
+    onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
     locked: i => checked[i] && (locks[i] ??= new Set()),
     onLock: (id, i) => { locks[i].has(id) ? locks[i].delete(id) : locks[i].add(id); recheck(i); },
@@ -694,7 +697,8 @@ function ownTeamsCard(out, getOptions) {
       setterPlan.set(id, !setsAllGame(p)); setterPlanChanged();
     };
     const onSwap = (_, teams) => { history.push(current); current = teams; run().catch(e => { current = history.pop(); toast(e.message); run().catch(() => {}); }); };
-    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, extra: suggestionsPanel(res, {
+    const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
+    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, extra: suggestionsPanel(res, {
       onApply: sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); },
       onUndo: history.length > 0 && (() => { current = history.pop(); run().catch(e => toast(e.message)); }),
     }) }));
@@ -795,7 +799,8 @@ function setterBadge(p, onSetter) {
 // onSwap(i, teams): tap a player, then a player on another team, to swap them; teams = player ids per team after the swap.
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, extra } = {}) {
+// onSave(i): saves option i as the game day's teams for the Scores page.
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, extra } = {}) {
   const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
@@ -850,7 +855,8 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine),
         h('div', { class: 'actions' },
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
-          shareButton(opt.teams, i))),
+          shareButton(opt.teams, i),
+          onSave && h('button', { class: 'sm', onclick: () => onSave(i) }, 'Save for scores'))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
       canSwap && h('p', { class: 'muted small swap-hint' }, 'Tap a player, then a player on another team, to swap them.'),
       grid, detail && guessNote,
@@ -916,6 +922,315 @@ async function raterPicker(onchange, preload) {
   return h('div', { class: 'field raters' },
     h('span', {}, 'Ratings from'),
     h('div', { class: 'rater-chips', role: 'group', 'aria-label': 'Raters to use' }, chips.map(([, b]) => b), reset, clear));
+}
+
+// ---------- scores (organizers) ----------
+// Teams saved from the Teams page (Save for scores) become the game day's lineup. Each game stores who played on
+// each side and the team numbers the ratings predicted at that moment, so late changes and rating changes don't
+// rewrite history. Insights compare predictions with results to tune the team builder.
+async function saveLineup(teams, { raters, allGame, source }) {
+  const day = gameDate;
+  if (!day) return toast('Pick a date first');
+  try {
+    const [existing] = await q(sb.from('sessions').select('id').eq('played_on', day));
+    const row = { played_on: day, teams, raters: raters ?? null, all_game: allGame ?? [], source };
+    if (existing) {
+      const n = (await q(sb.from('games').select('id').eq('session_id', existing.id))).length;
+      if (!confirm(`Teams are already saved for ${dayTitle(day)}${n ? ` with ${n} game${n > 1 ? 's' : ''}` : ''}. Replace them?${n ? ' Saved games keep the players they had.' : ''}`)) return;
+      await q(sb.from('sessions').update(row).eq('id', existing.id));
+    } else await q(sb.from('sessions').insert(row));
+    toast(`Saved for ${dayTitle(day)}. Enter scores on Scores.`);
+  } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? 'Scores need the database upgrade (supabase/scores.sql)' : e.message); }
+}
+
+let scoresTab = 'games', scoresDay = null;
+async function scoresPage() {
+  const [sessions, players] = await Promise.all([
+    q(sb.from('sessions').select('*').order('played_on', { ascending: false })),
+    q(sb.from('players').select('id,name,setting,active').order('name')),
+  ]);
+  const pname = new Map(players.map(p => [p.id, p.name]));
+  const body = h('div');
+  const tabs = seg([['games', 'Games'], ['insights', 'Insights']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
+  const draw = async () => {
+    body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
+    try { body.replaceChildren(...(scoresTab === 'games' ? await gamesView(sessions, players, pname) : await insightsView(sessions, pname))); }
+    catch (e) { body.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+  };
+  draw();
+  return h('div', {}, pageHead('Scores', 'Enter each game\'s score. Insights show how well the teams were balanced.', tabs), body);
+}
+
+async function gamesView(sessions, players, pname) {
+  if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save for scores'), '.')];
+  if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
+  const ses = sessions.find(s => s.played_on === scoresDay);
+  let games = await q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at'));
+  const wrap = h('div');
+  const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on))));
+  daySel.onchange = () => { scoresDay = daySel.value; render(); };
+  const delDay = h('button', { class: 'danger sm', onclick: async () => {
+    if (!confirm(`Delete ${dayTitle(ses.played_on)} and its ${games.length} game${games.length === 1 ? '' : 's'}?`)) return;
+    try { await q(sb.from('sessions').delete().eq('id', ses.id)); toast('Deleted'); render(); } catch (e) { toast(e.message); }
+  } }, 'Delete day');
+
+  const N = () => ses.teams.length;
+  const teamName = k => `Team ${k}`;
+  const teamsBox = h('div'), entry = h('div'), list = h('div', { class: 'card' });
+  let editing = false;
+
+  // Late changes: remove someone, or add anyone (picking a player on another team moves them). Saved straight away;
+  // games already entered keep who they had.
+  const saveTeams = async teams => {
+    const before = ses.teams; ses.teams = teams;
+    try { await q(sb.from('sessions').update({ teams }).eq('id', ses.id)); toast('Saved. Next games use these players.'); }
+    catch (e) { ses.teams = before; toast(e.message); }
+    paintTeams(); paintEntry();
+  };
+  const record = k => {
+    const mine = games.filter(g => g.team_a === k || g.team_b === k);
+    const won = mine.filter(g => (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a) > 0).length;
+    const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
+    return mine.length ? `${won}–${mine.length - won} · ${diff > 0 ? '+' : ''}${diff}` : 'No games yet';
+  };
+  const paintTeams = () => {
+    const active = players.filter(p => p.active);
+    teamsBox.replaceChildren(h('div', { class: 'card-head' },
+      h('div', {}, h('h3', {}, 'Teams'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+        editing ? 'Remove someone who left, or add a late arrival. Picking someone from another team moves them. Games already saved keep who they had.' : 'Wins–losses and points for minus points against.')),
+      h('button', { class: editing ? 'sm' : 'ghost sm', onclick: () => { editing = !editing; paintTeams(); } }, editing ? 'Done' : 'Change players')),
+    h('div', { class: 'team-grid' }, ses.teams.map((ids, i) => {
+      const k = i + 1;
+      const add = editing && h('select', { 'aria-label': `Add a player to ${teamName(k)}` },
+        h('option', { value: '' }, '+ Add player'),
+        active.filter(p => !ids.includes(p.id)).map(p => {
+          const on = ses.teams.findIndex(t => t.includes(p.id));
+          return h('option', { value: p.id }, on >= 0 ? `${p.name} (from Team ${on + 1})` : p.name);
+        }));
+      if (add) add.onchange = () => {
+        const id = Number(add.value); if (!id) return;
+        saveTeams(ses.teams.map((t, j) => j === i ? [...t, id] : t.filter(x => x !== id)));
+      };
+      return h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
+        h('header', {}, h('h4', {}, teamName(k)), h('span', { class: 'muted small' }, record(k))),
+        h('ul', {}, ids.map(id => h('li', {}, avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player'),
+          editing && h('button', { type: 'button', class: 'ghost sm', 'aria-label': `Remove ${pname.get(id)}`,
+            onclick: () => ids.length > 1 ? saveTeams(ses.teams.map((t, j) => j === i ? t.filter(x => x !== id) : t)) : toast('A team needs at least one player') }, '×')))),
+        add);
+    })));
+  };
+
+  // New game: which two teams, then the score. Played to 25; a game cut short by time is saved as it stood.
+  const paintEntry = () => {
+    const [pa, pb] = nextPairing(N(), games) ?? [1, 2];
+    const pick = (v, label) => h('select', { 'aria-label': label }, ses.teams.map((_, i) => h('option', { value: i + 1, selected: i + 1 === v }, teamName(i + 1))));
+    const ta = pick(pa, 'First team'), tb = pick(pb, 'Second team');
+    const num = label => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in', 'aria-label': label, placeholder: '0' });
+    const sa = num('First team score'), sB = num('Second team score');
+    const btn = h('button', { class: 'ball' }, 'Save game');
+    const note = h('p', { class: 'muted small' });
+    const hint = () => {
+      const a = Number(sa.value), b = Number(sB.value);
+      note.textContent = sa.value === '' || sB.value === '' ? `Games go to ${TARGET}. Time up? Save the score as it stood.`
+        : Math.max(a, b) < TARGET ? `Saved as stopped early (time up). It counts as if scaled to a game to ${TARGET}.` : '';
+    };
+    sa.oninput = sB.oninput = hint; hint();
+    btn.onclick = async () => {
+      const a = Number(ta.value), b = Number(tb.value);
+      if (a === b) return toast('Pick two different teams');
+      if (sa.value === '' || sB.value === '') return toast('Enter both scores');
+      const A = Number(sa.value), B = Number(sB.value);
+      if (![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99)) return toast('Scores are whole numbers from 0 to 99');
+      if (A === B) return toast('A game can\'t end in a tie');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      const players_a = ses.teams[a - 1], players_b = ses.teams[b - 1];
+      // Setters who set all game: as saved with the teams; a main setter who arrived later does by default.
+      const known = new Set(ses.all_game);
+      const allGame = [...known, ...[...players_a, ...players_b].filter(id => !known.has(id) && players.find(p => p.id === id)?.setting === 'M')];
+      let predicted = null;
+      try {
+        const r = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters: ses.raters, allGame });
+        predicted = { a: r.teams[0], b: r.teams[1] };
+      } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
+      try {
+        const [g] = await q(sb.from('games').insert({ session_id: ses.id, team_a: a, team_b: b, players_a, players_b, score_a: A, score_b: B, predicted }).select());
+        games = [...games, g];
+        if (predicted) toast('Game saved');
+        paintTeams(); paintEntry(); paintList();
+      } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Save game'; }
+    };
+    entry.replaceChildren(h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, `Game ${games.length + 1}`),
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, N() > 2 ? 'Next up from the rotation; change it if you played someone else.' : 'Same two teams until time is up.'))),
+      h('div', { class: 'score-row' }, h('div', { class: 'score-side' }, ta, sa), h('span', { class: 'muted vs' }, 'v'), h('div', { class: 'score-side right' }, sB, tb), btn),
+      note);
+  };
+
+  // Saved games, newest first. Scores can be fixed in place; the players and prediction stay as saved.
+  const paintList = () => {
+    list.hidden = !games.length;
+    if (!games.length) return list.replaceChildren();
+    const lineup = (ids, k) => ids.join() !== (ses.teams[k - 1] ?? []).join() ? ` (${ids.map(id => firstName(pname.get(id))).join(', ')})` : '';
+    list.replaceChildren(h('h3', {}, 'Games'), h('ol', { class: 'game-list' }, [...games].reverse().map(g => {
+      const n = games.indexOf(g) + 1;
+      const input = (key, label) => {
+        const el = h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: g[key], 'aria-label': label });
+        el.onchange = async () => {
+          const v = Number(el.value);
+          if (!Number.isInteger(v) || v < 0 || v > 99) { el.value = g[key]; return toast('Scores are whole numbers from 0 to 99'); }
+          try { await q(sb.from('games').update({ [key]: v }).eq('id', g.id)); g[key] = v; toast('Saved'); paintTeams(); }
+          catch (e) { el.value = g[key]; toast(e.message); }
+        };
+        return el;
+      };
+      const changed = [lineup(g.players_a, g.team_a) && `${teamName(g.team_a)}${lineup(g.players_a, g.team_a)}`, lineup(g.players_b, g.team_b) && `${teamName(g.team_b)}${lineup(g.players_b, g.team_b)}`].filter(Boolean).join(' · ');
+      return h('li', {},
+        h('span', { class: 'game-no muted' }, String(n)),
+        h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a)} v ${teamName(g.team_b)}`),
+          !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
+          changed && h('div', { class: 'muted small' }, changed)),
+        h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a)} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b)} score`)),
+        h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
+          if (!confirm(`Delete game ${n} (${teamName(g.team_a)} v ${teamName(g.team_b)}, ${g.score_a}–${g.score_b})?`)) return;
+          try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
+          catch (e) { toast(e.message); }
+        } }, 'Delete'));
+    })));
+  };
+  paintTeams(); paintEntry(); paintList();
+  wrap.append(
+    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), h('span', { class: 'grow' }), delDay),
+    h('div', { class: 'card' }, entry),
+    h('div', { class: 'card' }, teamsBox),
+    list);
+  return [wrap];
+}
+
+const pct = v => v == null ? '—' : `${Math.round(v * 100)}%`;
+const pts = v => v == null ? '—' : (Math.round(v * 10) / 10).toFixed(1);
+const plusPts = v => v == null ? '—' : `${v > 0 ? '+' : ''}${pts(v)}`;
+
+async function insightsView(sessions, pname) {
+  const games = await q(sb.from('games').select('*').order('created_at'));
+  const day = new Map(sessions.map(s => [s.id, s.played_on]));
+  const a = analyze(games);
+  if (!a.n) return [h('div', { class: 'card empty' }, 'No games with scores yet. Enter a few on the Games tab and come back.')];
+  const tile = (value, label, sub) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, value), h('b', {}, label), sub && h('span', { class: 'muted small' }, sub));
+  const early = a.n < 15 && h('p', { class: 'warn small' }, `Only ${a.n} game${a.n === 1 ? '' : 's'} so far. Treat these numbers as a first look; they settle after a few game days.`);
+
+  const tiles = h('div', { class: 'tiles' },
+    tile(String(a.n), 'Games', `${a.sessions} game day${a.sessions === 1 ? '' : 's'}`),
+    tile(pct(a.close), 'Close games', `won by ${CLOSE} or less`),
+    tile(pct(a.blowouts), 'Blowouts', `won by ${BLOWOUT} or more`),
+    tile(pts(a.avgMargin), 'Average margin', 'points, per game to 25'),
+    tile(pct(a.favWon), 'Stronger team won', a.called ? `of ${a.called} games with a gap` : 'no games with a gap'));
+
+  // Predicted gap vs actual margin, one dot per game.
+  const chartBox = h('div');
+  const chartCard = h('div', { class: 'card' },
+    h('h3', {}, 'Predicted gap vs actual margin'),
+    h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Each dot is a game, from the first team\'s side: right = they were rated stronger, up = they won by more. ',
+      'Dots near the middle line up with balanced teams. If the dots follow the dashed line, bigger rating gaps really do mean bigger wins',
+      a.k > 0 ? ` (about ${pts(a.k)} points per 1.0 of gap).` : '.', ' Hollow dots stopped early (time up).'),
+    chartBox);
+  scatterChart(chartBox, a.rows.map(r => ({ x: r.gap, y: r.m, early: !finished(r.g),
+    label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `Team ${r.g.team_a} v Team ${r.g.team_b}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
+
+  // Per game day.
+  const bySes = sessions.map(s => ({ s, rows: a.rows.filter(r => r.g.session_id === s.id) })).filter(x => x.rows.length);
+  const days = h('div', { class: 'card' }, h('h3', {}, 'By game day'), stacked(h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Day'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Average margin'), h('th', { class: 'num' }, 'Close'), h('th', { class: 'num' }, 'Rated gap'))),
+    h('tbody', {}, bySes.map(({ s, rows }) => {
+      const m = rows.map(r => Math.abs(r.m));
+      return h('tr', {}, h('td', {}, dayTitle(s.played_on), s.source && h('span', { class: 'muted small' }, ` · ${{ built: 'built', edited: 'built, then swapped', own: 'own teams' }[s.source] ?? s.source}`)),
+        h('td', { class: 'num' }, String(rows.length)),
+        h('td', { class: 'num' }, pts(m.reduce((x, y) => x + y, 0) / m.length)),
+        h('td', { class: 'num' }, pct(m.filter(v => v <= CLOSE).length / m.length)),
+        h('td', { class: 'num' }, pts(rows.reduce((x, r) => x + Math.abs(r.gap), 0) / rows.length)));
+    })))));
+
+  // Which differences between teams go with winning.
+  const word = r => r == null ? 'not enough games' : Math.abs(r) < .15 ? 'little or no link' : `${Math.abs(r) < .35 ? 'some' : 'strong'} link`;
+  const factors = h('div', { class: 'card' }, h('h3', {}, 'What goes with winning'),
+    h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'How each difference between the two teams lines up with the margin, from −1 to 1. ',
+      'Positive: the team with more of it tended to win by more. Spread: how far apart teams typically were on it. A factor that hardly differs between teams (because the builder evens it out) can\'t show much.'),
+    stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Difference in'), h('th', { class: 'num' }, 'Link'), h('th', {}, ''), h('th', { class: 'num' }, 'Spread'))),
+      h('tbody', {}, [...a.factors].sort((x, y) => Math.abs(y.r ?? 0) - Math.abs(x.r ?? 0)).map(f => h('tr', {},
+        h('td', {}, f.label), h('td', { class: 'num' }, f.r == null ? '—' : fmt(f.r)), h('td', { class: 'muted' }, word(f.r)), h('td', { class: 'num' }, fmt(f.spread))))))));
+
+  // Suggested weights, once there are enough games.
+  const weights = h('div', { class: 'card' }, h('h3', {}, 'Strength weights'),
+    a.weights
+      ? [h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `Weights that best explain the margins of these ${a.n} games, starting from the current ones as if they'd been seen in ${PRIOR_GAMES} games, so they move slowly. Same total as now. A big move that holds up over more game days is worth trying in teams.mjs.`),
+        stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Skill'), h('th', { class: 'num' }, 'Now'), h('th', { class: 'num' }, 'From results'), h('th', { class: 'num' }, 'Change'))),
+          h('tbody', {}, SKILLS.map(s => h('tr', {}, h('td', {}, LABEL[s]), h('td', { class: 'num' }, fmt(WEIGHTS[s])), h('td', { class: 'num' }, h('b', {}, fmt(a.weights[s]))),
+            h('td', { class: 'num muted' }, `${a.weights[s] >= WEIGHTS[s] ? '+' : ''}${fmt(a.weights[s] - WEIGHTS[s])}`))))))]
+      : h('p', { class: 'muted small' }, `Suggested weights show up after ${MIN_FIT} games (${a.n} so far). Until then there's too little to tell the skills apart.`));
+
+  const parts = [early, tiles, chartCard, factors, weights, days].filter(Boolean);
+
+  // Super: players whose teams did better or worse than their ratings said. Based on results only, but it points at
+  // players who may be rated too low or too high, so organizers don't get it.
+  if (me.role === 'super') {
+    const ps = playerStats(games, a.k).filter(p => pname.has(p.id)).sort((x, y) => y.over - x.over);
+    parts.push(h('div', { class: 'card' }, h('h3', {}, 'Players vs their ratings'),
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only you see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
+        'High and steady: maybe rated too low. Low: maybe too high. Under 10 games it\'s mostly luck.'),
+      stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Won'), h('th', { class: 'num' }, 'Margin'), h('th', { class: 'num' }, 'Vs ratings'))),
+        h('tbody', {}, ps.map(p => h('tr', { class: p.games < 10 ? 'dim' : null },
+          h('td', {}, pname.get(p.id)), h('td', { class: 'num' }, String(p.games)), h('td', { class: 'num' }, pct(p.wins / p.games)),
+          h('td', { class: 'num' }, plusPts(p.margin)), h('td', { class: 'num' }, h('b', {}, plusPts(p.over))))))))));
+  }
+  return parts;
+}
+
+// Dots: x = rated gap, y = margin (both from the first team's side). Dashed line: margin = k × gap.
+function scatterChart(box, dots, k) {
+  const plot = h('div', { class: 'chart-plot' });
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  plot.append(tip);
+  box.replaceChildren(h('div', { class: 'chart-legend' }, h('span', {}, h('i', { class: 'dot-key' }), 'Game to 25'), h('span', {}, h('i', { class: 'dot-key hollow' }), 'Stopped early'), k > 0 && h('span', {}, h('i', { class: 'dash-key' }), 'Trend')), plot);
+  const H = 260, M = { l: 34, r: 12, t: 10, b: 30 };
+  const xMax = Math.max(.5, ...dots.map(d => Math.abs(d.x))) * 1.1;
+  const yMax = Math.max(TARGET * .6, ...dots.map(d => Math.abs(d.y))) * 1.05;
+  let W = 0;
+  const render = () => {
+    W = plot.clientWidth; if (!W) return;
+    const xOf = x => M.l + (x + xMax) / (2 * xMax) * (W - M.l - M.r);
+    const yOf = y => M.t + (1 - (y + yMax) / (2 * yMax)) * (H - M.t - M.b);
+    const yTicks = [-20, -10, 0, 10, 20].filter(v => Math.abs(v) <= yMax);
+    const step = xMax > 2 ? 1 : .5;
+    const xTicks = []; for (let v = -Math.floor(xMax / step) * step; v <= xMax; v += step) xTicks.push(Math.round(v * 100) / 100);
+    const grid = [
+      ...yTicks.map(v => svg('g', {}, svg('line', { x1: M.l, x2: W - M.r, y1: yOf(v), y2: yOf(v), class: v ? 'grid' : 'cross' }),
+        svg('text', { x: M.l - 6, y: yOf(v), class: 'axis', 'text-anchor': 'end', 'dominant-baseline': 'middle' }, v > 0 ? `+${v}` : String(v)))),
+      svg('line', { x1: xOf(0), x2: xOf(0), y1: M.t, y2: H - M.b, class: 'cross' }),
+      ...xTicks.map(v => svg('text', { x: xOf(v), y: H - 12, class: 'axis', 'text-anchor': 'middle' }, v > 0 ? `+${fmt(v)}` : fmt(v))),
+      svg('text', { x: W - M.r, y: H - 1, class: 'axis', 'text-anchor': 'end' }, 'Rated gap →'),
+    ];
+    const lo = Math.max(-xMax, -yMax / (k || 1)), hi = -lo;
+    const trend = k > 0 && svg('line', { x1: xOf(lo), x2: xOf(hi), y1: yOf(k * lo), y2: yOf(k * hi), class: 'trend' });
+    const marks = dots.map(d => {
+      const g = svg('g', { class: 'pt', tabindex: 0, role: 'img', 'aria-label': d.label.join(', ') },
+        svg('circle', { cx: xOf(d.x), cy: yOf(d.y), r: 12, fill: 'transparent' }),
+        svg('circle', { cx: xOf(d.x), cy: yOf(d.y), r: 5, class: d.early ? 'dot hollow' : 'dot', fill: d.early ? 'var(--surface)' : 'var(--s1)', stroke: 'var(--s1)' }));
+      const show = () => {
+        tip.replaceChildren(h('div', { class: 'chart-tip-head' }, d.label[0]), ...d.label.slice(1).map(t => h('div', { class: 'chart-tip-row' }, t)));
+        tip.hidden = false;
+        const x = xOf(d.x), tw = tip.offsetWidth;
+        tip.style.left = `${Math.max(0, Math.min(W - tw, x > W / 2 ? x - tw - 14 : x + 14))}px`;
+        tip.style.top = `${Math.max(0, Math.min(H - tip.offsetHeight, yOf(d.y) - 20))}px`;
+      };
+      const hide = () => { tip.hidden = true; };
+      g.onpointerenter = show; g.onfocus = show; g.onpointerleave = hide; g.onblur = hide;
+      return g;
+    });
+    const el = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'group', 'aria-label': `Rated gap against margin, ${dots.length} games` }, grid, trend, marks);
+    plot.querySelector('svg')?.remove();
+    plot.prepend(el);
+  };
+  const ro = new ResizeObserver(() => { if (!plot.isConnected) { if (W) ro.disconnect(); return; } if (plot.clientWidth !== W) render(); });
+  ro.observe(plot);
+  requestAnimationFrame(render);
 }
 
 // ---------- all ratings (super) ----------

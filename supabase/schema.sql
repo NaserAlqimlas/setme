@@ -142,3 +142,38 @@ create policy ratings_super_write on public.ratings for all to authenticated
 -- rating_history: super reads everything, everyone else their own; only the trigger writes it.
 create policy rating_history_read on public.rating_history for select to authenticated
   using (public.my_role() = 'super' or rater_id = auth.uid());
+
+-- Scores: saved lineups per game day and each game's result (same as scores.sql).
+create table public.sessions (
+  id bigint generated always as identity primary key,
+  played_on date not null unique,
+  teams jsonb not null,     -- each team's players right now; late changes edit it
+  raters uuid[],            -- what the lineup was built with (null = everyone's ratings), reused to predict each game
+  all_game bigint[] not null default '{}',
+  source text,              -- 'built', 'edited' or 'own'
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table public.games (
+  id bigint generated always as identity primary key,
+  session_id bigint not null references public.sessions on delete cascade,
+  team_a smallint not null,
+  team_b smallint not null,
+  players_a bigint[] not null,  -- who was on each team for this game
+  players_b bigint[] not null,
+  score_a smallint not null check (score_a between 0 and 99),
+  score_b smallint not null check (score_b between 0 and 99),
+  predicted jsonb,              -- team numbers from the ratings when the game was saved
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create index games_session on public.games (session_id, created_at);
+create trigger sessions_touch before update on public.sessions
+  for each row execute function public.touch_updated_at();
+alter table public.sessions enable row level security;
+alter table public.games enable row level security;
+create policy sessions_organizers on public.sessions for all to authenticated
+  using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
+create policy games_organizers on public.games for all to authenticated
+  using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));

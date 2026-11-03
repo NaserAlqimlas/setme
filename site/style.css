@@ -359,3 +359,40 @@ tbody tr:hover { background: var(--surface-2); }
 .team-grid.picking .team:not(.from) li .pick { border-style: dashed; border-color: var(--line-strong); }
 .team-grid.busy { opacity: .6; pointer-events: none; }
 .swap-hint { margin: 0 0 10px; }
+
+/* ---------- scores ---------- */
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr)); margin-bottom: 16px; }
+.tiles .tile { margin: 0; display: grid; gap: 4px; align-content: start; }
+.tile b { font-size: .9rem; }
+.score-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.score-side { display: flex; gap: 8px; align-items: center; }
+.score-in { width: 4.5rem; text-align: center; font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 700; }
+.score-in.sm { width: 3.6rem; font-size: 1rem; padding: 4px 6px; }
+.team li .ghost.sm { margin-left: auto; }
+.team > select { width: 100%; }
+tr.dim td { color: var(--muted); }
+.chart-plot .trend { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart-plot .dot.hollow { stroke-width: 2; }
+.chart-plot .pt { cursor: default; outline: none; }
+.chart-plot .pt:focus-visible .dot { stroke: var(--fg); stroke-width: 3; }
+.chart-legend .dot-key { width: 10px; height: 10px; border-radius: 50%; background: var(--s1); }
+.chart-legend .dot-key.hollow { background: transparent; border: 2px solid var(--s1); box-sizing: border-box; }
+.chart-legend .dash-key { width: 16px; height: 0; border-top: 2px dashed var(--muted); background: none; }
+@media (max-width: 640px) {
+  .score-row { justify-content: center; }
+  .score-row > button { width: 100%; }
+}
+.game-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.game-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.game-no { width: 1.6rem; font-variant-numeric: tabular-nums; }
+.game-score { display: flex; align-items: center; gap: 6px; }
+@media (max-width: 640px) {
+  .score-row { display: grid; grid-template-columns: 1fr auto 1fr; }
+  .score-side { flex-direction: column; align-items: stretch; }
+  .score-side.right { flex-direction: column-reverse; }
+  .score-side select, .score-side .score-in { width: 100%; }
+  .score-row > button { grid-column: 1 / -1; }
+  .game-list .grow { flex-basis: calc(100% - 2.6rem); }
+  .game-score { margin-left: 2.4rem; }
+  .game-list li > button { margin-left: auto; }
+}

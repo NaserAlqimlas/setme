@@ -39,11 +39,12 @@ site/
   js/paste.mjs          matching a pasted WhatsApp list to players
   js/csv.mjs            ratings CSV import, export and template
   js/courtimg.mjs       draws the court-map PNG for sharing
+  js/scores.mjs         game margins, rotation, insights and weight fitting for the Scores page
 netlify/
   lib/supabase.mjs      server helpers: REST/admin calls with the secret key, caller(req) -> {id, role}
   functions/build-teams.mjs
   functions/admin.mjs
-supabase/schema.sql     tables, triggers, RLS policies
+supabase/schema.sql     tables, triggers, RLS policies (scores.sql: upgrade adding sessions and games)
 tools/make_seed.py      vb_skill.md -> private/ seed SQL + test fixture
 tests/                  node scripts, no framework
 ```
@@ -56,6 +57,9 @@ tests/                  node scripts, no framework
 | `players` | name, gender (M/F/U), setting (M main / B backup / N), playing, active, tier | `tier` is the stand-in level (beginner, average, strong) for players nobody has rated. |
 | `ratings` | rater_id, player_id, receiving, hitting, hustle, serve, blocking, setting_skill, consistency | One row per rater per player. Values are 0, .25, .5, .75, 1, or null for U. |
 | `rating_history` | rater_id, player_id, skill, old_value, new_value, changed_by, changed_at | Written only by the `ratings_history` trigger, one row per changed skill. Taps on the same skill by the same person within 10 minutes merge into one row. Super reads all rows; everyone else reads their own (rater_id = them). No foreign keys, so it outlives removed players and raters. |
+
+| `sessions` | played_on (unique), teams (jsonb, each team's player ids now), raters, all_game, source | One per game day, from Save for scores on Teams. Late changes edit `teams`. Organizers and super read and write. |
+| `games` | session_id, team_a, team_b, players_a, players_b, score_a, score_b, predicted | One per game. Keeps who played on each side, and `predicted` = both teams' numbers (weighted, skill sums, size, women, main setters, unrated) from `build-teams` with `predict: true` when it was saved, so later rating changes don't rewrite history. |
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
 
@@ -80,6 +84,7 @@ Combos (play together / keep apart) are **not stored**. The Teams page keeps the
 | My ratings / All ratings | all; super sees everything | `ratings`, `rating_history` (own rows; super all); super also runs `combineRatings` in the browser |
 | Players | organizer, super | `players` (update; super insert/delete) |
 | Teams | organizer, super | `build-teams` function |
+| Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only |
 | Users | super | `profiles`, `admin` function |
 
 UI helpers at the top of app.js: `h()` builds elements, `seg()` is the pick-one button row, `toggle()` the switch, `stacked()` turns tables into cards on phones, `toast()`.
@@ -133,6 +138,7 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
 2. Load active players and all ratings with the secret key. If the caller passed `raters`, keep only those raters' ratings. `listRaters: true` returns just who has rated anyone (for the Ratings from picker, since organizers can't read other people's rating rows).
 3. `combineRatings`, then `teamSkills` with `allGame` (setters who set all game: Setting counts ×`SETTING_WEIGHT`, receiving and hitting shrink by `ALL_GAME`; team strength = `strength(sk)`), then `buildTeams` with the combos from the request (`useCombos` off sends none).
    With `teams: [[playerId, ...], ...]` (Your own teams) it skips building and runs `describeTeam` on each team as given, any active players, so the result looks like one built option. It also returns `problems` (`teamProblems`) and up to three `suggestions` (`suggestSwaps`: every one-for-one swap, then pairs of the 40 best, scored with the same `makeScorer` cost as `buildTeams`; `locked` players and together pairs already on one team stay put; split together pairs add 1e6 each, so reuniting them outranks any balance gain, like combos being a hard rule in `buildTeams`). Super can pass `suggestRater` to get problems and suggestions from one rater's ratings alone (the Show ratings from chip). Organizers get suggestions without `gap` and without the weak-passer / inconsistent-player notes.
+   With `predict: true` and `teams` it returns only each team's numbers (`{ teams: [{ weighted, sums, size, women, setters, unrated }] }`), for storing with a game.
 4. Each option also gets `byRater`, every picked rater's weighted team totals and skill sums from their ratings alone (`guessed` counts players they haven't rated).
 5. Organizers: players reduced to `{ id, name, setting, allGame }`; team numbers stay.
 
@@ -149,3 +155,11 @@ Draws a 1080-wide PNG on a canvas: Team 1 v Team 2 on court 1, Team 3 v Team 4 o
 - Netlify publishes `site/` and bundles `netlify/functions/` with esbuild (`netlify.toml`).
 - Netlify's secret scanning is told that `SUPABASE_URL` and `site/config.js` are public, because the publishable key and URL are meant to be in the page.
 - Pushing to `master` deploys.
+
+## Scores (scores.mjs)
+
+- **Margin** is from team A's side. A game stopped before 25 (time up) is scaled to a game to 25: 12-8 counts as 25 - 16.7.
+- **Rotation** (`nextPairing`): round robin by the circle method, starting 1v2, 3v4 like the share image; suggests the first pairing played the fewest times. Organizers can pick any two teams.
+- **Insights** (`analyze`): close games (≤3), blowouts (≥10), average margin, how often the higher rated gap won (gaps under .05 don't count), `k` = points per 1.0 of rated gap (line through zero), and each team difference's correlation with the margin.
+- **Weights**: from 30 games, a ridge fit of margin on the five skill-sum differences, pulled towards the current `WEIGHTS` × k as if they'd been seen in 20 games, rescaled to the current total. A suggestion to try in `teams.mjs`, never applied automatically.
+- **Players** (`playerStats`, super only on the page): per player, the average of (margin − k × gap) from their team's side.

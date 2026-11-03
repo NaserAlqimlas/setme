@@ -19,6 +19,7 @@ How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - **My ratings / All ratings**: sortable table (tap a column, or use Sort by on phones). Below it, **Rating history**: which rating changed, from what to what, and when. Raters and organizers see their own changes; super sees everyone's, with who made them. A chart shows how many ratings changed each day. Tap a player's name (or pick them in the Player box) to see just theirs, with a chart: their skills over time from one rater, or each rater's total over time.
 - **Players**: paste the WhatsApp list to set who's playing (names after "Waitlist" are left out). Super adds a new player with a stand-in level (Beginner, Average, Strong) used until someone rates them.
 - **Teams**: a **Setters** card to say who sets all game and who rotates tonight (main setters default to all game; also tappable on setter badges in Your own teams). A setter who sets all game adds their Setting rating to the team, while their hitting counts at 25% and receiving at 50%, and they don't count as weak passers. Combos for this build only (play together / keep apart, not saved), New players card for unrated players, number of teams, date, build. Each option can be copied as text or shared as a court-map image. **Your own teams**: paste teams you made (or upload a .txt/.csv) to see them laid out the same way, with Copy text and Share image; super and organizers also see each team's skill sums and totals. Super and organizers also see, for every set of teams, the gap between the strongest and weakest team, the skill weights behind the totals, and **Show ratings from** chips (Combined, then each rater): tap a rater to see every team's total and skill sums from their ratings alone. Your own teams use the raters picked under Ratings from, and re-check by themselves when that changes. Your own teams also get **Suggestions**, right under the team cards and based on whichever Show ratings from chip is selected (Combined or one rater): what's off (a team without a setter, weak passers bunched up, a keep-apart pair together) and up to three small swaps that balance them better, each with the gap before and after and what it fixes. Apply a swap, Undo it, or tap 🔓 to lock a player to their team. Combos count too (when Use combos is on): a together pair on different teams is flagged and swaps that reunite them come first, a together pair on one team is never split, and a keep-apart pair on one team is flagged.
+- **Scores** (organizers, super): on Teams, **Save for scores** on any option (or Your own teams) saves it as that date's lineup. On Scores, enter each game: the next pairing is suggested from the rotation (1v2 and 3v4, then 1v4 and 2v3, then 1v3 and 2v4; with two teams, the same pair until time is up), and a game stopped before 25 is saved as it stood and scaled to a game to 25 in the numbers. **Change players** handles late arrivals, people leaving and moves between teams; each game keeps who actually played and the team numbers the ratings predicted at that moment. **Insights**: close games and blowouts, how often the stronger-rated team won, a chart of rated gap against actual margin, which team differences go with winning, and (after 30 games) suggested strength weights. Super also sees each player's results against what their ratings predicted.
 - **Users** (super): create invite and password-reset links to send yourself, change roles, remove people.
 
 ## Setup from scratch
@@ -63,6 +64,8 @@ drop table if exists public.combos;  -- combos are no longer saved
 
 Setting rating: paste and run `supabase/setting_skill.sql` (adds the column and logs Setting in rating history). Until then, Setting taps don't save; everything else works.
 
+Scores: paste and run `supabase/scores.sql` (adds `sessions` and `games`). Until then Save for scores and the Scores page show an error; everything else works.
+
 Rating history: paste and run `supabase/rating_history.sql` (safe to run again if you ran an earlier version). It records changes from then on; earlier changes weren't kept.
 
 ## Running it locally
@@ -95,6 +98,7 @@ node tests/test_apart.mjs          # keep-apart pairs
 node tests/test_consistency.mjs    # consistency: no effect on strength, spread across teams
 node tests/test_paste.mjs          # WhatsApp list matching
 node tests/test_csv.mjs PATH.csv   # ratings CSV import
+node tests/test_scores.mjs         # score margins, rotation, insights and weight fitting
 ```
 
 ## Updating from vb_skill.md

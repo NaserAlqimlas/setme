@@ -5,6 +5,8 @@
 // POST { teams: [[playerId, ...], ...], locked?: [playerId] } rates teams you made yourself instead of building them (any active
 // players), lists what's off about them, and suggests up to three small swaps (combos are respected the same way).
 // Organizers and super can add suggestRater: id to work out problems and suggestions from that one rater's ratings (cards still get all).
+// POST { predict: true, teams } returns only each team's numbers ({ teams: [{ weighted, sums, size, women, setters, unrated }] }),
+// stored with a game's score on the Scores page. Team totals only, like everything organizers get.
 // Organizers get team numbers, combined and per rater (byRater). Player-level ratings never leave the server for organizers.
 import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps } from '../../site/js/teams.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
@@ -14,7 +16,7 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false } = await req.json().catch(() => ({}));
   const [players, ratings] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
@@ -36,6 +38,17 @@ export default async (req) => {
   // Setters who set all game (picked on the Teams page; main setters if not sent): see teamSkills.
   const allGame = new Set(Array.isArray(sentAllGame) ? sentAllGame.filter(Number.isInteger) : players.filter(p => p.setting === 'M').map(p => p.id));
   const skills = teamSkills(players, combined, allGame);
+
+  if (predict) {
+    const byId = new Map(players.map(p => [p.id, p]));
+    const ids = Array.isArray(own) ? own.map(t => (Array.isArray(t) ? t : []).filter(id => byId.has(id))) : [];
+    if (ids.length < 2 || ids.some(t => !t.length)) return json({ error: 'Each team needs at least one player' }, 400);
+    return json({ teams: ids.map(t => {
+      const d = describeTeam(t.map(id => byId.get(id)), skills);
+      return { weighted: d.weighted, sums: d.sums, size: t.length, women: d.players.filter(p => p.gender === 'F').length,
+        setters: d.players.filter(p => p.setting === 'M').length, unrated: t.filter(id => combined.get(id).guess).length };
+    }) });
+  }
 
   let result;
   if (own != null) {
