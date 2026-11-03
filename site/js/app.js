@@ -4,6 +4,7 @@ import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 import { analyze, playerStats, nextPairing, finished, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET } from './scores.mjs';
+import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, fromRows, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -966,6 +967,12 @@ async function gamesView(sessions, players, pname) {
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
   let games = await q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at'));
+  // Finished rallies tagged per game (null = the match stats SQL hasn't been run).
+  const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
+    .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
+  const tagGame = games.find(g => g.id === taggingGame);
+  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, () => { taggingGame = null; render(); })];
+  taggingGame = null;
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on))));
   daySel.onchange = () => { scoresDay = daySel.value; render(); };
@@ -1089,6 +1096,10 @@ async function gamesView(sessions, players, pname) {
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
         h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a)} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b)} score`)),
+        h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
+          if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
+          taggingGame = g.id; render();
+        } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
           if (!confirm(`Delete game ${n} (${teamName(g.team_a)} v ${teamName(g.team_b)}, ${g.score_a}–${g.score_b})?`)) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
@@ -1103,6 +1114,249 @@ async function gamesView(sessions, players, pname) {
     h('div', { class: 'card' }, teamsBox),
     list);
   return [wrap];
+}
+
+// ---------- match stats: tagging a game ----------
+// Watch the game's video and tap player → action → grade for each touch. Grades that end a rally (ace, kill, error…)
+// award the point on their own; "Point" buttons cover the rest. The video stays on this device (a file) or on
+// YouTube; tags keep the video time so tapping one jumps back to it. Works without a video too (tagging live).
+// Saved a moment after each change: only rallies that changed since the last save, plus deleted ones, through
+// save_game_tags (one transaction). Rally ids are made here, so a resent save can't double up, and two people
+// tagging the same game don't wipe each other's rallies. A copy stays on this device until the save goes through.
+let taggingGame = null;
+const clock = t => t == null ? '' : `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+const ytId = s => (String(s).match(/(?:youtu\.be\/|[?&]v=|embed\/|shorts\/|live\/)([\w-]{11})/) ?? String(s).trim().match(/^([\w-]{11})$/))?.[1] ?? null;
+let ytReady = null;
+const loadYouTube = () => ytReady ??= new Promise((res, rej) => {
+  window.onYouTubeIframeAPIReady = () => res(window.YT);
+  const s = h('script', { src: 'https://www.youtube.com/iframe_api' });
+  s.onerror = () => { ytReady = null; rej(new Error('Could not load YouTube')); };
+  document.head.append(s);
+});
+// One interface for a local file or a YouTube embed. Both are put in `box` before use.
+function fileVideo(box, file) {
+  const v = h('video', { controls: true, playsinline: true, preload: 'auto' });
+  v.src = URL.createObjectURL(file);
+  box.replaceChildren(v);
+  return { now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => URL.revokeObjectURL(v.src) };
+}
+async function youtubeVideo(box, id) {
+  const YT = await loadYouTube();
+  const host = h('div');
+  box.replaceChildren(h('div', { class: 'yt' }, host));
+  const p = await new Promise((res, rej) => {
+    const pl = new YT.Player(host, { videoId: id, playerVars: { playsinline: 1, rel: 0 }, events: { onReady: () => res(pl), onError: () => rej(new Error('YouTube could not play that video')) } });
+  });
+  return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy() };
+}
+
+async function tagView(g, n, pname, back) {
+  const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
+  // What the database has: each rally as last saved (to send only what changed), and the video.
+  const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
+  const videoOf = () => video ? { video_kind: video.kind, video_ref: video.kind === 'file' ? video.name : video.id } : { video_kind: null, video_ref: null };
+  let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : null;
+  let savedVideo = JSON.stringify(videoOf());
+  const draftKey = `setme-tags-${g.id}`;
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(draftKey)); } catch { /* no draft */ }
+  // Changes on this device that never reached the database: apply them on top of what's saved. Rallies someone
+  // else added since stay; only rallies this device knew about and deleted are deleted.
+  let rallies = stored;
+  if (draft?.rallies) {
+    const mine = new Map(draft.rallies.map(r => [r.id, r]));
+    const gone = new Set((draft.known ?? []).filter(id => !mine.has(id)));
+    rallies = [...draft.rallies, ...stored.filter(r => !mine.has(r.id) && !gone.has(r.id))].sort((a, b) => a.seq - b.seq);
+    video = draft.video ?? video;
+    setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
+  }
+
+  const name = { a: `Team ${g.team_a}`, b: `Team ${g.team_b}` };
+  const color = { a: TEAM_COLORS[(g.team_a - 1) % TEAM_COLORS.length], b: TEAM_COLORS[(g.team_b - 1) % TEAM_COLORS.length] };
+  const lineup = { a: g.players_a, b: g.players_b };
+  const pn = id => firstName(pname.get(id) ?? '?');
+  const side = p => sideOf(g, p);
+  let player = null, sel = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = !!draft?.rallies;
+  const now = () => player ? Math.round(player.now() * 10) / 10 : null;
+  const open = () => { const r = rallies.at(-1); return r && !r.won ? r : null; };
+  const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
+
+  // ----- saving -----
+  const status = h('span', { class: 'muted small tag-status' }, stored.length ? 'Saved' : '');
+  const save = async () => {
+    clearTimeout(saveTimer); saveTimer = null;
+    await saving;
+    if (!dirty) return;
+    dirty = false; status.textContent = 'Saving…';
+    const ids = new Set(rallies.map(r => r.id));
+    const changedRallies = rallies.filter(r => saved.get(r.id) !== JSON.stringify(r));
+    const deleted = [...saved.keys()].filter(id => !ids.has(id));
+    const sent = new Map(changedRallies.map(r => [r.id, JSON.stringify(r)])), vid = JSON.stringify(videoOf());
+    saving = (async () => {
+      if (changedRallies.length || deleted.length) await q(sb.rpc('save_game_tags', { p_game: g.id, p_rallies: changedRallies, p_deleted: deleted }));
+      if (vid !== savedVideo) { await q(sb.from('games').update(videoOf()).eq('id', g.id)); savedVideo = vid; }
+    })().then(() => {
+      for (const id of deleted) saved.delete(id);
+      for (const [id, j] of sent) saved.set(id, j);
+      if (!dirty) { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } }
+      status.textContent = dirty ? 'Unsaved' : 'Saved';
+    }, e => {
+      dirty = true; status.textContent = `Not saved (${e.message}). Kept on this device, retrying…`;
+      saveTimer = setTimeout(save, 10e3);
+    }).finally(() => { saving = null; });
+    await saving;
+  };
+  const changed = () => {
+    dirty = true; status.textContent = 'Unsaved';
+    try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
+    clearTimeout(saveTimer); saveTimer = setTimeout(save, 1500);
+    paint();
+  };
+  const snapshot = () => { history.push(JSON.stringify(rallies)); if (history.length > 100) history.shift(); };
+  const undo = () => { if (!history.length) return toast('Nothing to undo'); rallies = JSON.parse(history.pop()); sel = null; changed(); };
+
+  // ----- tagging -----
+  const newRally = () => ({ id: crypto.randomUUID(), seq: Math.max(0, ...rallies.map(r => r.seq)) + 1, t: now(), serve: serving(), won: null, touches: [] });
+  const addTouch = (p, a, grade) => {
+    snapshot();
+    let r = open();
+    if (!r) { r = newRally(); rallies.push(r); }
+    r.touches.push({ p, a, g: grade, t: now() });
+    const end = endsRally(a, grade);
+    if (end) r.won = end === 'won' ? side(p) : other(side(p));
+    sel = null; changed();
+    if (end) toast(`Point ${name[r.won]}`);
+  };
+  const point = s => {
+    snapshot();
+    const r = open() ?? (rallies.push(newRally()), rallies.at(-1));
+    r.won = s; sel = null; changed();
+  };
+  // Picking a player suggests the likely action (serve first, then pass, set, attack…).
+  const pick = p => { sel = sel?.p === p ? null : { p, a: suggestAction(open() ?? { serve: serving(), touches: [] }, side(p), g) }; paintPad(); };
+  // At the start of a rally the expected server is ready to grade.
+  const autoSel = () => {
+    if (sel || open()?.touches.length) return;
+    const p = nextServer(rallies, serving(), lineup[serving()]);
+    if (p != null) sel = { p, a: 'serve', auto: true };
+  };
+
+  // ----- layout -----
+  const scoreEl = h('div', { class: 'tag-score' });
+  const summary = h('div', { class: 'tag-summary muted small' });
+  const videoBox = h('div', { class: 'tag-video' });
+  const sourceRow = h('div', { class: 'row tag-source' });
+  const pad = h('div', { class: 'tag-pad' });
+  const list = h('ol', { class: 'rally-list' });
+
+  const paintScore = () => {
+    const s = score(rallies);
+    scoreEl.replaceChildren(
+      h('span', { style: `--tc:${color.a}` }, name.a, h('b', {}, String(s.a))), h('span', { class: 'muted' }, '–'),
+      h('span', { style: `--tc:${color.b}` }, h('b', {}, String(s.b)), name.b));
+    const ts = teamSummary(rallies, g), done = rallies.filter(r => r.won).length;
+    const line = k => `${name[k]}: side-out ${ts[k].sideOutRate == null ? '—' : `${Math.round(ts[k].sideOutRate * 100)}%`}, ${ts[k].aces} aces, ${ts[k].kills} kills, ${ts[k].stuffs} blocks, ${ts[k].errors} errors`;
+    // Only once the tags cover as many points as the saved score.
+    const off = done >= g.score_a + g.score_b && (s.a !== g.score_a || s.b !== g.score_b);
+    summary.replaceChildren(...(done ? [h('div', {}, line('a')), h('div', {}, line('b'))] : []),
+      ...(off ? [h('div', { class: 'warn' }, `Tags give ${s.a}–${s.b}; the saved score is ${g.score_a}–${g.score_b}.`)] : []));
+  };
+
+  const paintSource = () => {
+    const file = h('input', { type: 'file', accept: 'video/*', hidden: true });
+    file.onchange = () => {
+      const f = file.files[0]; if (!f) return;
+      player?.dispose(); player = fileVideo(videoBox, f);
+      if (video?.kind !== 'file' || video.name !== f.name) { video = { kind: 'file', name: f.name }; changed(); }
+      paintSource();
+    };
+    const yt = h('input', { type: 'url', placeholder: 'YouTube link', 'aria-label': 'YouTube link', value: video?.kind === 'youtube' ? `https://youtu.be/${video.id}` : '' });
+    const loadYt = async () => {
+      const id = ytId(yt.value); if (!id) return toast('That doesn\'t look like a YouTube link');
+      try { player?.dispose(); player = null; player = await youtubeVideo(videoBox, id); } catch (e) { return toast(e.message); }
+      if (video?.kind !== 'youtube' || video.id !== id) { video = { kind: 'youtube', id }; changed(); }
+    };
+    yt.onkeydown = e => { if (e.key === 'Enter') loadYt(); };
+    sourceRow.replaceChildren(
+      h('button', { class: 'ghost sm', onclick: () => file.click() }, video?.kind === 'file' ? `Open ${video.name}` : 'Open video file'), file,
+      h('span', { class: 'muted small' }, 'or'), yt, h('button', { class: 'ghost sm', onclick: loadYt }, 'Load'));
+    if (!player && !videoBox.children.length) videoBox.replaceChildren(h('p', { class: 'muted small' },
+      video?.kind === 'file' ? `Open ${video.name} again to see the video. It never leaves this device.` : 'Open the game\'s video, or tag live without one. Files stay on this device.'));
+    return loadYt;
+  };
+
+  const paintPad = () => {
+    autoSel();
+    const r = open(), sv = serving();
+    const col = s => h('div', { class: 'tag-team', style: `--tc:${color[s]}` },
+      h('div', { class: 'tag-team-head' }, h('b', {}, name[s]), sv === s && h('span', { class: 'badge set' }, 'Serving')),
+      h('div', { class: 'tag-players' }, lineup[s].map(p => h('button', { type: 'button', class: 'tag-player', 'aria-pressed': String(sel?.p === p), onclick: () => pick(p) },
+        avatar(pname.get(p) ?? '?', 26), h('span', {}, pn(p))))),
+      h('button', { type: 'button', class: 'ghost sm tag-point', onclick: () => point(s) }, `Point ${name[s]}`));
+    const choose = sel && h('div', { class: 'tag-choose' },
+      h('div', { class: 'muted small' }, h('b', {}, pname.get(sel.p)), sel.auto ? ' is up to serve' : '', ' · pick what they did'),
+      seg(Object.entries(ACTIONS).map(([a, d]) => [a, d.label]), sel.a, a => { sel = { ...sel, a, auto: false }; paintPad(); }, 'Action'),
+      h('div', { class: 'tag-grades' }, ACTIONS[sel.a].grades.map(([gr, label, end]) => h('button', { type: 'button', class: `tag-grade${end ? ` ${end}` : ''}`, onclick: () => addTouch(sel.p, sel.a, gr) },
+        h('small', {}, String(gr)), label))));
+    pad.replaceChildren(
+      h('div', { class: 'row tag-rally-head' },
+        h('b', {}, `Rally ${rallies.filter(x => x.won).length + 1}`),
+        h('span', { class: 'muted small' }, r ? r.touches.map(t => `${pn(t.p)} ${ACTIONS[t.a].label.toLowerCase()}`).join(' → ') : `${name[sv]} to serve`),
+        h('span', { class: 'grow' }),
+        !rallies.length && h('span', { class: 'row' }, h('span', { class: 'muted small' }, 'First serve'), seg([['a', name.a], ['b', name.b]], firstServe, v => { firstServe = v; sel = null; paintPad(); }, 'First serve')),
+        h('button', { class: 'ghost sm', onclick: undo, disabled: !history.length }, 'Undo')),
+      h('div', { class: 'tag-teams' }, col('a'), col('b')),
+      ...(choose ? [choose] : []));
+  };
+
+  const paintList = () => {
+    const shown = [...rallies.entries()].reverse();
+    list.replaceChildren(...shown.map(([i, r]) => h('li', {},
+      h('div', { class: 'rally-head' },
+        h('span', { class: 'muted small' }, `#${i + 1}`),
+        r.t != null && h('button', { class: 'ghost sm', onclick: () => player?.seek(r.t - 2), disabled: !player, title: 'Watch this rally' }, `▶ ${clock(r.t)}`),
+        h('span', { class: 'muted small' }, `${name[r.serve]} served`),
+        h('span', { class: 'grow' }),
+        h('button', { class: `chip plain point ${r.won ?? 'open'}`, style: r.won ? `--tc:${color[r.won]}` : null, title: 'Change who won the point',
+          onclick: () => { snapshot(); r.won = r.won === 'a' ? 'b' : r.won === 'b' ? (i === rallies.length - 1 ? null : 'a') : 'a'; changed(); } },
+          r.won ? `Point ${name[r.won]}` : 'In play'),
+        h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: () => { snapshot(); rallies.splice(i, 1); changed(); } }, '×')),
+      h('div', { class: 'chips' }, r.touches.map((t, j) => h('span', { class: `chip tag-touch ${endsRally(t.a, t.g) ?? ''}`, style: `--tc:${color[side(t.p)] ?? 'var(--muted)'}` },
+        h('button', { type: 'button', class: 'touch-btn', onclick: () => t.t != null && player?.seek(t.t - 1) }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
+        h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
+    if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
+  };
+  const paint = () => { paintScore(); paintPad(); paintList(); };
+
+  const loadYt = paintSource();
+  paint();
+  if (video?.kind === 'youtube') loadYt();
+
+  // Keys: space play/pause, ←/→ 2 s (shift 5 s), 0–3 grade, s/p/t/a/b/d action, Esc clear, u undo.
+  const keys = e => {
+    if (!wrap.isConnected) return document.removeEventListener('keydown', keys);
+    if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); player?.toggle(); }
+    else if (k === 'arrowleft' || k === 'arrowright') { e.preventDefault(); player?.seek(player.now() + (k === 'arrowright' ? 1 : -1) * (e.shiftKey ? 5 : 2)); }
+    else if (k === 'escape') { sel = null; paintPad(); }
+    else if (k === 'u') undo();
+    else if (sel && /^[0-3]$/.test(k) && ACTIONS[sel.a].grades.some(x => x[0] === Number(k))) addTouch(sel.p, sel.a, Number(k));
+    else if (sel) { const a = Object.keys(ACTIONS).find(x => ACTIONS[x].key === k); if (a) { sel = { ...sel, a, auto: false }; paintPad(); } }
+  };
+  document.addEventListener('keydown', keys);
+  const leave = async () => { await save(); player?.dispose(); document.removeEventListener('keydown', keys); back(); };
+
+  const wrap = h('div', { class: 'tagger' },
+    h('div', { class: 'card tag-top' },
+      h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
+      h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
+      scoreEl),
+    h('div', { class: 'card' }, videoBox, sourceRow,
+      h('p', { class: 'muted small' }, 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear')),
+    h('div', { class: 'card' }, pad),
+    h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list));
+  return wrap;
 }
 
 const pct = v => v == null ? '—' : `${Math.round(v * 100)}%`;
@@ -1337,7 +1591,75 @@ async function ratingsPage() {
       toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
     hist.el,
+    all && matchStatsCard(players, ratings),
     all && extra);
+}
+
+// Super only: per-player numbers from tagged games, and SetMe's ratings worked out from them (see statRatings in
+// stats.mjs). SetMe is a rater account of its own, so its ratings are combined, picked and charted like anyone's.
+function matchStatsCard(players, ratings) {
+  const el = h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Loading…'));
+  (async () => {
+    let rows, tagged;
+    try {
+      [rows, [{ games: tagged }]] = await Promise.all([q(sb.from('player_stats').select('*')), q(sb.from('tagged_games').select('games'))]);
+    } catch { return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
+    if (!tagged) return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
+    const tallies = tallyFromCounts(rows);
+    const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`, num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
+    const COLS = [['Player'], ['Games'], ['Serves'], ['Aces', 'Ace %'], ['Srv err', 'Serve errors'], ['Pass', 'Pass average (0–3)'], ['Attacks'], ['Kill', 'Kill %'],
+      ['Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['Blk/g', 'Stuff blocks per game'], ['Dig/g', 'Digs per game']];
+    const list = players.filter(p => tallies.has(p.id)).map(p => ({ p, m: metrics(tallies.get(p.id)) }));
+    const table = stacked(h('table', {},
+      h('thead', {}, h('tr', {}, COLS.map(([t, title], i) => h('th', { class: i ? 'num' : null, title }, t)))),
+      h('tbody', {}, list.map(({ p, m }) => h('tr', {}, h('td', {}, p.name),
+        [m.games, m.serves, pct(m.aceRate), pct(m.serveErr), m.passes ? `${num(m.passAvg)} (${m.passes})` : '–', m.attacks, pct(m.killRate), num(m.attackEff),
+          num(m.stuffsPerGame), num(m.digsPerGame)].map(v => h('td', { class: 'num' }, String(v))))))));
+
+    // SetMe's ratings: preview the changes, then write them as the SetMe rater.
+    const [setme] = await q(sb.from('profiles').select('id').eq('email', 'setme@setme.invalid'));
+    const current = new Map(setme ? ratings.filter(r => r.rater_id === setme.id).map(r => [r.player_id, r]) : []);
+    const out = h('div');
+    const preview = () => {
+      const { ratings: next, detail } = statRatings(tallies, players);
+      const skills = Object.keys(SKILL_STATS);
+      const changes = [];
+      for (const [pid, sk] of next) for (const s of skills) if (s in sk) {
+        const was = current.get(pid)?.[s]; const old = was == null ? null : Number(was);
+        if (old !== sk[s]) changes.push({ pid, s, old, new: sk[s] });
+      }
+      const skipped = skills.filter(s => detail[s].skipped).map(s => detail[s].flat ? `${LABEL[s]} (no differences between players yet)`
+        : `${LABEL[s]} (${detail[s].players} of ${MIN_PLAYERS} players have ${SKILL_STATS[s].min}+ ${s === 'blocking' || s === 'hustle' ? 'games' : 'attempts'})`);
+      const apply = h('button', { class: 'ball', disabled: !changes.length }, changes.length ? `Save ${changes.length} change${changes.length === 1 ? '' : 's'} as SetMe` : 'Nothing to change');
+      apply.onclick = async () => {
+        apply.disabled = true; apply.textContent = 'Saving…';
+        try {
+          const { id } = await callFn('admin', { action: 'setme' });
+          // Every row carries every derived skill (unchanged ones as they were), so nothing gets blanked.
+          const body = [...next].map(([pid, sk]) => ({ rater_id: id, player_id: pid,
+            ...Object.fromEntries(skills.map(s => [s, s in sk ? sk[s] : current.get(pid)?.[s] ?? null])) }));
+          await q(sb.from('ratings').upsert(body));
+          toast('SetMe\'s ratings saved'); render();
+        } catch (e) { toast(e.message); apply.disabled = false; apply.textContent = 'Try again'; }
+      };
+      const name = new Map(players.map(p => [p.id, p.name]));
+      out.replaceChildren(
+        ...(skipped.length ? [h('p', { class: 'muted small' }, `Not rated yet, too little data: ${skipped.join('; ')}.`)] : []),
+        changes.length ? h('div', { class: 'chips' }, changes.map(c => h('span', { class: `chip plain ${c.old == null ? '' : c.new > c.old ? 'up' : 'down'}` },
+          `${name.get(c.pid)} · ${SHORT[c.s]} ${fmt(c.old)} → ${fmt(c.new)}`))) : h('p', { class: 'muted' }, 'SetMe\'s ratings already match the stats.'),
+        h('div', { class: 'row', style: 'margin-top:10px' }, apply));
+    };
+    el.replaceChildren(
+      h('h3', {}, 'Match stats'),
+      h('p', { class: 'muted small' }, `From ${tagged} tagged game${tagged === 1 ? '' : 's'}. Only you can see these.`),
+      h('div', { class: 'scroll' }, table),
+      h('h3', { style: 'margin-top:18px' }, 'SetMe\'s ratings'),
+      h('p', { class: 'muted small' }, 'SetMe rates players from these stats as a rater of its own: ',
+        Object.entries(SKILL_STATS).map(([s, d]) => `${LABEL[s]} from ${d.label.toLowerCase()}`).join(', '),
+        '. Small samples are pulled toward the average, then players are ranked and spread over 0 to 1. Pick SetMe in Ratings from to see or use them.'),
+      h('button', { class: 'ghost sm', onclick: preview }, 'Preview changes'), out);
+  })().catch(e => el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'warn' }, e.message)));
+  return el;
 }
 
 // Who changed what and when, newest first. Changes one person made to one player within a few minutes show as one entry.
