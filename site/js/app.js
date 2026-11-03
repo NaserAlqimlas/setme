@@ -3,8 +3,9 @@ import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings
 import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
+import { recapImage } from './recapimg.mjs';
 import { analyze, playerStats, nextPairing, finished, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET } from './scores.mjs';
-import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, fromRows, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
+import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, fromRows, recap, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -772,18 +773,36 @@ function shareButton(teams, i) {
   };
   prep();
   document.addEventListener('gamedate', prep);
-  const share = async () => {
-    const b = blob ?? await ready;
-    const file = new File([b], name, { type: 'image/png' });
-    if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('Could not share'); }
-      return;
-    }
-    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); toast('Image copied, paste it in WhatsApp'); }
-    catch { h('a', { href: URL.createObjectURL(b), download: name }).click(); toast('Image downloaded'); }
-  };
-  btn = h('button', { class: 'sm', onclick: share }, 'Share image');
+  btn = h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, name) }, 'Share image');
   return btn;
+}
+
+// Share sheet where there is one (phones), else copy to the clipboard, else download.
+async function sharePng(b, name) {
+  const file = new File([b], name, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('Could not share'); }
+    return;
+  }
+  try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); toast('Image copied, paste it in WhatsApp'); }
+  catch { h('a', { href: URL.createObjectURL(b), download: name }).click(); toast('Image downloaded'); }
+}
+
+// Recap image for one game or a game day. Drawn ahead of the tap (iOS drops a share that waits on drawing);
+// call the returned refresh() with new docs when the tags change.
+function recapButton(label, title, subtitle, file, pname) {
+  let blob = null, ready = null, timer = null;
+  const btn = h('button', { class: 'sm', disabled: true, onclick: async () => { const b = blob ?? await ready; if (b) sharePng(b, file); } }, label);
+  const refresh = docs => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const data = recap(docs);
+      btn.disabled = !data.results.length;
+      blob = null;
+      ready = recapImage(data, { title, subtitle, name: id => pname.get(id) ?? 'Someone', colors: TEAM_COLORS }).then(b => (blob = b));
+    }, 300);
+  };
+  return { btn, refresh };
 }
 
 // Setter / Backup badge with how they play tonight. With onSetter (your own teams) it's a button that flips all game / rotates.
@@ -1108,8 +1127,14 @@ async function gamesView(sessions, players, pname) {
     })));
   };
   paintTeams(); paintEntry(); paintList();
+  // Day recap: every game's result, plus standouts and team numbers from whatever has been tagged.
+  const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname);
+  if (games.length) {
+    const stored = tags ? await q(sb.from('rallies').select('id,game_id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
+    dayRecap.refresh(games.map(g => ({ game: g, rallies: fromRows(stored.filter(r => r.game_id === g.id)) })));
+  }
   wrap.append(
-    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), h('span', { class: 'grow' }), delDay),
+    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), h('span', { class: 'grow' }), games.length ? dayRecap.btn : null, delDay),
     h('div', { class: 'card' }, entry),
     h('div', { class: 'card' }, teamsBox),
     list);
@@ -1326,7 +1351,8 @@ async function tagView(g, n, pname, back) {
         h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
-  const paint = () => { paintScore(); paintPad(); paintList(); };
+  const gameRecap = recapButton('Share recap', `Game ${n} recap`, `Team ${g.team_a} v Team ${g.team_b}`, `recap-game-${g.id}.png`, pname);
+  const paint = () => { paintScore(); paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
   paint();
@@ -1351,7 +1377,7 @@ async function tagView(g, n, pname, back) {
     h('div', { class: 'card tag-top' },
       h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
       h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
-      scoreEl),
+      scoreEl, gameRecap.btn),
     h('div', { class: 'card' }, videoBox, sourceRow,
       h('p', { class: 'muted small' }, 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear')),
     h('div', { class: 'card' }, pad),
