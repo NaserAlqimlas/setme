@@ -439,3 +439,4 @@ button.tag-grade.lost { border-color: var(--danger); background: color-mix(in sr
   .tag-teams { grid-template-columns: 1fr; }
   .tag-players { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
 }
+.seg[hidden] { display: none; }
