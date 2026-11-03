@@ -1,8 +1,8 @@
 // Match stats tagged by hand while watching a game's video. Pure functions, shared by the Scores page (tagging),
 // the Ratings page (per-player stats, SetMe's ratings) and tests.
 //
-// One game's tags (game_stats.rallies), oldest first:
-//   [{ t, serve: 'a' | 'b', won: 'a' | 'b' | null, touches: [{ p: player id, a: action, g: grade, t }] }]
+// One game's tags in memory, oldest first (stored as rows in rallies and touches; see fromRows):
+//   [{ id, seq, t, serve: 'a' | 'b', won: 'a' | 'b' | null, touches: [{ p: player id, a: action, g: grade, t }] }]
 // t = seconds into the video. 'a' / 'b' = the game's first / second team (games.team_a / team_b).
 
 // Grades run 0 (worst) to 3 (best), the usual volleyball scale. end: 'won' / 'lost' = the grade ends the rally for
@@ -74,21 +74,30 @@ export function teamSummary(rallies, game) {
   return out;
 }
 
-// Per player across tagged games. docs: [{ game, rallies }]. A game counts as played when the player was in its
-// lineup and the game has at least one finished rally.
-export function tally(docs) {
-  const m = new Map();
-  const get = p => {
-    if (!m.has(p)) m.set(p, { games: 0, counts: Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, 0]))])) });
-    return m.get(p);
-  };
-  for (const { game, rallies } of docs) {
-    if (!rallies.some(r => r.won)) continue;
-    for (const p of [...game.players_a, ...game.players_b]) get(p).games++;
-    for (const r of rallies) for (const t of r.touches) { const c = get(t.p).counts[t.a]; if (c && t.g in c) c[t.g]++; }
-  }
-  return m;
+// Per player: games played and how many of each action and grade, from the database view player_stats
+// (one row per player: { player_id, games, serve_0 … dig_2 }).
+export function tallyFromCounts(rows) {
+  return new Map(rows.map(r => [r.player_id, { games: r.games ?? 0,
+    counts: Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, r[`${a}_${g}`] ?? 0]))])) }]));
 }
+
+// The same from games in memory, as the views would count them. docs: [{ game, rallies }]. A game counts as played
+// when the player was in its lineup and the game has at least one finished rally.
+export function tally(docs) {
+  const rows = new Map();
+  const get = p => { if (!rows.has(p)) rows.set(p, { player_id: p, games: 0 }); return rows.get(p); };
+  for (const { game, rallies } of docs) {
+    if (rallies.some(r => r.won)) for (const p of [...game.players_a, ...game.players_b]) get(p).games++;
+    for (const r of rallies) for (const t of r.touches) { const row = get(t.p), k = `${t.a}_${t.g}`; row[k] = (row[k] ?? 0) + 1; }
+  }
+  return tallyFromCounts([...rows.values()]);
+}
+
+// Rallies as stored (rallies with embedded touches, from the database) to the shape used here, oldest first.
+export const fromRows = rows => [...rows].sort((a, b) => a.seq - b.seq).map(r => ({
+  id: r.id, seq: r.seq, t: r.video_t, serve: r.serving, won: r.won_by,
+  touches: [...(r.touches ?? [])].sort((a, b) => a.seq - b.seq).map(t => ({ p: t.player_id, a: t.action, g: t.grade, t: t.video_t })),
+}));
 
 const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
 // Readable numbers from a tally entry. Rates are null without attempts.

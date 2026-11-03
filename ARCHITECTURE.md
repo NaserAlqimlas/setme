@@ -62,7 +62,10 @@ tests/                  node scripts, no framework
 
 | `sessions` | played_on (unique), teams (jsonb, each team's player ids now), raters, all_game, source | One per game day, from Save for scores on Teams. Late changes edit `teams`. Organizers and super read and write. |
 | `games` | session_id, team_a, team_b, players_a, players_b, score_a, score_b, predicted | One per game. Keeps who played on each side, and `predicted` = both teams' numbers (weighted, skill sums, size, women, main setters, unrated) from `build-teams` with `predict: true` when it was saved, so later rating changes don't rewrite history. |
-| `game_stats` | game_id, video, rallies | One per tagged game. `rallies` = `[{ t, serve, won, touches: [{ p, a, g, t }] }]` (see stats.mjs); `video` = `{ kind: 'file', name }` or `{ kind: 'youtube', id }`. The video itself is never uploaded. |
+| `rallies` | id (uuid, made in the browser), game_id, seq, video_t, serving, won_by | One per tagged rally. `serving` / `won_by` are 'a' (the game's `team_a`) or 'b'; `won_by` null while in play. |
+| `touches` | rally_id, seq, player_id, action, grade, video_t | One per touch. `action` in serve, pass, set, attack, block, dig; `grade` 0–3 (see `ACTIONS` in stats.mjs). Cascades from rallies and players. |
+| `games.video_kind`, `video_ref` | 'file' + file name, or 'youtube' + video id | Which video the tags were made from. The video itself is never uploaded. |
+| views `player_stats`, `tagged_games` | | One row per player: games played (tagged games with a finished rally) and `<action>_<grade>` counts. Security invoker, so the table policies apply. |
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
 
@@ -87,7 +90,7 @@ Combos (play together / keep apart) are **not stored**. The Teams page keeps the
 | My ratings / All ratings | all; super sees everything | `ratings`, `rating_history` (own rows; super all); super also runs `combineRatings` in the browser |
 | Players | organizer, super | `players` (update; super insert/delete) |
 | Teams | organizer, super | `build-teams` function |
-| Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only. Tag (per game): `game_stats` |
+| Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only. Tag (per game): `rallies`, `touches`, `save_game_tags` |
 | Users | super | `profiles`, `admin` function |
 
 UI helpers at the top of app.js: `h()` builds elements, `seg()` is the pick-one button row, `toggle()` the switch, `stacked()` turns tables into cards on phones, `toast()`.
@@ -169,6 +172,6 @@ Draws a 1080-wide PNG on a canvas: Team 1 v Team 2 on court 1, Team 3 v Team 4 o
 
 ## Match stats (stats.mjs)
 
-- **Tagging** (Scores → Tag on a saved game): watch the game's video (a file on this device, or YouTube) and tap player → action → grade (0–3). Grades that end a rally (ace, kill, stuff, errors) award the point; Point buttons cover the rest. The next serve goes to the rally's winner. `nextServer` guesses who serves from the order players first served; `suggestAction` guesses serve → pass → set → attack → dig. Each tag keeps the video time so tapping it seeks there. Saved to `game_stats` 1.5 s after each change, with a copy in localStorage until the save goes through.
-- **Stats** (`tally`, `metrics`, super only on All ratings): per player across tagged games: serve ace/error rates, pass and set averages, attack efficiency ((kills − errors − blocked) ÷ attacks), blocks and digs per game.
+- **Tagging** (Scores → Tag on a saved game): watch the game's video (a file on this device, or YouTube) and tap player → action → grade (0–3). Grades that end a rally (ace, kill, stuff, errors) award the point; Point buttons cover the rest. The next serve goes to the rally's winner. `nextServer` guesses who serves from the order players first served; `suggestAction` guesses serve → pass → set → attack → dig. Each tag keeps the video time so tapping it seeks there. Saved 1.5 s after each change through `save_game_tags(game, rallies, deleted)`: only rallies that differ from what was last saved (each with all its touches) plus deleted ids, in one transaction. Rally ids are uuids made in the browser, so a resent save is harmless and two taggers on one game don't delete each other's rallies. A copy (with the rally ids it knew about) stays in localStorage until the save goes through.
+- **Stats** (`player_stats` view → `tallyFromCounts`, `metrics`; super only on All ratings): per player across tagged games: serve ace/error rates, pass and set averages, attack efficiency ((kills − errors − blocked) ÷ attacks), blocks and digs per game.
 - **SetMe** (`statRatings`): a rater account (`setme@setme.invalid`, created by the `admin` function's `setme` action, random password) whose ratings come from the stats: receiving ← pass average, hitting ← attack efficiency, serve ← serve value, blocking ← blocks per game, hustle ← digs per game, setting ← set average (setters only). Each number is pulled toward the group average by sample size, then players are ranked and spread over 0–1 in .25 steps. A skill is skipped with fewer than 4 qualifying players or no differences between them. The super previews the changes and saves them; from there SetMe is combined, picked and charted like any rater, and `combineRatings` takes out its lean.

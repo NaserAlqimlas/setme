@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { score, suggestAction, nextServer, teamSummary, tally, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -45,7 +45,19 @@ const m1 = metrics(tl.get(1));
 ok('games counted', tl.get(1).games === 1 && tl.get(6).games === 1);
 ok('serve numbers', m1.serves === 2 && near(m1.aceRate, .5) && near(m1.serveValue, .5), m1);
 ok('attack eff', near(metrics(tl.get(6)).attackEff, 1));
-ok('untagged game ignored', tally([{ game, rallies: [{ serve: 'a', won: null, touches: [T(1, 'serve', 3)] }] }]).size === 0);
+const open1 = tally([{ game, rallies: [{ serve: 'a', won: null, touches: [T(1, 'serve', 3)] }] }]);
+ok('unfinished game not played', open1.get(1).games === 0 && open1.get(1).counts.serve[3] === 1 && !open1.has(2));
+
+// From the database views: same numbers as from memory.
+const fromViews = tallyFromCounts([{ player_id: 1, games: 1, serve_3: 1, serve_1: 1 }, { player_id: 6, games: 1, attack_3: 1 }]);
+ok('views match memory', JSON.stringify(metrics(fromViews.get(1))) === JSON.stringify(m1) && near(metrics(fromViews.get(6)).attackEff, 1));
+ok('missing columns are zero', tallyFromCounts([{ player_id: 1, games: 2 }]).get(1).counts.dig[2] === 0);
+
+// Rows from the database: sorted by seq, renamed.
+const rows = fromRows([
+  { id: 'r2', seq: 2, video_t: 30, serving: 'b', won_by: null, touches: [{ seq: 1, player_id: 2, action: 'pass', grade: 2, video_t: 31 }, { seq: 0, player_id: 4, action: 'serve', grade: 1, video_t: 30 }] },
+  { id: 'r1', seq: 1, video_t: 10, serving: 'a', won_by: 'a', touches: [] }]);
+ok('rows sorted', rows[0].id === 'r1' && rows[1].touches[0].a === 'serve' && rows[1].touches[1].p === 2 && rows[1].t === 30 && rows[0].won === 'a', rows);
 
 // SetMe ratings: better passers rank higher, few attempts get pulled to the middle, too few players = no rating.
 const many = [];

@@ -4,7 +4,7 @@ import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 import { analyze, playerStats, nextPairing, finished, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET } from './scores.mjs';
-import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tally, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
+import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, fromRows, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -967,9 +967,9 @@ async function gamesView(sessions, players, pname) {
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
   let games = await q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at'));
-  // Tags per game (null = the match stats SQL hasn't been run).
-  const tags = games.length ? await q(sb.from('game_stats').select('game_id,rallies').in('game_id', games.map(g => g.id)))
-    .then(rows => new Map(rows.map(r => [r.game_id, r.rallies])), () => null) : new Map();
+  // Finished rallies tagged per game (null = the match stats SQL hasn't been run).
+  const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
+    .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
   const tagGame = games.find(g => g.id === taggingGame);
   if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, () => { taggingGame = null; render(); })];
   taggingGame = null;
@@ -1099,7 +1099,7 @@ async function gamesView(sessions, players, pname) {
         h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
           if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
           taggingGame = g.id; render();
-        } }, tags?.get(g.id)?.length ? `Tags (${tags.get(g.id).filter(r => r.won).length})` : 'Tag'),
+        } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
           if (!confirm(`Delete game ${n} (${teamName(g.team_a)} v ${teamName(g.team_b)}, ${g.score_a}–${g.score_b})?`)) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
@@ -1120,7 +1120,9 @@ async function gamesView(sessions, players, pname) {
 // Watch the game's video and tap player → action → grade for each touch. Grades that end a rally (ace, kill, error…)
 // award the point on their own; "Point" buttons cover the rest. The video stays on this device (a file) or on
 // YouTube; tags keep the video time so tapping one jumps back to it. Works without a video too (tagging live).
-// Saved to game_stats a moment after each change, with a copy on this device until the save goes through.
+// Saved a moment after each change: only rallies that changed since the last save, plus deleted ones, through
+// save_game_tags (one transaction). Rally ids are made here, so a resent save can't double up, and two people
+// tagging the same game don't wipe each other's rallies. A copy stays on this device until the save goes through.
 let taggingGame = null;
 const clock = t => t == null ? '' : `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const ytId = s => (String(s).match(/(?:youtu\.be\/|[?&]v=|embed\/|shorts\/|live\/)([\w-]{11})/) ?? String(s).trim().match(/^([\w-]{11})$/))?.[1] ?? null;
@@ -1149,45 +1151,64 @@ async function youtubeVideo(box, id) {
 }
 
 async function tagView(g, n, pname, back) {
-  const [row] = await q(sb.from('game_stats').select('*').eq('game_id', g.id));
+  const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
+  // What the database has: each rally as last saved (to send only what changed), and the video.
+  const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
+  const videoOf = () => video ? { video_kind: video.kind, video_ref: video.kind === 'file' ? video.name : video.id } : { video_kind: null, video_ref: null };
+  let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : null;
+  let savedVideo = JSON.stringify(videoOf());
   const draftKey = `setme-tags-${g.id}`;
   let draft = null;
   try { draft = JSON.parse(localStorage.getItem(draftKey)); } catch { /* no draft */ }
-  // A copy on this device that never reached the database wins over what's saved.
-  const useDraft = draft && (!row || draft.at > new Date(row.updated_at).getTime());
-  let rallies = (useDraft ? draft.rallies : row?.rallies) ?? [];
-  let video = (useDraft ? draft.video : row?.video) ?? null;
-  if (useDraft) setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
+  // Changes on this device that never reached the database: apply them on top of what's saved. Rallies someone
+  // else added since stay; only rallies this device knew about and deleted are deleted.
+  let rallies = stored;
+  if (draft?.rallies) {
+    const mine = new Map(draft.rallies.map(r => [r.id, r]));
+    const gone = new Set((draft.known ?? []).filter(id => !mine.has(id)));
+    rallies = [...draft.rallies, ...stored.filter(r => !mine.has(r.id) && !gone.has(r.id))].sort((a, b) => a.seq - b.seq);
+    video = draft.video ?? video;
+    setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
+  }
 
   const name = { a: `Team ${g.team_a}`, b: `Team ${g.team_b}` };
   const color = { a: TEAM_COLORS[(g.team_a - 1) % TEAM_COLORS.length], b: TEAM_COLORS[(g.team_b - 1) % TEAM_COLORS.length] };
   const lineup = { a: g.players_a, b: g.players_b };
   const pn = id => firstName(pname.get(id) ?? '?');
   const side = p => sideOf(g, p);
-  let player = null, sel = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = useDraft;
+  let player = null, sel = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = !!draft?.rallies;
   const now = () => player ? Math.round(player.now() * 10) / 10 : null;
   const open = () => { const r = rallies.at(-1); return r && !r.won ? r : null; };
   const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
 
   // ----- saving -----
-  const status = h('span', { class: 'muted small tag-status' }, row ? 'Saved' : '');
+  const status = h('span', { class: 'muted small tag-status' }, stored.length ? 'Saved' : '');
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
+    await saving;
     if (!dirty) return;
     dirty = false; status.textContent = 'Saving…';
-    const body = { game_id: g.id, video, rallies, updated_by: me.id };
-    saving = q(sb.from('game_stats').upsert(body)).then(() => {
+    const ids = new Set(rallies.map(r => r.id));
+    const changedRallies = rallies.filter(r => saved.get(r.id) !== JSON.stringify(r));
+    const deleted = [...saved.keys()].filter(id => !ids.has(id));
+    const sent = new Map(changedRallies.map(r => [r.id, JSON.stringify(r)])), vid = JSON.stringify(videoOf());
+    saving = (async () => {
+      if (changedRallies.length || deleted.length) await q(sb.rpc('save_game_tags', { p_game: g.id, p_rallies: changedRallies, p_deleted: deleted }));
+      if (vid !== savedVideo) { await q(sb.from('games').update(videoOf()).eq('id', g.id)); savedVideo = vid; }
+    })().then(() => {
+      for (const id of deleted) saved.delete(id);
+      for (const [id, j] of sent) saved.set(id, j);
       if (!dirty) { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } }
-      status.textContent = 'Saved';
+      status.textContent = dirty ? 'Unsaved' : 'Saved';
     }, e => {
       dirty = true; status.textContent = `Not saved (${e.message}). Kept on this device, retrying…`;
       saveTimer = setTimeout(save, 10e3);
-    });
+    }).finally(() => { saving = null; });
     await saving;
   };
   const changed = () => {
     dirty = true; status.textContent = 'Unsaved';
-    try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video })); } catch { /* storage full or blocked */ }
+    try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
     clearTimeout(saveTimer); saveTimer = setTimeout(save, 1500);
     paint();
   };
@@ -1195,10 +1216,11 @@ async function tagView(g, n, pname, back) {
   const undo = () => { if (!history.length) return toast('Nothing to undo'); rallies = JSON.parse(history.pop()); sel = null; changed(); };
 
   // ----- tagging -----
+  const newRally = () => ({ id: crypto.randomUUID(), seq: Math.max(0, ...rallies.map(r => r.seq)) + 1, t: now(), serve: serving(), won: null, touches: [] });
   const addTouch = (p, a, grade) => {
     snapshot();
     let r = open();
-    if (!r) { r = { t: now(), serve: serving(), won: null, touches: [] }; rallies.push(r); }
+    if (!r) { r = newRally(); rallies.push(r); }
     r.touches.push({ p, a, g: grade, t: now() });
     const end = endsRally(a, grade);
     if (end) r.won = end === 'won' ? side(p) : other(side(p));
@@ -1207,7 +1229,7 @@ async function tagView(g, n, pname, back) {
   };
   const point = s => {
     snapshot();
-    const r = open() ?? (rallies.push({ t: now(), serve: serving(), won: null, touches: [] }), rallies.at(-1));
+    const r = open() ?? (rallies.push(newRally()), rallies.at(-1));
     r.won = s; sel = null; changed();
   };
   // Picking a player suggests the likely action (serve first, then pass, set, attack…).
@@ -1323,7 +1345,7 @@ async function tagView(g, n, pname, back) {
     else if (sel) { const a = Object.keys(ACTIONS).find(x => ACTIONS[x].key === k); if (a) { sel = { ...sel, a, auto: false }; paintPad(); } }
   };
   document.addEventListener('keydown', keys);
-  const leave = async () => { await save(); await saving; player?.dispose(); document.removeEventListener('keydown', keys); back(); };
+  const leave = async () => { await save(); player?.dispose(); document.removeEventListener('keydown', keys); back(); };
 
   const wrap = h('div', { class: 'tagger' },
     h('div', { class: 'card tag-top' },
@@ -1578,13 +1600,12 @@ async function ratingsPage() {
 function matchStatsCard(players, ratings) {
   const el = h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Loading…'));
   (async () => {
-    let rows;
-    try { rows = await q(sb.from('game_stats').select('rallies, games(players_a, players_b)')); }
-    catch { return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
-    const docs = rows.filter(r => r.games).map(r => ({ game: r.games, rallies: r.rallies }));
-    const tagged = docs.filter(d => d.rallies.some(r => r.won)).length;
+    let rows, tagged;
+    try {
+      [rows, [{ games: tagged }]] = await Promise.all([q(sb.from('player_stats').select('*')), q(sb.from('tagged_games').select('games'))]);
+    } catch { return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
     if (!tagged) return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
-    const tallies = tally(docs);
+    const tallies = tallyFromCounts(rows);
     const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`, num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
     const COLS = [['Player'], ['Games'], ['Serves'], ['Aces', 'Ace %'], ['Srv err', 'Serve errors'], ['Pass', 'Pass average (0–3)'], ['Attacks'], ['Kill', 'Kill %'],
       ['Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['Blk/g', 'Stuff blocks per game'], ['Dig/g', 'Digs per game']];
