@@ -37,7 +37,7 @@ site/
   js/app.js             every page, routing, auth flow, UI helpers
   js/teams.mjs          rating maths and the team builder (shared with the server)
   js/paste.mjs          matching a pasted WhatsApp list to players
-  js/csv.mjs            ratings CSV import and template
+  js/csv.mjs            ratings CSV import, export and template
   js/courtimg.mjs       draws the court-map PNG for sharing
 netlify/
   lib/supabase.mjs      server helpers: REST/admin calls with the secret key, caller(req) -> {id, role}

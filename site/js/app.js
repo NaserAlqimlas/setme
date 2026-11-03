@@ -1,7 +1,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal } from './teams.mjs';
 import { matchPasted, parseTeams } from './paste.mjs';
-import { readRatingsCsv, ratingsTemplate } from './csv.mjs';
+import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
@@ -372,16 +372,19 @@ async function ratePage() {
         h('span', { class: 'muted small' }, 'Replaces existing ratings for these players. Empty cells and U count as unknown.'))));
     importBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  const downloadTemplate = () => {
-    const url = URL.createObjectURL(new Blob([ratingsTemplate(players)], { type: 'text/csv' }));
-    h('a', { href: url, download: 'setme-ratings-template.csv' }).click();
+  const downloadCsv = (text, name) => {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+    h('a', { href: url, download: name }).click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const downloadTemplate = () => downloadCsv(ratingsTemplate(players), 'setme-ratings-template.csv');
+  const exportRatings = () => downloadCsv(ratingsExport(players, byPlayer), `setme-ratings-${new Date().toISOString().slice(0, 10)}.csv`);
 
   return h('div', {},
     pageHead('Rate players', 'Only the site owner sees your ratings. Every tap saves.',
       h('button', { class: 'ghost sm', onclick: downloadTemplate }, 'CSV template'),
-      h('button', { class: 'ghost sm', onclick: () => fileInput.click() }, 'Import CSV'), fileInput),
+      h('button', { class: 'ghost sm', onclick: () => fileInput.click() }, 'Import CSV'),
+      h('button', { class: 'ghost sm', onclick: exportRatings }, 'Export CSV'), fileInput),
     importBox,
     h('div', { class: 'card' },
       h('div', { class: 'legend' },

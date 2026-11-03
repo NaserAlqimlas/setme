@@ -64,8 +64,21 @@ export function readRatingsCsv(text, players) {
   return { rows, unmatched, blank, errors };
 }
 
+const HEADER = 'name,receiving,hitting,setting,hustle,serve,blocking,consistency,setting_skill';
+const COLS = ['receiving', 'hitting', null, 'hustle', 'serve', 'blocking', 'consistency', 'setting_skill'];
+const esc = s => /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+const toFile = lines => '\uFEFF' + [HEADER, ...lines].join('\r\n') + '\r\n';
+
 // A blank template with every current player's name.
 export function ratingsTemplate(players) {
-  const esc = s => /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  return '\uFEFF' + ['name,receiving,hitting,setting,hustle,serve,blocking,consistency,setting_skill', ...players.map(p => `${esc(p.name)},,,,,,,,`)].join('\r\n') + '\r\n';
+  return toFile(players.map(p => `${esc(p.name)},,,,,,,,`));
+}
+
+// Your saved ratings in the same layout, so the file imports straight back. byPlayer: Map player id -> ratings row.
+// Unrated players get an empty row; a saved but unknown skill is U. The setting column holds the player's setter letter.
+export function ratingsExport(players, byPlayer) {
+  return toFile(players.map(p => {
+    const r = byPlayer.get(p.id);
+    return [esc(p.name), ...COLS.map(c => c === null ? (p.setting ?? '') : !r ? '' : r[c] == null ? 'U' : String(Number(r[c])))].join(',');
+  }));
 }
