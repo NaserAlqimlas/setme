@@ -242,7 +242,7 @@ details.own[open] summary h3::before { transform: rotate(90deg); }
 .team ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
 .team li { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 /* The name takes what's left and wraps if it must, so a badge and lock never push the row past the card. */
-.team li span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: break-word; }
+.team li .pname { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .team li .avatar, .team li .badge, .team li .lock { flex-shrink: 0; }
 .team li .avatar { width: 28px; height: 28px; font-size: .7rem; }
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; text-align: center; font-variant-numeric: tabular-nums; }
@@ -350,3 +350,12 @@ tbody tr:hover { background: var(--surface-2); }
   table.stack td:first-child::before, table.stack td:empty::before, table.stack td:not([data-label])::before { content: none; }
   table.stack td:empty { display: none; }
 }
+
+/* Swapping players: tap one, then one on another team. */
+.team li .pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 2px 6px 2px 2px; margin: -2px 0 -2px -2px;
+  background: transparent; color: inherit; font-weight: 500; text-align: left; border-radius: 10px; border: 1px solid transparent; }
+.team li .pick:hover { background: var(--surface-2); filter: none; }
+.team li .pick[aria-pressed=true] { background: var(--surface-2); border-color: var(--tc); box-shadow: 0 0 0 1px var(--tc); }
+.team-grid.picking .team:not(.from) li .pick { border-style: dashed; border-color: var(--line-strong); }
+.team-grid.busy { opacity: .6; pointer-events: none; }
+.swap-hint { margin: 0 0 10px; }

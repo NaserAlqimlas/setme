@@ -584,9 +584,41 @@ async function teamsPage() {
   const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
   const btn = h('button', { class: 'ball big' }, 'Build teams');
+  const sendCombos = () => combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind }));
+  // Built options on screen. Once you swap someone in an option it's checked like Your own teams (same numbers, problems,
+  // suggestions, locks); the earlier version is kept for Undo. The raters and setters it was built with stay.
+  // Per option i: checked[i] = the last check's response, undos[i] = earlier [option, check] pairs, locks[i] = locked ids.
+  let built = null, builtWith = null, view = null;
+  let checked = [], undos = [], locks = [];
+  const ids = i => built.options[i].teams.map(t => t.players.map(p => p.id));
+  const check = async (i, teams) => {
+    const res = await callFn('build-teams', { ...builtWith, teams, locked: [...(locks[i] ?? [])], suggestRater: view });
+    built.options[i] = res.options[0]; checked[i] = res;
+  };
+  const edit = async (i, teams) => {
+    const before = [built.options[i], checked[i]];
+    try { await check(i, teams); (undos[i] ??= []).push(before); draw(); toast('Swapped'); }
+    catch (e) { toast(e.message); draw(); }
+  };
+  const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
+  const draw = () => out.replaceChildren(...showTeams(built, {
+    view, onSwap: edit,
+    onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
+    locked: i => checked[i] && (locks[i] ??= new Set()),
+    onLock: (id, i) => { locks[i].has(id) ? locks[i].delete(id) : locks[i].add(id); recheck(i); },
+    extra: i => checked[i] && suggestionsPanel(checked[i], {
+      onApply: sg => edit(i, sg.teams),
+      onUndo: undos[i]?.length > 0 && (() => { [built.options[i], checked[i]] = undos[i].pop(); draw(); }),
+    }),
+  }));
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Building…';
-    try { out.replaceChildren(...showTeams(await callFn('build-teams', { numTeams, useCombos, raters: raterIds, allGame: allGameIds(playing), combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }))); out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    try {
+      builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos() };
+      built = await callFn('build-teams', { numTeams, ...builtWith });
+      checked = []; undos = []; locks = []; view = null;
+      draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
     catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
     btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
@@ -655,33 +687,12 @@ function ownTeamsCard(out, getOptions) {
       const p = (await roster()).find(x => x.id === id);
       setterPlan.set(id, !setsAllGame(p)); setterPlanChanged();
     };
-    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, extra: suggestionsPanel(res) }));
+    const onSwap = (_, teams) => { history.push(current); current = teams; run().catch(e => { current = history.pop(); toast(e.message); run().catch(() => {}); }); };
+    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, extra: suggestionsPanel(res, {
+      onApply: sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); },
+      onUndo: history.length > 0 && (() => { current = history.pop(); run().catch(e => toast(e.message)); }),
+    }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-  const suggestionsPanel = res => {
-    const detail = me.role === 'super';
-    const apply = sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); };
-    const undo = () => { current = history.pop(); run().catch(e => toast(e.message)); };
-    const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
-    const basis = !detail ? null : res.suggestRater ? `Based on ${firstName(res.options[0]?.byRater?.find(r => r.rater_id === res.suggestRater)?.name)}'s ratings` : 'Based on the combined ratings';
-    return h('div', { class: 'suggestions' },
-      h('div', { class: 'card-head' },
-        h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
-          basis && h('b', {}, basis, '. '), 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
-        history.length > 0 && h('button', { type: 'button', class: 'ghost sm', onclick: undo }, 'Undo')),
-      res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
-      res.suggestions?.length
-        ? h('ol', { class: 'suggest-list' }, res.suggestions.map(sg => h('li', {},
-          h('div', { class: 'grow' },
-            h('div', {}, sg.swaps.length > 1 ? 'Two swaps: ' : 'Swap ', sg.swaps.flatMap(([a, b], n) => [n ? ', and ' : '', who(a), ' ↔ ', who(b)])),
-            h('div', { class: 'muted small' }, [
-              detail && sg.gap && `Gap ${fmt(sg.gap[0])} → ${fmt(sg.gap[1])}`,
-              sg.fixes.length > 0 && `fixes: ${sg.fixes.join('; ')}`,
-              !detail && !sg.fixes.length && 'makes teams more even',
-            ].filter(Boolean).join(' · ')),
-            sg.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${sg.adds.join('; ')}`)),
-          h('button', { type: 'button', class: 'sm', onclick: () => apply(sg) }, 'Apply'))))
-        : h('p', { class: 'muted' }, res.problems?.length ? 'No single or double swap makes these teams better.' : 'These teams look balanced. No swap would make them better.'));
   };
   check.onclick = async () => {
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
@@ -704,6 +715,32 @@ function ownTeamsCard(out, getOptions) {
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
   document.addEventListener('setterplan', () => card.refresh());
   return card;
+}
+
+// What's off about some teams and the smallest swaps that fix it, from a build-teams check ({ teams }).
+// onApply(suggestion); onUndo shows an Undo button when given.
+function suggestionsPanel(res, { onApply, onUndo }) {
+  const detail = me.role === 'super';
+  const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
+  const basis = !detail ? null : res.suggestRater ? `Based on ${firstName(res.options[0]?.byRater?.find(r => r.rater_id === res.suggestRater)?.name)}'s ratings` : 'Based on the combined ratings';
+  return h('div', { class: 'suggestions' },
+    h('div', { class: 'card-head' },
+      h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+        basis && h('b', {}, basis, '. '), 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
+      onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo')),
+    res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
+    res.suggestions?.length
+      ? h('ol', { class: 'suggest-list' }, res.suggestions.map(sg => h('li', {},
+        h('div', { class: 'grow' },
+          h('div', {}, sg.swaps.length > 1 ? 'Two swaps: ' : 'Swap ', sg.swaps.flatMap(([a, b], n) => [n ? ', and ' : '', who(a), ' ↔ ', who(b)])),
+          h('div', { class: 'muted small' }, [
+            detail && sg.gap && `Gap ${fmt(sg.gap[0])} → ${fmt(sg.gap[1])}`,
+            sg.fixes.length > 0 && `fixes: ${sg.fixes.join('; ')}`,
+            !detail && !sg.fixes.length && 'makes teams more even',
+          ].filter(Boolean).join(' · ')),
+          sg.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${sg.adds.join('; ')}`)),
+        h('button', { type: 'button', class: 'sm', onclick: () => onApply(sg) }, 'Apply'))))
+      : h('p', { class: 'muted' }, res.problems?.length ? 'No single or double swap makes these teams better.' : 'These teams look balanced. No swap would make them better.'));
 }
 
 let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
@@ -749,7 +786,10 @@ function setterBadge(p, onSetter) {
     title: `${p.setting === 'M' ? 'Main setter' : 'Backup setter'}: ${p.allGame ? 'sets all game (tap: rotates)' : 'rotates (tap: sets all game)'}`, onclick: () => onSetter(p.id) }, text);
 }
 
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, extra } = {}) {
+// onSwap(i, teams): tap a player, then a player on another team, to swap them; teams = player ids per team after the swap.
+// locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
+// extra: shown under option 1, or i => what to show under option i.
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, extra } = {}) {
   const detail = me.role === 'super';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
@@ -762,16 +802,33 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const gapLine = h('p', { class: 'muted small', style: 'margin:2px 0 0' });
     const grid = h('div', { class: 'team-grid' });
     const guessNote = h('p', { class: 'muted small', hidden: true });
+    const lk = typeof locked === 'function' ? locked(i) : locked;
+    // Swapping: the player tapped first, as [team index, player id].
+    let picked = null;
+    const pick = (k, id) => {
+      if (!picked || picked[1] === id) { picked = picked ? null : [k, id]; return paint(); }
+      if (picked[0] === k) { picked = [k, id]; return paint(); }
+      const [a, b] = [picked[1], id];
+      picked = null;
+      grid.classList.add('busy');
+      onSwap(i, opt.teams.map(t => t.players.map(p => p.id === a ? b : p.id === b ? a : p.id)));
+    };
+    const canSwap = onSwap && opt.teams.every(t => t.players.every(p => p.id != null));
+    const name = (k, p) => !canSwap ? [avatar(p.name, 28), h('span', { class: 'pname' }, p.name)]
+      : [h('button', { type: 'button', class: 'pick', 'aria-pressed': String(picked?.[1] === p.id),
+        title: picked && picked[0] !== k ? `Swap with ${opt.teams[picked[0]].players.find(x => x.id === picked[1])?.name}` : `Swap ${p.name} with someone`,
+        onclick: () => pick(k, p.id) }, avatar(p.name, 28), h('span', { class: 'pname' }, p.name))];
     const paint = () => {
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
       gapLine.textContent = `${view.id ? `${view.name.split(/[\s.@]/)[0]}'s ratings: totals` : 'Totals'} ${fmt(lo)} to ${fmt(hi)}, a gap of ${fmt(hi - lo)}`;
-      grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
+      grid.classList.toggle('picking', !!picked);
+      grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
           h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
-        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', {}, p.name),
+        h('ul', {}, t.players.map(p => h('li', {}, ...name(k, p),
           setterBadge(p, onSetter),
-          onLock && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(locked.has(p.id)),
-            title: locked.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id) }, locked.has(p.id) ? '🔒' : '🔓')))),
+          onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(lk.has(p.id)),
+            title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lk.has(p.id) ? '🔒' : '🔓')))),
         detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', {}, h('small', {}, s === 'setting' ? 'Set' : SHORT[s]), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
       guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their stand-in level was used.`;
@@ -789,7 +846,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
-      grid, detail && guessNote, i === 0 && extra));
+      canSwap && h('p', { class: 'muted small swap-hint' }, 'Tap a player, then a player on another team, to swap them.'),
+      grid, detail && guessNote,
+      typeof extra === 'function' ? extra(i) : i === 0 && extra));
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
   if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`,

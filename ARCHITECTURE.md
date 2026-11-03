@@ -124,6 +124,7 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
 
 - **Search.** Random restarts (up to 3,000, 7-second budget on the server), each improved by swapping equal-size units between teams and swapping a combo for the same number of single players, until no swap helps. Seeded random (mulberry32); with the time limit, results can differ slightly between runs.
 - **Options.** The best distinct lineups, up to 3, each at least 4 player moves away from the others.
+- **Swapping by hand.** On the Teams page you can tap two players on different teams to swap them, on a built option or Your own teams. An edited built option is re-checked with `teams` (with the raters, setters and combos it was built with) and gets the same Suggestions panel, locks and Undo as Your own teams.
 - **Warnings.** Time limit hit, keep-apart pairs that couldn't be honoured, unrated players and their stand-in level.
 
 ### build-teams.mjs
