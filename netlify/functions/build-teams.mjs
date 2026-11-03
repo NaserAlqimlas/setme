@@ -1,11 +1,11 @@
 // POST /.netlify/functions/build-teams  { numTeams?: number, useCombos?: boolean, combos?: [{ player_a, player_b, kind: 'together'|'apart' }] }
-// Super can pass raters: [ids] to build from those raters' ratings only (ignored for organizers).
+// raters: [ids] builds from those raters' ratings only. { listRaters: true } returns who has rated anyone.
 // allGame: [playerId] = setters who set all game (default: every main setter); see teamSkills in teams.mjs.
 // POST { check: true } instead lists who's playing with no ratings yet, so the organizer can pick a tier for them.
 // POST { teams: [[playerId, ...], ...], locked?: [playerId] } rates teams you made yourself instead of building them (any active
 // players), lists what's off about them, and suggests up to three small swaps (combos are respected the same way).
-// Super can add suggestRater: id to work out problems and suggestions from that one rater's ratings (cards still get all).
-// Organizers get lineups only; super also gets skill numbers. Ratings never leave the server for organizers.
+// Organizers and super can add suggestRater: id to work out problems and suggestions from that one rater's ratings (cards still get all).
+// Organizers get team numbers, combined and per rater (byRater). Player-level ratings never leave the server for organizers.
 import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps } from '../../site/js/teams.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
 
@@ -14,13 +14,18 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false } = await req.json().catch(() => ({}));
   const [players, ratings] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
   ]);
-  if (me.role === 'super' && Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);
-  const pick = me.role === 'super' && Array.isArray(raters) ? new Set(raters) : null;
+  // Who has rated anyone, for the Ratings from picker (organizers can't read other people's rating rows).
+  if (listRaters) {
+    const has = new Set(ratings.map(r => r.rater_id));
+    return json({ raters: (await rest('profiles?select=id,display_name')).filter(p => has.has(p.id)) });
+  }
+  if (Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);
+  const pick = Array.isArray(raters) ? new Set(raters) : null;
   // Combos come with the request (they aren't saved). Keep only well-formed pairs of player ids.
   const pairs = (Array.isArray(sent) ? sent : [])
     .filter(c => Number.isInteger(c?.player_a) && Number.isInteger(c?.player_b) && c.player_a !== c.player_b)
@@ -52,8 +57,8 @@ export default async (req) => {
     const together = useCombos ? pairs.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [];
     const apart = useCombos ? pairs.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [];
     const asPlayers = ts => ts.map(t => t.map(id => byId.get(id)));
-    // Super looking at one rater: judge the teams by that rater's ratings alone.
-    const solo = me.role === 'super' && typeof suggestRater === 'string' && ratings.some(r => r.rater_id === suggestRater) && (!pick || pick.has(suggestRater));
+    // Looking at one rater (Show ratings from): judge the teams by that rater's ratings alone.
+    const solo = typeof suggestRater === 'string' && ratings.some(r => r.rater_id === suggestRater) && (!pick || pick.has(suggestRater));
     const sk = solo ? teamSkills(players, combineRatings(players, ratings.filter(r => r.rater_id === suggestRater)).combined, allGame) : skills;
     const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + strength(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
     result.suggestRater = solo ? suggestRater : null;
@@ -85,7 +90,7 @@ export default async (req) => {
   const unrated = playing.filter(p => p.unrated).map(p => `${p.name} (${combined.get(p.id).guess})`);
   if (own == null && unrated.length) result.warnings.push(`No ratings yet for ${unrated.join(', ')}.`);
 
-  if (me.role === 'super') {
+  {
     // Each team's weighted total and skill sums by each rater on their own (only their ratings, no leans taken out).
     // guessed = players on that team this rater hasn't rated at all, so a stand-in level was used.
     const ids = pick ? [...pick] : [...new Set(ratings.map(r => r.rater_id))];
@@ -102,16 +107,10 @@ export default async (req) => {
         guessed: opt.teams.map(t => t.players.filter(p => c.get(p.id).guess).length),
       }));
     }
-  } else {
-    // Weak passers and inconsistent players come from ratings, which organizers don't see.
-    const ok = x => !x.rating;
-    if (result.problems) result.problems = result.problems.filter(ok);
-    delete result.suggestRater;
-    for (const sg of result.suggestions ?? []) { delete sg.gap; sg.fixes = sg.fixes.filter(ok); sg.adds = sg.adds.filter(ok); }
-    for (const opt of result.options) {
-      delete opt.score; delete opt.byRater;
-      for (const t of opt.teams) { delete t.sums; delete t.weighted; t.players = t.players.map(({ id, name, setting, allGame }) => ({ id, name, setting, allGame })); }
-    }
+  }
+  if (me.role !== 'super') {
+    // Organizers see team numbers (combined or one rater's, per team) but never a single player's ratings.
+    for (const opt of result.options) for (const t of opt.teams) t.players = t.players.map(({ id, name, setting, allGame }) => ({ id, name, setting, allGame }));
   }
   // Problems go out as full text; a suggestion's fixes and new problems as the short form.
   if (result.problems) result.problems = result.problems.map(x => x.text);

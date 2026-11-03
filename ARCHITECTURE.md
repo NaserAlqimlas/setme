@@ -18,12 +18,12 @@ There is no build step and no framework: the browser loads plain ES modules.
 
 ## The privacy rule
 
-Only the super can see ratings. Everything else follows from that:
+Only the super can see individual ratings. Organizers see team numbers on the Teams page (combined, or one rater's via Show ratings from) and nothing else. Everything else follows from that:
 
 - **RLS**: a rater or organizer can only read their own rows in `ratings`. The super can read all.
-- **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and, for anyone but the super, strips the result down to names and setter roles. Organizers never get numbers, not even team totals.
+- **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and for organizers strips per-player data. Organizers get team totals, skill sums, gaps and rating-based notes, combined and per rater (`byRater`, `suggestRater`), never a single player's numbers.
 - **The New players check** (`build-teams` with `check: true`) only says who has no ratings, never values.
-- **Your own teams** (`build-teams` with `teams`) goes through the same stripping, so organizers checking their own teams see lineups, not numbers.
+- **Your own teams** (`build-teams` with `teams`) goes through the same stripping, so organizers checking their own teams see the same team numbers.
 - The secret key only exists in Netlify's environment variables (and a git-ignored `.env` for local runs).
 
 ## Files
@@ -130,11 +130,11 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
 ### build-teams.mjs
 
 1. Check the caller is organizer or super.
-2. Load active players and all ratings with the secret key. If the super passed `raters`, keep only those raters' ratings.
+2. Load active players and all ratings with the secret key. If the caller passed `raters`, keep only those raters' ratings. `listRaters: true` returns just who has rated anyone (for the Ratings from picker, since organizers can't read other people's rating rows).
 3. `combineRatings`, then `teamSkills` with `allGame` (setters who set all game: Setting counts ×`SETTING_WEIGHT`, receiving and hitting shrink by `ALL_GAME`; team strength = `strength(sk)`), then `buildTeams` with the combos from the request (`useCombos` off sends none).
    With `teams: [[playerId, ...], ...]` (Your own teams) it skips building and runs `describeTeam` on each team as given, any active players, so the result looks like one built option. It also returns `problems` (`teamProblems`) and up to three `suggestions` (`suggestSwaps`: every one-for-one swap, then pairs of the 40 best, scored with the same `makeScorer` cost as `buildTeams`; `locked` players and together pairs already on one team stay put; split together pairs add 1e6 each, so reuniting them outranks any balance gain, like combos being a hard rule in `buildTeams`). Super can pass `suggestRater` to get problems and suggestions from one rater's ratings alone (the Show ratings from chip). Organizers get suggestions without `gap` and without the weak-passer / inconsistent-player notes.
-4. Super: each option also gets `byRater`, every picked rater's weighted team totals and skill sums from their ratings alone (`guessed` counts players they haven't rated).
-5. Non-super callers: drop scores, sums, totals and `byRater`; players reduced to `{ name, setting }`.
+4. Each option also gets `byRater`, every picked rater's weighted team totals and skill sums from their ratings alone (`guessed` counts players they haven't rated).
+5. Organizers: players reduced to `{ id, name, setting, allGame }`; team numbers stay.
 
 ## Sharing (courtimg.mjs)
 

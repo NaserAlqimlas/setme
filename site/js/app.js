@@ -570,20 +570,23 @@ async function teamsPage() {
   const playing = await q(sb.from('players').select('id,name,setting').eq('playing', true).eq('active', true).order('name'));
   const combos = sessionCombos;
   let numTeams = 4, useCombos = true;
-  // Super only: whose ratings to build from. null = everyone's.
+  // Whose ratings to build from. null = everyone's.
   let raterIds = null;
   const newPlayers = newPlayersCard(() => raterIds);
   const out = h('div');
   const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }));
   // An empty list means every rater is switched off: nothing to build from until one is back on.
   const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Please select at least one rater.');
-  const raterPick = me.role === 'super' ? await raterPicker(ids => {
+  // Organizers can only read their own rating rows, so the server says who has rated.
+  const raterList = me.role === 'super' ? undefined
+    : await callFn('build-teams', { listRaters: true }).then(({ raters }) => ({ ratings: raters.map(r => ({ rater_id: r.id })), profiles: raters })).catch(() => null);
+  const raterPick = raterList === null ? null : await raterPicker(ids => {
     raterIds = ids;
     ownTeams.refresh();
     const none = ids?.length === 0;
     btn.disabled = none; needRater.hidden = !none;
     if (!none) newPlayers.refresh();
-  }) : null;
+  }, raterList);
   const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
   const btn = h('button', { class: 'ball big' }, 'Build teams');
@@ -676,7 +679,7 @@ function ownTeamsCard(out, getOptions) {
     update();
   };
   // After a check: the teams as they stand now (player ids), earlier versions for Undo, and players locked in place.
-  // viewRater: whose ratings the cards and suggestions use (super, null = the picked raters combined).
+  // viewRater: whose ratings the cards and suggestions use (null = the picked raters combined).
   let current = null, history = [], viewRater = null;
   const locked = new Set();
   const run = async ({ scroll = false } = {}) => {
@@ -723,7 +726,7 @@ function ownTeamsCard(out, getOptions) {
 // What's off about some teams and the smallest swaps that fix it, from a build-teams check ({ teams }).
 // onApply(suggestion); onUndo shows an Undo button when given.
 function suggestionsPanel(res, { onApply, onUndo }) {
-  const detail = me.role === 'super';
+  const detail = me.role === 'super' || me.role === 'organizer';
   const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
   const basis = !detail ? null : res.suggestRater ? `Based on ${firstName(res.options[0]?.byRater?.find(r => r.rater_id === res.suggestRater)?.name)}'s ratings` : 'Based on the combined ratings';
   return h('div', { class: 'suggestions' },
@@ -793,11 +796,11 @@ function setterBadge(p, onSetter) {
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
 function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, extra } = {}) {
-  const detail = me.role === 'super';
+  const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   res.options.forEach((opt, i) => {
     const text = opt.teams.map((t, k) => `Team ${k + 1}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
-    // Super: whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
+    // Whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
     const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
     let view = views.find(v => v.id === viewId) ?? views[0];
@@ -877,7 +880,7 @@ function newPlayersCard(getRaters) {
   return card;
 }
 
-// Super only: tap raters on or off; teams are built from the ones left on. Everyone is on to start.
+// Tap raters on or off; teams are built from the ones left on. Everyone is on to start.
 // `preload` ({ ratings, profiles }) skips the fetch when the page already has them.
 async function raterPicker(onchange, preload) {
   const [rows, profiles] = preload ? [preload.ratings, [...preload.profiles].sort((a, b) => (a.display_name ?? '').localeCompare(b.display_name ?? ''))]
