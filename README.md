@@ -66,6 +66,8 @@ Setting rating: paste and run `supabase/setting_skill.sql` (adds the column and 
 
 Scores: paste and run `supabase/scores.sql` (adds `sessions` and `games`). Until then Save for scores and the Scores page show an error; everything else works.
 
+Match stats: paste and run `supabase/match_stats.sql` (adds `game_stats`). Until then the Tag button on Scores says it needs the upgrade; everything else works.
+
 Rating history: paste and run `supabase/rating_history.sql` (safe to run again if you ran an earlier version). It records changes from then on; earlier changes weren't kept.
 
 ## Running it locally

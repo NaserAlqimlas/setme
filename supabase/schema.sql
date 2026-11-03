@@ -177,3 +177,17 @@ create policy sessions_organizers on public.sessions for all to authenticated
   using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
 create policy games_organizers on public.games for all to authenticated
   using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
+
+-- Match stats: tags entered while watching a game's video (same as match_stats.sql). The video is never uploaded.
+create table public.game_stats (
+  game_id bigint primary key references public.games on delete cascade,
+  video jsonb,                              -- { kind: 'file', name } or { kind: 'youtube', id }
+  rallies jsonb not null default '[]',      -- [{ t, serve: 'a'|'b', won: 'a'|'b'|null, touches: [{ p, a, g, t }] }]
+  updated_by uuid default auth.uid(),
+  updated_at timestamptz not null default now()
+);
+create trigger game_stats_touch before update on public.game_stats
+  for each row execute function public.touch_updated_at();
+alter table public.game_stats enable row level security;
+create policy game_stats_organizers on public.game_stats for all to authenticated
+  using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));

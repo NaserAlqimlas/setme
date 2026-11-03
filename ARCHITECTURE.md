@@ -24,6 +24,7 @@ Only the super can see individual ratings. Organizers see team numbers on the Te
 - **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and for organizers strips per-player data. Organizers get team totals, skill sums, gaps and rating-based notes, combined and per rater (`byRater`, `suggestRater`), never a single player's numbers.
 - **The New players check** (`build-teams` with `check: true`) only says who has no ratings, never values.
 - **Your own teams** (`build-teams` with `teams`) goes through the same stripping, so organizers checking their own teams see the same team numbers.
+- **Match stats** are observations, not ratings: organizers tag games and can read the tags (they're watching the same video). Per-player totals and SetMe's ratings are only shown to the super.
 - The secret key only exists in Netlify's environment variables (and a git-ignored `.env` for local runs).
 
 ## Files
@@ -40,6 +41,7 @@ site/
   js/csv.mjs            ratings CSV import, export and template
   js/courtimg.mjs       draws the court-map PNG for sharing
   js/scores.mjs         game margins, rotation, insights and weight fitting for the Scores page
+  js/stats.mjs          match stats: tagging helpers, tallies, SetMe's ratings from stats
 netlify/
   lib/supabase.mjs      server helpers: REST/admin calls with the secret key, caller(req) -> {id, role}
   functions/build-teams.mjs
@@ -60,6 +62,7 @@ tests/                  node scripts, no framework
 
 | `sessions` | played_on (unique), teams (jsonb, each team's player ids now), raters, all_game, source | One per game day, from Save for scores on Teams. Late changes edit `teams`. Organizers and super read and write. |
 | `games` | session_id, team_a, team_b, players_a, players_b, score_a, score_b, predicted | One per game. Keeps who played on each side, and `predicted` = both teams' numbers (weighted, skill sums, size, women, main setters, unrated) from `build-teams` with `predict: true` when it was saved, so later rating changes don't rewrite history. |
+| `game_stats` | game_id, video, rallies | One per tagged game. `rallies` = `[{ t, serve, won, touches: [{ p, a, g, t }] }]` (see stats.mjs); `video` = `{ kind: 'file', name }` or `{ kind: 'youtube', id }`. The video itself is never uploaded. |
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
 
@@ -84,7 +87,7 @@ Combos (play together / keep apart) are **not stored**. The Teams page keeps the
 | My ratings / All ratings | all; super sees everything | `ratings`, `rating_history` (own rows; super all); super also runs `combineRatings` in the browser |
 | Players | organizer, super | `players` (update; super insert/delete) |
 | Teams | organizer, super | `build-teams` function |
-| Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only |
+| Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only. Tag (per game): `game_stats` |
 | Users | super | `profiles`, `admin` function |
 
 UI helpers at the top of app.js: `h()` builds elements, `seg()` is the pick-one button row, `toggle()` the switch, `stacked()` turns tables into cards on phones, `toast()`.
@@ -163,3 +166,9 @@ Draws a 1080-wide PNG on a canvas: Team 1 v Team 2 on court 1, Team 3 v Team 4 o
 - **Insights** (`analyze`): close games (≤3), blowouts (≥10), average margin, how often the higher rated gap won (gaps under .05 don't count), `k` = points per 1.0 of rated gap (line through zero), and each team difference's correlation with the margin.
 - **Weights**: from 30 games, a ridge fit of margin on the five skill-sum differences, pulled towards the current `WEIGHTS` × k as if they'd been seen in 20 games, rescaled to the current total. A suggestion to try in `teams.mjs`, never applied automatically.
 - **Players** (`playerStats`, super only on the page): per player, the average of (margin − k × gap) from their team's side.
+
+## Match stats (stats.mjs)
+
+- **Tagging** (Scores → Tag on a saved game): watch the game's video (a file on this device, or YouTube) and tap player → action → grade (0–3). Grades that end a rally (ace, kill, stuff, errors) award the point; Point buttons cover the rest. The next serve goes to the rally's winner. `nextServer` guesses who serves from the order players first served; `suggestAction` guesses serve → pass → set → attack → dig. Each tag keeps the video time so tapping it seeks there. Saved to `game_stats` 1.5 s after each change, with a copy in localStorage until the save goes through.
+- **Stats** (`tally`, `metrics`, super only on All ratings): per player across tagged games: serve ace/error rates, pass and set averages, attack efficiency ((kills − errors − blocked) ÷ attacks), blocks and digs per game.
+- **SetMe** (`statRatings`): a rater account (`setme@setme.invalid`, created by the `admin` function's `setme` action, random password) whose ratings come from the stats: receiving ← pass average, hitting ← attack efficiency, serve ← serve value, blocking ← blocks per game, hustle ← digs per game, setting ← set average (setters only). Each number is pulled toward the group average by sample size, then players are ranked and spread over 0–1 in .25 steps. A skill is skipped with fewer than 4 qualifying players or no differences between them. The super previews the changes and saves them; from there SetMe is combined, picked and charted like any rater, and `combineRatings` takes out its lean.
