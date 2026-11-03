@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -73,6 +73,26 @@ ok('no serve data, no serve rating', detail.serve.skipped && ![...ratings.values
 ok('no blocks tagged, no blocking rating', detail.blocking.skipped && detail.blocking.flat && ![...ratings.values()].some(r => 'blocking' in r));
 ok('too few players', statRatings(tally(many), players.slice(0, MIN_PLAYERS - 1)).detail.receiving.skipped);
 ok('setting only for setters', statRatings(tally(many), players).detail.setting_skill.players === 0);
+
+
+// Recap: results from saved scores, a stat line per player by team, sorted by points.
+{
+  const g1 = { team_a: 1, team_b: 2, players_a: [1, 2, 3], players_b: [4, 5, 6], score_a: 25, score_b: 20 };
+  const g2 = { team_a: 2, team_b: 1, players_a: [4, 5, 6], players_b: [1, 2, 3], score_a: 25, score_b: 23 };
+  const g3 = { team_a: 1, team_b: 2, players_a: [1, 2, 3], players_b: [4, 5, 6], score_a: 10, score_b: 8 }; // untagged
+  const day = recap([
+    { game: g1, rallies },
+    { game: g2, rallies: [{ serve: 'a', won: 'a', touches: [T(4, 'serve', 3)] }, { serve: 'a', won: 'a', touches: [T(4, 'pass', 3), T(4, 'pass', 1), T(6, 'attack', 3), T(6, 'attack', 0)] }] },
+    { game: g3, rallies: [] }]);
+  ok('all results', day.results.length === 3 && day.results[2].score_a === 10 && day.tagged === 2, day.results);
+  const line = id => day.players.find(p => p.pid === id);
+  ok('everyone who played', day.players.length === 6 && line(3).points === 0 && line(3).team === 1, day.players);
+  ok('hits and kills', line(6).attacks === 3 && line(6).kills === 2 && line(6).points === 2, line(6));
+  ok('serves in', line(4).serves === 3 && line(4).servesIn === 2 && line(4).aces === 1, line(4));
+  ok('receives good of total', line(4).passes === 3 && line(4).passesGood === 2 && line(2).passes === 1 && line(2).passesGood === 0, line(4), line(2));
+  ok('by team, then points', day.players.map(p => p.team).join() === '1,1,1,2,2,2' && day.players[3].pid === 6, day.players.map(p => p.pid));
+  ok('untagged day: results only', recap([{ game: g3, rallies: [] }]).players.length === 0);
+}
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');
 process.exit(fail ? 1 : 0);

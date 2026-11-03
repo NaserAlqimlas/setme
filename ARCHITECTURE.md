@@ -24,7 +24,7 @@ Only the super can see individual ratings. Organizers see team numbers on the Te
 - **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and for organizers strips per-player data. Organizers get team totals, skill sums, gaps and rating-based notes, combined and per rater (`byRater`, `suggestRater`), never a single player's numbers.
 - **The New players check** (`build-teams` with `check: true`) only says who has no ratings, never values.
 - **Your own teams** (`build-teams` with `teams`) goes through the same stripping, so organizers checking their own teams see the same team numbers.
-- **Match stats** are observations, not ratings: organizers tag games and can read the tags (they're watching the same video). Per-player totals and SetMe's ratings are only shown to the super.
+- **Match stats** are observations, not ratings: organizers tag games and can read the tags (they're watching the same video). Game and day recaps (per-player box scores) are made to be shared with the group, by organizers or the super. Season-long per-player stats and SetMe's ratings are only shown to the super.
 - The secret key only exists in Netlify's environment variables (and a git-ignored `.env` for local runs).
 
 ## Files
@@ -40,6 +40,7 @@ site/
   js/paste.mjs          matching a pasted WhatsApp list to players
   js/csv.mjs            ratings CSV import, export and template
   js/courtimg.mjs       draws the court-map PNG for sharing
+  js/recapimg.mjs       draws the game / game-day recap PNG (results and a box score per team)
   js/scores.mjs         game margins, rotation, insights and weight fitting for the Scores page
   js/stats.mjs          match stats: tagging helpers, tallies, SetMe's ratings from stats
 netlify/
@@ -174,4 +175,5 @@ Draws a 1080-wide PNG on a canvas: Team 1 v Team 2 on court 1, Team 3 v Team 4 o
 
 - **Tagging** (Scores → Tag on a saved game): watch the game's video (a file on this device, or YouTube) and tap player → action → grade (0–3). Grades that end a rally (ace, kill, stuff, errors) award the point; Point buttons cover the rest. The next serve goes to the rally's winner. `nextServer` guesses who serves from the order players first served; `suggestAction` guesses serve → pass → set → attack → dig. Each tag keeps the video time so tapping it seeks there. Saved 1.5 s after each change through `save_game_tags(game, rallies, deleted)`: only rallies that differ from what was last saved (each with all its touches) plus deleted ids, in one transaction. Rally ids are uuids made in the browser, so a resent save is harmless and two taggers on one game don't delete each other's rallies. A copy (with the rally ids it knew about) stays in localStorage until the save goes through.
 - **Stats** (`player_stats` view → `tallyFromCounts`, `metrics`; super only on All ratings): per player across tagged games: serve ace/error rates, pass and set averages, attack efficiency ((kills − errors − blocked) ÷ attacks), blocks and digs per game.
+- **Recap** (`recap`, drawn by `recapimg.mjs`; organizers and super): Share recap on the tagging screen (one game) and Day recap on Games (the whole day). Results come from the saved scores, so untagged games still show. Then a stat line per player who played a tagged game, grouped by team and sorted by points: PTS (kills + aces + stuff blocks), kills, hits (attacks), aces, serves in / total, receives good-or-perfect / total, blocks, digs. These are full individual numbers, ratios included, meant to be shared with the group. Drawn before the tap and shared with `sharePng` (share sheet, else clipboard, else download), like the court image.
 - **SetMe** (`statRatings`): a rater account (`setme@setme.invalid`, created by the `admin` function's `setme` action, random password) whose ratings come from the stats: receiving ← pass average, hitting ← attack efficiency, serve ← serve value, blocking ← blocks per game, hustle ← digs per game, setting ← set average (setters only). Each number is pulled toward the group average by sample size, then players are ranked and spread over 0–1 in .25 steps. A skill is skipped with fewer than 4 qualifying players or no differences between them. The super previews the changes and saves them; from there SetMe is combined, picked and charted like any rater, and `combineRatings` takes out its lean.
