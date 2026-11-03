@@ -1350,23 +1350,28 @@ function historyCard(changeLog, players, ratings, allRaters, pname, short, all) 
     return { el, draw() {}, show() {} };
   }
   const known = new Map(players.map(p => [p.id, p]));
-  let used = [], player = '', limit = 30, mode = 'skill', chartRater = null;
+  let used = [], player = '', limit = 30, mode = 'skill', chartRater = null, allMode = 'count';
   const playerBox = comboBox([['', 'All players'], ...players.map(p => [String(p.id), p.name])], v => { player = v; limit = 30; paint(); }, 'Player');
   const list = h('div', { class: 'history' });
   // Chart for one player: their skills over time from one rater, or each rater's total over time.
   const modeSeg = seg([['skill', 'By skill'], ['total', all ? 'Total by rater' : 'Total']], mode, v => { mode = v; paintChart(); }, 'Chart');
   const raterRow = h('div', { class: 'row chart-raters' });
   const chartBox = h('div', { class: 'chart-box' });
-  const chartWrap = h('div', { class: 'history-chart' }, h('div', { class: 'toolbar' }, modeSeg, raterRow), chartBox);
+  // Chart for all players: changes per day, or every player's total / weighted total over time.
+  const allSeg = seg([['count', 'Changes per day'], ['total', 'Total'], ['weighted', 'Weighted']], allMode, v => { allMode = v; paintChart(); }, 'Chart');
+  const chartWrap = h('div', { class: 'history-chart' }, h('div', { class: 'toolbar' }, modeSeg, allSeg, raterRow), chartBox);
   let stopChart = () => {};
   const paintChart = () => {
     stopChart(); stopChart = () => {};
     modeSeg.hidden = !player;
+    allSeg.hidden = !!player;
     if (!player) {
       raterRow.replaceChildren();
       const rows = changeLog.filter(c => known.has(c.player_id) && used.includes(c.rater_id));
+      allSeg.hidden = !rows.length;
       if (!rows.length) return chartBox.replaceChildren();
-      stopChart = changesChart(chartBox, rows, all && used.length > 1 ? short : null);
+      stopChart = allMode === 'count' ? changesChart(chartBox, rows, all && used.length > 1 ? short : null)
+        : playersChart(chartBox, { log: changeLog, ratings, players, raters: used, metric: allMode, onpick: id => show(id) });
       return;
     }
     const pid = Number(player);
@@ -1410,14 +1415,11 @@ function historyCard(changeLog, players, ratings, allRaters, pname, short, all) 
     paintChart();
   };
   el.append(
-    h('p', { class: 'muted small' }, 'How many ratings changed each day. Pick a player (or tap their name in the table) to chart just their ratings. Recorded from when history was switched on.'),
+    h('p', { class: 'muted small' }, 'How many ratings changed each day, or every player\'s total over time. Pick a player (or tap their name in the table) to chart just their ratings. Recorded from when history was switched on.'),
     h('div', { class: 'toolbar' }, h('div', { class: 'sort' }, h('span', {}, 'Player'), playerBox.el)),
     chartWrap, list, more);
-  return {
-    el,
-    draw(ids) { used = ids; paint(); },
-    show(id) { player = String(id); playerBox.set(player); limit = 30; paint(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
-  };
+  const show = id => { player = String(id); playerBox.set(player); limit = 30; paint(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  return { el, draw(ids) { used = ids; paint(); }, show };
 }
 
 // ---------- rating history chart ----------
@@ -1527,6 +1529,148 @@ function historyChart(box, { log, ratings, pid, mode, raters, slotOf, name }) {
     tip.style.left = `${Math.max(0, Math.min(W - tw, x > W / 2 ? x - tw - 12 : x + 12))}px`;
   };
   const hide = () => { tip.hidden = true; cross?.setAttribute('visibility', 'hidden'); };
+  const ro = new ResizeObserver(() => { if (plot.clientWidth !== W) render(); });
+  ro.observe(plot);
+  render();
+  return () => ro.disconnect();
+}
+
+// All players: each player's total (or weighted total) over time, a faint step line per player whose number moved.
+// Ratings at any moment = today's ratings with every later change undone. One rater: what they entered (a gap while
+// any skill is U). Several: combined like the table (leans taken out), a gap while nobody has rated them.
+// Hover or arrow keys pick out one player (up/down to switch players); click or Enter opens their history.
+function playersChart(box, { log, ratings, players, raters, metric, onpick }) {
+  const metricOf = metric === 'weighted' ? weightedTotal : sk => SKILLS.reduce((a, s) => a + sk[s], 0);
+  const known = new Set(players.map(p => p.id));
+  const rows = log.filter(c => raters.includes(c.rater_id) && known.has(c.player_id))
+    .map(c => ({ ...c, t: new Date(c.changed_at).getTime() })).sort((a, b) => a.t - b.t);
+  // One stop per burst of changes (gaps under 5 minutes), at the burst's last change.
+  const times = [];
+  for (const r of rows) if (times.length && r.t - times.at(-1) < 5 * 60e3) times[times.length - 1] = r.t; else times.push(r.t);
+  const now = Date.now(), first = times[0], span = Math.max(now - first, 60e3), pad = Math.max(span * .08, 30 * 60e3);
+  const t0 = first - pad, t1 = now, stops = [t0, ...times, t1];
+
+  // Walk back from today's ratings, undoing changes newer than each stop.
+  const key = (rid, pid) => `${rid}|${pid}`;
+  const snap = new Map(ratings.filter(r => raters.includes(r.rater_id) && known.has(r.player_id)).map(r => [key(r.rater_id, r.player_id), { ...r }]));
+  const raw = raters.length === 1;
+  const valuesNow = () => {
+    if (raw) return new Map(players.map(p => {
+      const r = snap.get(key(raters[0], p.id));
+      const sk = Object.fromEntries(SKILLS.map(s => [s, r?.[s] == null ? null : Number(r[s])]));
+      return [p.id, SKILLS.some(s => sk[s] == null) ? null : metricOf(sk)];
+    }));
+    const { combined } = combineRatings(players, [...snap.values()]);
+    return new Map(players.map(p => { const c = combined.get(p.id); return [p.id, c.guess ? null : metricOf(c.skills)]; }));
+  };
+  const vals = new Array(stops.length);
+  let undo = rows.length - 1;
+  for (let i = stops.length - 1; i >= 0; i--) {
+    for (; undo >= 0 && rows[undo].t > stops[i]; undo--) {
+      const r = rows[undo], k = key(r.rater_id, r.player_id);
+      if (!snap.has(k)) snap.set(k, { rater_id: r.rater_id, player_id: r.player_id });
+      snap.get(k)[r.skill] = r.old_value;
+    }
+    vals[i] = valuesNow();
+  }
+  const series = players.map(p => ({ p, v: vals.map(m => m.get(p.id)) }))
+    .filter(se => se.v.some((v, i) => i && v != null && (se.v[i - 1] == null || Math.abs(v - se.v[i - 1]) > 1e-9)));
+  if (!series.length) { box.replaceChildren(h('p', { class: 'muted' }, 'No totals have changed yet.')); return () => {}; }
+
+  const vs = series.flatMap(se => se.v).filter(v => v != null);
+  let lo = Math.floor(Math.min(...vs) * 2) / 2, hi = Math.ceil(Math.max(...vs) * 2) / 2;
+  if (hi - lo < 1) { lo = Math.max(0, lo - .5); hi = lo + 1; }
+  const tickStep = hi - lo > 3 ? 1 : .5;
+  const yTicks = []; for (let v = Math.ceil(lo / tickStep) * tickStep; v <= hi + 1e-9; v += tickStep) yTicks.push(v);
+  const sameDay = span < 36 * 3600e3;
+  const tickLabel = t => new Date(t).toLocaleString([], sameDay ? { hour: 'numeric', minute: '2-digit' } : { day: 'numeric', month: 'short' });
+  const tipTime = t => t === t0 ? 'Before the first change' : t === t1 ? 'Now' : new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  const signed = v => `${v > 0 ? '+' : ''}${fmt(v)}`;
+
+  const label = metric === 'weighted' ? 'Weighted total' : 'Total';
+  const head = h('div', { class: 'chart-legend' }, `${label} over time for the ${series.length} ${series.length === 1 ? 'player' : 'players'} whose ${label.toLowerCase()} changed. Hover to pick one out, tap to open their history.`);
+  const plot = h('div', { class: 'chart-plot' });
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  plot.append(tip);
+  box.replaceChildren(head, plot);
+
+  let W = 0, svgEl = null, cross = null, xOf, yOf, focusIdx = stops.length - 1, focusSe = null, paths = [];
+  const H = 240, M = { l: 34, r: 12, t: 10, b: 26 };
+  const render = () => {
+    W = plot.clientWidth; if (!W) return;
+    xOf = t => M.l + (t - t0) / (t1 - t0) * (W - M.l - M.r);
+    yOf = v => M.t + (1 - (v - lo) / (hi - lo)) * (H - M.t - M.b);
+    const grid = yTicks.map(v => svg('g', {},
+      svg('line', { x1: M.l, x2: W - M.r, y1: yOf(v), y2: yOf(v), class: 'grid' }),
+      svg('text', { x: M.l - 6, y: yOf(v), class: 'axis', 'text-anchor': 'end', 'dominant-baseline': 'middle' }, fmt(v))));
+    const n = Math.max(2, Math.min(5, Math.floor((W - M.l - M.r) / 90)));
+    const xt = Array.from({ length: n }, (_, i) => t0 + (t1 - t0) * i / (n - 1));
+    const xAxis = xt.map((t, i) => svg('text', { x: xOf(t), y: H - 6, class: 'axis', 'text-anchor': i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle' }, i === n - 1 ? 'Now' : tickLabel(t)));
+    paths = series.map(se => {
+      let d = '', prev = null;
+      se.v.forEach((v, i) => {
+        if (v == null) { prev = null; return; }
+        if (prev == null) d += `M${xOf(stops[i])},${yOf(v)}`; else if (v !== prev) d += `L${xOf(stops[i])},${yOf(v)}`;
+        d += `L${xOf(stops[i + 1] ?? t1)},${yOf(v)}`;
+        prev = v;
+      });
+      return svg('path', { d, class: 'line faint' });
+    });
+    cross = svg('line', { y1: M.t, y2: H - M.b, class: 'cross', visibility: 'hidden' });
+    const hit = svg('rect', { x: M.l, y: 0, width: W - M.l - M.r, height: H, fill: 'transparent' });
+    svgEl = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', tabindex: 0, class: 'clickable',
+      'aria-label': `${label} over time for ${series.length} players. Left and right arrow keys step through changes, up and down switch players, Enter opens a player's history.` },
+      grid, xAxis, ...paths, cross, hit);
+    svgEl.onpointermove = e => {
+      const b = svgEl.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+      const i = stops.reduce((best, t, j) => Math.abs(xOf(t) - x) < Math.abs(xOf(stops[best]) - x) ? j : best, 0);
+      // The line closest to the pointer at that moment.
+      const se = series.filter(s => s.v[i] != null).reduce((best, s) => !best || Math.abs(yOf(s.v[i]) - y) < Math.abs(yOf(best.v[i]) - y) ? s : best, null);
+      show(i, se);
+    };
+    svgEl.onpointerleave = hide;
+    svgEl.onclick = () => focusSe && onpick(focusSe.p.id);
+    svgEl.onfocus = () => show(focusIdx, focusSe);
+    svgEl.onblur = hide;
+    svgEl.onkeydown = e => {
+      if (e.key === 'Enter' && focusSe) { e.preventDefault(); onpick(focusSe.p.id); return; }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); show(Math.max(0, Math.min(stops.length - 1, focusIdx + (e.key === 'ArrowRight' ? 1 : -1))), focusSe); }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        // Players with a value at this moment, top of the chart first.
+        const order = series.filter(s => s.v[focusIdx] != null).sort((a, b) => b.v[focusIdx] - a.v[focusIdx]);
+        if (!order.length) return;
+        const at = order.indexOf(focusSe);
+        show(focusIdx, order[at < 0 ? 0 : Math.max(0, Math.min(order.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))]);
+      }
+    };
+    plot.querySelector('svg')?.remove();
+    plot.prepend(svgEl);
+    if (focusSe) mark(focusSe);
+  };
+  // Highlight one line and draw it above the others (the crosshair and hit area stay on top).
+  const mark = se => paths.forEach((p, j) => {
+    const on = series[j] === se;
+    p.classList.toggle('hot', on);
+    if (on) p.parentNode.insertBefore(p, cross);
+  });
+  const show = (i, se) => {
+    focusIdx = i; const t = stops[i], x = xOf(t);
+    se ??= series.filter(s => s.v[i] != null).sort((a, b) => b.v[i] - a.v[i])[0] ?? null;
+    focusSe = se; mark(se);
+    cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('visibility', 'visible');
+    const v = se?.v[i], start = se?.v.find(x => x != null);
+    // How many of the lines moved at this stop.
+    const moved = i ? series.filter(s => s.v[i] != null && s.v[i - 1] != null && Math.abs(s.v[i] - s.v[i - 1]) > 1e-9).length : 0;
+    tip.replaceChildren(h('div', { class: 'chart-tip-head' }, tipTime(t)),
+      se && h('div', { class: 'chart-tip-row' }, h('i', { style: 'background:var(--s1)' }), h('b', {}, fmt(v)), ' ', se.p.name),
+      se && v != null && start != null && h('div', { class: 'chart-tip-row muted' }, `${signed(v - start)} since first shown`),
+      i > 0 && i < stops.length - 1 && h('div', { class: 'chart-tip-row muted' }, `${moved} ${moved === 1 ? 'player' : 'players'} moved here`));
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    tip.style.left = `${Math.max(0, Math.min(W - tw, x > W / 2 ? x - tw - 12 : x + 12))}px`;
+  };
+  const hide = () => { tip.hidden = true; cross?.setAttribute('visibility', 'hidden'); focusSe = null; mark(null); };
   const ro = new ResizeObserver(() => { if (plot.clientWidth !== W) render(); });
   ro.observe(plot);
   render();
