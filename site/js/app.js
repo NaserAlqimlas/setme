@@ -1,11 +1,13 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal } from './teams.mjs';
+import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal, adjustSkills } from './teams.mjs';
 import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 import { recapImage } from './recapimg.mjs';
-import { analyze, playerStats, nextPairing, finished, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET } from './scores.mjs';
-import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, fromRows, recap, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
+import { analyze, playerStats, nextPairing, finished, resultAdjustments, MIN_FIT, PRIOR_GAMES, CLOSE, BLOWOUT, TARGET, ADJUST_MIN_GAMES } from './scores.mjs';
+import { ACTIONS, gradeLabel, endsRally, other, sideOf, score, suggestAction, nextServer, teamSummary, tallyFromCounts, tally, fromRows, recap, metrics, statRatings, SKILL_STATS, MIN_PLAYERS } from './stats.mjs';
+import { attendance, record, seasonRecap, REGULAR_GAP, MIN_GAMES_FOR_RECORD } from './club.mjs';
+import { seasonImage } from './seasonimg.mjs';
 
 // supabase-js 2.45.4, self-hosted in vendor/ (loaded by index.html as window.supabase)
 // Auth calls are serialized with an in-page lock; the default browser lock (navigator.locks) can hang.
@@ -20,8 +22,12 @@ const forPlayer = (s, p) => s !== 'setting_skill' || (p.setting && p.setting !==
 const RATING_OPTIONS = [[null, 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
 const TIER_OPTIONS = TIERS.map(t => [t, t[0].toUpperCase() + t.slice(1)]);
 const TEAM_COLORS = ['#2f6fde', '#e8663a', '#18a36f', '#c99400', '#8b5cf6', '#d6407a'];
+// Players (role 'player', from the club upgrade) don't rate: they sign up for game days and see published teams.
 const PAGES = [
   { id: 'rate', label: 'Rate', roles: ['rater', 'organizer', 'super'], view: ratePage },
+  // club: only once supabase/club.sql has run (profiles then have player_id), so nothing changes before it.
+  { id: 'signup', label: 'Sign up', roles: ['player', 'rater', 'organizer', 'super'], view: signupPage, club: true },
+  { id: 'lineup', label: 'Lineup', roles: ['player', 'rater'], view: lineupPage, club: true },
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
   { id: 'scores', label: 'Scores', roles: ['organizer', 'super'], view: scoresPage },
@@ -55,6 +61,18 @@ const q = async p => { const { data, error } = await p; if (error) throw error; 
 const fmt = v => v == null ? 'U' : String(Math.round(v * 100) / 100).replace(/^0\./, '.').replace(/^-0\./, '-.');
 const firstName = n => (n ?? '?').split(/[\s.@]/)[0];
 const setterMark = s => s === 'M' ? ' (S)' : s === 'B' ? ' (B)' : '';
+// A player's name that opens their profile, for whoever may see it (organizers and super: anyone; others: themselves).
+const canProfile = id => me.role === 'organizer' || me.role === 'super' || (me.player_id != null && id === me.player_id);
+const profileLink = (id, name) => canProfile(id) ? h('a', { href: `#player/${id}`, class: 'name-link' }, name) : h('span', {}, name);
+// Supabase's errors when a table, column or function from an upgrade isn't there yet.
+const missing = e => /relation|does not exist|schema cache|could not find|column/i.test(e?.message ?? '');
+const needsUpgrade = (what, file = 'supabase/club.sql') => h('div', { class: 'card empty' }, `${what} needs the database upgrade: run ${file} in Supabase.`);
+const today = () => new Date().toLocaleDateString('en-CA');
+const downloadFile = (text, name, type) => {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  h('a', { href: url, download: name }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 const pageHead = (title, sub, ...right) => h('div', { class: 'page-head' }, h('div', {}, h('h2', {}, title), sub && h('p', {}, sub)), right.length ? h('div', { class: 'row' }, right) : null);
 
 function avatar(name, size) {
@@ -141,9 +159,12 @@ async function render() {
   } catch {
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
-  const pages = PAGES.filter(p => p.roles.includes(me.role));
-  const current = pages.find(p => '#' + p.id === location.hash) || pages[0];
-  if (pages.length > 1) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
+  const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me));
+  // #player/12 opens a player's profile (not in the nav, except your own as "Me").
+  const profileId = Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || null;
+  const current = profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
+  if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
+  if (me.player_id) nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
   who.append(
     h('div', { class: 'me' }, avatar(me.display_name || '?', 32), h('div', { class: 'who-text' }, h('b', {}, me.display_name), h('small', {}, me.role))),
     h('button', { class: 'ghost sm', onclick: () => sb.auth.signOut() }, 'Sign out'));
@@ -284,13 +305,39 @@ function ratingGuide(onToggle) {
   };
 }
 
+// Ratings older than this are worth another look.
+const STALE_DAYS = 120;
 async function ratePage() {
-  const [players, mine] = await Promise.all([
-    q(sb.from('players').select('id,name,playing,setting').eq('active', true).order('name')),
+  const [players, mine, queue] = await Promise.all([
+    q(sb.from('players').select('*').eq('active', true).order('name')), // * so it works before the anchor column exists
     q(sb.from('ratings').select('*').eq('rater_id', me.id)),
+    callFn('rate-queue', {}).catch(() => null),
   ]);
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
-  let onlyPlaying = false, onlyUnrated = false, search = '';
+  let onlyPlaying = false, onlyUnrated = false, onlyLook = false, search = '';
+  // Why a player is worth a (fresh) look: ids only from the server, never which way.
+  const sets = { results: new Set(queue?.results), few: new Set(queue?.few), anchors: new Set(queue?.anchors ?? players.filter(p => p.anchor).map(p => p.id)) };
+  const reasons = p => {
+    const r = byPlayer.get(p.id), out = [];
+    if (sets.anchors.has(p.id) && !r) out.push('Anchor player: rate them first');
+    if (sets.results.has(p.id)) out.push('Results don\'t match their ratings');
+    if (sets.few.has(p.id)) out.push('Few people have rated them');
+    if (r?.updated_at && Date.now() - Date.parse(r.updated_at) > STALE_DAYS * 864e5) out.push(`Your rating is over ${Math.round(STALE_DAYS / 30)} months old`);
+    return out;
+  };
+  const lookCard = h('div', { class: 'card' });
+  const paintLook = () => {
+    const list = players.map(p => ({ p, why: reasons(p) })).filter(x => x.why.length);
+    const anchorsLeft = players.filter(p => sets.anchors.has(p.id) && !byPlayer.has(p.id));
+    lookCard.hidden = !list.length;
+    lookCard.replaceChildren(
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Worth a fresh look'),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, anchorsLeft.length
+          ? `New here? Start with the ${anchorsLeft.length} anchor player${anchorsLeft.length === 1 ? '' : 's'} everyone rates; it tells SetMe how you rate compared with the others, and until then your ratings count for less.`
+          : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
+      h('div', { class: 'chips' }, list.map(({ p, why }) => h('span', { class: 'chip plain', title: why.join(' · ') }, p.name, h('span', { class: 'muted small' }, ` · ${why[0]}${why.length > 1 ? ` +${why.length - 1}` : ''}`)))));
+  };
+  paintLook();
   const grid = h('div', { class: 'grid' });
   const layout = h('div', { class: 'rate-layout' }, grid);
   const guide = ratingGuide(open => document.body.classList.toggle('guide-open', open));
@@ -310,7 +357,7 @@ async function ratePage() {
     const cols = RATED.filter(s => s !== 'setting_skill' || skill === s || (byPlayer.get(pid) && s in byPlayer.get(pid)));
     try {
       const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(cols.map(s => [s, row[s]])) }).select().single());
-      byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); toast('Saved');
+      byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); paintLook(); toast('Saved');
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
   // Totals follow the doc's rule: U if any skill is unknown.
@@ -328,14 +375,18 @@ async function ratePage() {
     };
     totals.set(p.id, paint); paint();
     return h('div', { class: 'card player-card' },
-      h('header', {}, avatar(p.name), h('b', {}, p.name), p.playing && h('span', { class: 'badge on' }, 'Playing')),
+      h('header', {}, avatar(p.name), h('b', {}, p.name), sets.anchors.has(p.id) && h('span', { class: 'badge backup', title: 'Anchor player: everyone rates them, so SetMe can compare raters' }, 'Anchor'),
+        reasons(p).length > 0 && !sets.anchors.has(p.id) && h('span', { class: 'badge', title: reasons(p).join(' · ') }, 'Look again'),
+        p.playing && h('span', { class: 'badge on' }, 'Playing')),
       RATED.filter(s => forPlayer(s, p)).map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
         seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
       totalEl);
   };
   const draw = () => {
     // Unrated = no rating saved yet, same as the progress count. A card stays put after a tap until the list is redrawn.
-    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !byPlayer.has(p.id)) && p.name.toLowerCase().includes(search));
+    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !byPlayer.has(p.id)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))
+      // Anchors you haven't rated come first, so a new rater starts with them.
+      .sort((a, b) => (sets.anchors.has(b.id) && !byPlayer.has(b.id)) - (sets.anchors.has(a.id) && !byPlayer.has(a.id)));
     grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, 'No players match.')]));
   };
   progress(); draw();
@@ -358,6 +409,7 @@ async function ratePage() {
       try {
         await q(sb.from('ratings').upsert(rows.map(r => ({ rater_id: raterId, player_id: r.player.id, ...r.values }))));
         toast(`${rows.length} ratings imported`);
+        if (raterId !== me.id) sb.from('audit_log').insert({ action: 'ratings imported', detail: { players: rows.length, for: raterId, file: file.name } }).then(() => {}, () => {});
         if (raterId === me.id) render(); else importBox.replaceChildren();
       } catch (e) { toast(`Not imported: ${e.message}`); }
     };
@@ -376,11 +428,7 @@ async function ratePage() {
         h('span', { class: 'muted small' }, 'Replaces existing ratings for these players. Empty cells and U count as unknown.'))));
     importBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  const downloadCsv = (text, name) => {
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-    h('a', { href: url, download: name }).click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  const downloadCsv = (text, name) => downloadFile(text, name, 'text/csv');
   const downloadTemplate = () => downloadCsv(ratingsTemplate(players), 'setme-ratings-template.csv');
   const exportRatings = () => downloadCsv(ratingsExport(players, byPlayer), `setme-ratings-${new Date().toISOString().slice(0, 10)}.csv`);
 
@@ -400,7 +448,9 @@ async function ratePage() {
       h('div', { class: 'toolbar', style: 'margin-top:10px' },
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
         toggle("This session's players only", false, v => { onlyPlaying = v; draw(); }),
-        toggle('Not rated yet', false, v => { onlyUnrated = v; draw(); }))),
+        toggle('Not rated yet', false, v => { onlyUnrated = v; draw(); }),
+        toggle('Worth a look', false, v => { onlyLook = v; draw(); }))),
+    lookCard,
     layout);
 }
 
@@ -427,7 +477,10 @@ async function playersPage() {
         h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, v => update(p, { setting: v }), `${p.name} setter role`))),
       h('div', { class: 'row' },
         toggle('Playing', p.playing, v => update(p, { playing: v })),
+        // Anchor players: every rater rates them first (only once the club upgrade adds the column).
+        me.role === 'super' && 'anchor' in p && toggle('Anchor', p.anchor, v => update(p, { anchor: v })),
         h('span', { class: 'grow' }),
+        h('a', { href: `#player/${p.id}`, class: 'name-link small' }, 'Profile'),
         me.role === 'super' && h('button', { class: 'danger sm', onclick: () => removePlayer(p) }, 'Delete')));
     return el;
   };
@@ -495,6 +548,8 @@ async function playersPage() {
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Paste from WhatsApp'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Paste the group\'s list to tick everyone who\'s playing.'))),
       box, pasteResult),
+    me.role === 'super' && players.length && 'anchor' in players[0] && h('p', { class: 'muted small' }, h('b', {}, 'Anchor'),
+      ': a well-known player every rater rates first. Pick 4 to 6 across the range (strong, average, newer), so a new rater\'s lean is known quickly.'),
     me.role === 'super' && h('form', { class: 'card add-player', onsubmit: add },
       h('div', { class: 'row' }, name, h('button', {}, 'Add player')),
       h('div', { class: 'field' }, h('span', {}, 'Level until rated'), tierPick)),
@@ -507,6 +562,10 @@ async function playersPage() {
 // Pairs who play together (always same team) or apart (never same team), for this build only. Nothing is saved:
 // they last while the page is open (switching tabs keeps them) and are sent along when teams are built.
 let sessionCombos = [];
+// Build options that last while the page is open: mix up teammates from recent game days (on), and shift players by
+// how their teams have done against their ratings (off).
+let mixTeammates = true, adjustResults = false;
+const buildExtras = () => ({ variety: mixTeammates, resultsAdjust: adjustResults, playedOn: gameDate || null });
 // Which setters set all game, for this session (not saved): player id -> true / false. Not set yet = main setters do.
 const setterPlan = new Map();
 const setsAllGame = p => setterPlan.get(p.id) ?? p.setting === 'M';
@@ -578,7 +637,8 @@ async function teamsPage() {
   let raterIds = null;
   const newPlayers = newPlayersCard(() => raterIds);
   const out = h('div');
-  const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })) }));
+  const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })), ...buildExtras() }));
+  const drafts = draftsCard(ownTeams);
   // An empty list means every rater is switched off: nothing to build from until one is back on.
   const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Please select at least one rater.');
   // Organizers can only read their own rating rows, so the server says who has rated.
@@ -614,6 +674,7 @@ async function teamsPage() {
   const draw = () => out.replaceChildren(...showTeams(built, {
     view, onSwap: edit,
     onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
+    onDraft: i => saveDraft(ids(i), builtWith, `Option ${i + 1}${checked[i] ? ' (swapped)' : ''}`).then(ok => ok && document.dispatchEvent(new Event('drafts'))),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
     locked: i => checked[i] && (locks[i] ??= new Set()),
     onLock: (id, i) => { locks[i].has(id) ? locks[i].delete(id) : locks[i].add(id); recheck(i); },
@@ -625,7 +686,7 @@ async function teamsPage() {
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Building…';
     try {
-      builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos() };
+      builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
       built = await callFn('build-teams', { numTeams, ...builtWith });
       checked = []; undos = []; locks = []; view = null;
       draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -644,8 +705,13 @@ async function teamsPage() {
       h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
       h('label', { class: 'field' }, h('span', {}, 'Date'), date),
       toggle('Use combos', true, v => { useCombos = v; }),
+      h('span', { title: 'Avoid putting the same people together as on the last game days. Only picks between splits that are about as balanced.' },
+        toggle('Mix up teammates', mixTeammates, v => { mixTeammates = v; ownTeams.refresh(); })),
+      h('span', { title: `Shift each player by how their teams have done against their ratings (needs ${ADJUST_MIN_GAMES} games with scores). Saved predictions stay ratings-only.` },
+        toggle('Adjust for results', adjustResults, v => { adjustResults = v; ownTeams.refresh(); })),
       h('span', { class: 'grow' }), btn),
-    out);
+    out,
+    drafts);
 }
 
 // Teams you made yourself: paste them or upload a text/CSV file, then see the same numbers and sharing as a built option.
@@ -700,13 +766,15 @@ function ownTeamsCard(out, getOptions) {
     };
     const onSwap = (_, teams) => { history.push(current); current = teams; run().catch(e => { current = history.pop(); toast(e.message); run().catch(() => {}); }); };
     const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
-    out.replaceChildren(...showTeams(res, { title: 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, extra: suggestionsPanel(res, {
+    const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, card.title ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
+    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, extra: suggestionsPanel(res, {
       onApply: sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); },
       onUndo: history.length > 0 && (() => { current = history.pop(); run().catch(e => toast(e.message)); }),
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   check.onclick = async () => {
+    card.title = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
     history = []; locked.clear();
     check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
@@ -725,6 +793,11 @@ function ownTeamsCard(out, getOptions) {
       preview));
   // Ratings from changed at the top: re-check teams already on screen.
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
+  // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
+  card.load = async (teams, title) => {
+    current = teams; history = []; locked.clear(); card.title = title;
+    try { await run({ scroll: true }); } catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+  };
   document.addEventListener('setterplan', () => card.refresh());
   return card;
 }
@@ -820,9 +893,13 @@ function setterBadge(p, onSetter) {
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
 // onSave(i): saves option i as the game day's teams for the Scores page.
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, extra } = {}) {
+// onDraft(i): keeps option i as a draft to compare or come back to.
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, extra } = {}) {
   const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
+  if (res.adjusted != null) parts.push(h('p', { class: 'muted small' }, res.adjusted
+    ? `Adjusted for results: ${res.adjusted} player${res.adjusted === 1 ? '\'s' : 's\''} numbers moved by how their teams have done against their ratings.`
+    : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`));
   res.options.forEach((opt, i) => {
     const text = opt.teams.map((t, k) => `Team ${k + 1}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
     // Whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
@@ -872,8 +949,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     })) : null;
     paint();
     parts.push(h('section', { class: 'option' },
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
         h('div', { class: 'actions' },
+          onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, 'Save draft'),
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i),
           onSave && h('button', { class: 'sm', onclick: () => onSave(i) }, 'Save for scores'))),
@@ -886,6 +964,74 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
   if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`,
     res.options.some(o => o.teams.some(t => t.players.some(p => p.allGame))) && ` Setters who set all game add their Setting ×${fmt(SETTING_WEIGHT)}, with their receiving at ${ALL_GAME.receiving * 100}% and hitting at ${ALL_GAME.hitting * 100}%.`));
   return parts;
+}
+
+// Who's on the same team again as on a recent game day.
+const AGO = ['last time', 'two game days ago', 'three game days ago'];
+function repeatLine(repeats = [], days) {
+  if (!repeats.length) return h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `No teammates from the last ${days === 1 ? 'game day' : `${days} game days`} together again.`);
+  const shown = repeats.slice(0, 4).map(r => `${firstName(r.a)} & ${firstName(r.b)} (${AGO[r.ago] ?? 'recently'})`).join(', ');
+  return h('p', { class: 'muted small', style: 'margin:2px 0 0', title: repeats.map(r => `${r.a} & ${r.b}: ${AGO[r.ago]}`).join('\n') },
+    `Teammates again: ${shown}${repeats.length > 4 ? `, and ${repeats.length - 4} more` : ''}`);
+}
+
+// ---------- drafts (organizers) ----------
+// Lineups kept to compare or come back to (supabase/club.sql). Returns true once saved.
+async function saveDraft(teams, opts, label) {
+  const name = prompt('Name this draft', `${label} · ${dayTitle(gameDate) || 'no date'}`);
+  if (name == null) return false;
+  try {
+    await q(sb.from('drafts').insert({ name: name.trim() || label, played_on: gameDate || null, teams, raters: opts.raters ?? null,
+      all_game: opts.allGame ?? [], combos: opts.combos ?? [] }));
+    toast('Draft saved');
+    return true;
+  } catch (e) { toast(missing(e) ? 'Drafts need the database upgrade (supabase/club.sql)' : e.message); return false; }
+}
+
+// Set once the drafts table answers (club upgrade), so Save draft only shows when it can work.
+let draftsOk = false;
+// Saved drafts side by side: each one re-checked with today's ratings (gap, what's off, repeat teammates).
+function draftsCard(ownTeams) {
+  const card = h('div', { class: 'card', hidden: true });
+  card.refresh = async () => {
+    let drafts;
+    try { drafts = await q(sb.from('drafts').select('*').order('created_at', { ascending: false }).limit(12)); }
+    catch { card.hidden = true; return; }
+    if (!draftsOk) { draftsOk = true; document.querySelectorAll('.draft-btn').forEach(b => { b.hidden = false; }); }
+    card.hidden = !drafts.length;
+    if (!drafts.length) return card.replaceChildren();
+    const body = h('tbody');
+    const row = d => {
+      const cells = { gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
+      callFn('build-teams', { teams: d.teams, raters: d.raters, allGame: d.all_game, combos: d.combos, useCombos: true, ...buildExtras(), playedOn: d.played_on })
+        .then(res => {
+          const tot = res.options[0].teams.map(t => t.weighted);
+          cells.gap.replaceChildren(h('b', {}, fmt(Math.max(...tot) - Math.min(...tot)))); cells.gap.className = 'num';
+          cells.off.textContent = String(res.problems?.length ?? 0); cells.off.className = 'num';
+          cells.rep.textContent = res.variety ? String(res.options[0].repeats?.length ?? 0) : '–'; cells.rep.className = 'num';
+        }).catch(e => { cells.gap.textContent = '!'; cells.gap.title = e.message; });
+      return h('tr', {},
+        h('td', {}, h('b', {}, d.name), h('div', { class: 'muted small' }, `${d.teams.length} teams of ${d.teams.map(t => t.length).join('/')}${d.played_on ? ` · for ${dayTitle(d.played_on)}` : ''}`)),
+        cells.gap, cells.off, cells.rep,
+        h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
+          h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name) }, 'Open'),
+          h('button', { class: 'ghost sm', 'aria-label': `Delete ${d.name}`, onclick: async () => {
+            if (!confirm(`Delete the draft "${d.name}"?`)) return;
+            try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
+          } }, 'Delete'))));
+    };
+    body.replaceChildren(...drafts.map(row));
+    card.replaceChildren(
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Drafts'),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Lineups you kept, checked again with today\'s ratings and the switches above. Lower gap is more even. Open one to swap, share or save it for scores.'))),
+      h('div', { class: 'scroll' }, stacked(h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Draft'), h('th', { class: 'num', title: 'Strongest team minus weakest' }, 'Gap'), h('th', { class: 'num', title: 'Problems: setters, weak passers bunched, combos…' }, 'Issues'),
+          h('th', { class: 'num', title: 'Pairs who were teammates on a recent game day' }, 'Repeats'), h('th', {}, ''))),
+        body))));
+  };
+  card.refresh();
+  document.addEventListener('drafts', () => { if (card.isConnected) card.refresh(); });
+  return card;
 }
 
 // Playing tonight with no ratings yet: whoever builds picks a stand-in level for each.
@@ -971,10 +1117,12 @@ async function scoresPage() {
   ]);
   const pname = new Map(players.map(p => [p.id, p.name]));
   const body = h('div');
-  const tabs = seg([['games', 'Games'], ['insights', 'Insights']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
+  const tabs = seg([['games', 'Games'], ['insights', 'Insights'], ['attendance', 'Attendance'], ['season', 'Season']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
+  const views = { games: () => gamesView(sessions, players, pname), insights: () => insightsView(sessions, pname),
+    attendance: () => attendanceView(sessions, players, pname), season: () => seasonView(sessions, pname) };
   const draw = async () => {
     body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
-    try { body.replaceChildren(...(scoresTab === 'games' ? await gamesView(sessions, players, pname) : await insightsView(sessions, pname))); }
+    try { body.replaceChildren(...await views[scoresTab]()); }
     catch (e) { body.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
   draw();
@@ -1133,8 +1281,13 @@ async function gamesView(sessions, players, pname) {
     const stored = tags ? await q(sb.from('rallies').select('id,game_id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
     dayRecap.refresh(games.map(g => ({ game: g, rallies: fromRows(stored.filter(r => r.game_id === g.id)) })));
   }
+  // Players see a game day's teams and scores on Lineup only once an organizer turns this on (club upgrade).
+  const publish = 'published' in ses && h('span', { title: 'Show these teams and scores to everyone on the Lineup page' }, toggle('Show to players', ses.published, async v => {
+    try { await q(sb.from('sessions').update({ published: v }).eq('id', ses.id)); ses.published = v; toast(v ? 'Players can see these teams' : 'Hidden from players'); }
+    catch (e) { toast(e.message); return false; }
+  }));
   wrap.append(
-    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), h('span', { class: 'grow' }), games.length ? dayRecap.btn : null, delDay),
+    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), games.length ? dayRecap.btn : null, delDay),
     h('div', { class: 'card' }, entry),
     h('div', { class: 'card' }, teamsBox),
     list);
@@ -1452,15 +1605,111 @@ async function insightsView(sessions, pname) {
   // players who may be rated too low or too high, so organizers don't get it.
   if (me.role === 'super') {
     const ps = playerStats(games, a.k).filter(p => pname.has(p.id)).sort((x, y) => y.over - x.over);
+    const adj = resultAdjustments(games);
     parts.push(h('div', { class: 'card' }, h('h3', {}, 'Players vs their ratings'),
       h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only you see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
-        'High and steady: maybe rated too low. Low: maybe too high. Under 10 games it\'s mostly luck.'),
-      stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Won'), h('th', { class: 'num' }, 'Margin'), h('th', { class: 'num' }, 'Vs ratings'))),
+        'High and steady: maybe rated too low. Low: maybe too high. Under 10 games it\'s mostly luck. ',
+        h('b', {}, 'Adjust'), ` is what Adjust for results on Teams adds to their strength (same scale as a team total; pulled toward 0 for few games${adj.size ? '' : `; starts after ${ADJUST_MIN_GAMES} games`}).`),
+      stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Won'), h('th', { class: 'num' }, 'Margin'), h('th', { class: 'num' }, 'Vs ratings'), h('th', { class: 'num' }, 'Adjust'))),
         h('tbody', {}, ps.map(p => h('tr', { class: p.games < 10 ? 'dim' : null },
-          h('td', {}, pname.get(p.id)), h('td', { class: 'num' }, String(p.games)), h('td', { class: 'num' }, pct(p.wins / p.games)),
-          h('td', { class: 'num' }, plusPts(p.margin)), h('td', { class: 'num' }, h('b', {}, plusPts(p.over))))))))));
+          h('td', {}, profileLink(p.id, pname.get(p.id))), h('td', { class: 'num' }, String(p.games)), h('td', { class: 'num' }, pct(p.wins / p.games)),
+          h('td', { class: 'num' }, plusPts(p.margin)), h('td', { class: 'num' }, h('b', {}, plusPts(p.over))),
+          h('td', { class: 'num' }, adj.has(p.id) ? signed(adj.get(p.id)) : '—'))))))));
   }
   return parts;
+}
+
+// ---------- attendance (organizers) ----------
+// Who comes, how often, and regulars who've stopped coming, from saved game days.
+async function attendanceView(sessions, players, pname) {
+  if (!sessions.length) return [h('div', { class: 'card empty' }, 'No game days saved yet. Attendance comes from the teams saved for scores.')];
+  const games = await q(sb.from('games').select('session_id,players_a,players_b'));
+  const att = attendance(sessions, games, today());
+  const active = new Set(players.filter(p => p.active).map(p => p.id));
+  const rows = [...att.values()].filter(a => pname.has(a.id));
+  const gone = rows.filter(a => a.missing && active.has(a.id)).sort((a, b) => b.total - a.total);
+  let sortKey = 'total';
+  const body = h('tbody');
+  const draw = () => {
+    const by = { total: (a, b) => b.total - a.total, rate: (a, b) => b.rate - a.rate || b.total - a.total, last: (a, b) => b.last.localeCompare(a.last), streak: (a, b) => b.streak - a.streak || b.best - a.best, name: (a, b) => pname.get(a.id).localeCompare(pname.get(b.id)) };
+    body.replaceChildren(...[...rows].sort((a, b) => by[sortKey](a, b) || pname.get(a.id).localeCompare(pname.get(b.id))).map(a => h('tr', {},
+      h('td', {}, profileLink(a.id, pname.get(a.id)), a.missing && active.has(a.id) && ' ', a.missing && active.has(a.id) && h('span', { class: 'badge' }, 'Stopped coming')),
+      h('td', { class: 'num' }, h('b', {}, String(a.total))),
+      h('td', { class: 'num', title: `${a.total} of the ${a.of} game days since their first` }, pct(a.rate)),
+      h('td', { class: 'num' }, `${a.streak}${a.best > a.streak ? ` (best ${a.best})` : ''}`),
+      h('td', {}, dayTitle(a.last)),
+      h('td', {}, h('span', { class: 'dots', 'aria-label': 'Last 10 game days' }, a.history.slice(-10).map(d => h('i', { class: d.came ? 'on' : null, title: `${dayTitle(d.played_on)}: ${d.came ? 'came' : 'missed'}` })))))));
+  };
+  draw();
+  return [
+    h('div', { class: 'tiles' },
+      h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(sessions.length)), h('b', {}, 'Game days')),
+      h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(rows.length)), h('b', {}, 'Players'), h('span', { class: 'muted small' }, 'came at least once')),
+      h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(rows.filter(a => a.rate >= .5 && a.of >= 3 && !a.missing).length)), h('b', {}, 'Regulars'), h('span', { class: 'muted small' }, 'half the game days or more'))),
+    gone.length > 0 && h('div', { class: 'card' }, h('h3', {}, 'Stopped coming'),
+      h('p', { class: 'muted small' }, `Came to at least half the game days before, but none of the last ${REGULAR_GAP}. Maybe worth a message.`),
+      h('div', { class: 'chips' }, gone.map(a => h('span', { class: 'chip plain' }, profileLink(a.id, pname.get(a.id)), h('span', { class: 'muted small' }, ` · last ${dayTitle(a.last)}`))))),
+    h('div', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h3', {}, 'Attendance'),
+        h('label', { class: 'sort' }, h('span', {}, 'Sort by'), h('select', { 'aria-label': 'Sort by', onchange: e => { sortKey = e.target.value; draw(); } },
+          [['total', 'Game days'], ['rate', 'How often'], ['streak', 'In a row'], ['last', 'Last came'], ['name', 'Name']].map(([v, t]) => h('option', { value: v }, t))))),
+      h('p', { class: 'muted small' }, 'From the teams saved for scores (and anyone who played a game that day). ', h('b', {}, 'How often'), ' counts game days since their first. ', h('b', {}, 'In a row'), ' is their current run.'),
+      h('div', { class: 'scroll' }, stacked(h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Game days'), h('th', { class: 'num' }, 'How often'), h('th', { class: 'num' }, 'In a row'), h('th', {}, 'Last came'), h('th', {}, 'Last 10'))),
+        body)))),
+  ].filter(Boolean);
+}
+
+// ---------- season recap (organizers) ----------
+// Awards for a month, a few months or the year, from results (and tagged games), shared as an image.
+let seasonPick = 'month';
+async function seasonView(sessions, pname) {
+  if (!sessions.length) return [h('div', { class: 'card empty' }, 'No game days saved yet.')];
+  const ym = d => d.slice(0, 7);
+  const now = today();
+  const monthName = m => new Date(`${m}-15`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const months = [...new Set(sessions.map(s => ym(s.played_on)))].sort().reverse();
+  const back = n => { const d = new Date(); d.setMonth(d.getMonth() - n); return d.toLocaleDateString('en-CA'); };
+  const periods = [
+    ...months.map(m => [`m:${m}`, monthName(m), s => ym(s.played_on) === m]),
+    ['3m', 'Last 3 months', s => s.played_on >= back(3)],
+    ['year', `${now.slice(0, 4)} so far`, s => s.played_on.startsWith(now.slice(0, 4))],
+    ['all', 'Everything', () => true],
+  ];
+  if (seasonPick === 'month' || !periods.some(p => p[0] === seasonPick)) seasonPick = periods[0][0];
+  const allGames = await q(sb.from('games').select('*').order('created_at'));
+  const out = h('div');
+  const draw = async () => {
+    const [, label, keep] = periods.find(p => p[0] === seasonPick);
+    const ses = sessions.filter(keep);
+    const ids = new Set(ses.map(s => s.id));
+    const games = allGames.filter(g => ids.has(g.session_id));
+    // Tagged games in the period, for kills, aces, blocks and digs (none before the match stats upgrade).
+    const rallies = games.length ? await q(sb.from('rallies').select('game_id,id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
+    const docs = games.map(g => ({ game: g, rallies: fromRows(rallies.filter(r => r.game_id === g.id)) })).filter(d => d.rallies.some(r => r.won));
+    const rec = seasonRecap(ses, games, docs.length ? tally(docs) : null);
+    const names = who => who.map(id => pname.get(id) ?? 'Someone');
+    let blob = null;
+    const ready = seasonImage(rec, { title: label, name: id => pname.get(id) ?? 'Someone' }).then(b => (blob = b));
+    const file = `season-${seasonPick.replace(/[^\w-]/g, '')}.png`;
+    out.replaceChildren(
+      h('div', { class: 'tiles' },
+        h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(rec.days)), h('b', {}, 'Game days')),
+        h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(rec.games)), h('b', {}, 'Games')),
+        h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(rec.players)), h('b', {}, 'Players'))),
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, label), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+          `From results${docs.length ? ` and ${docs.length} tagged game${docs.length === 1 ? '' : 's'}` : ''}; nothing here comes from ratings, so it's fine to share. Best record needs ${MIN_GAMES_FOR_RECORD}+ games.`)),
+          h('button', { class: 'sm', disabled: !rec.games, onclick: async () => sharePng(blob ?? await ready, file) }, 'Share image')),
+        rec.awards.length || rec.closest ? h('ul', { class: 'awards' },
+          rec.awards.map(a => h('li', {}, h('b', {}, a.title), h('span', {}, names(a.who).join(', ')), h('span', { class: 'muted small' }, a.detail))),
+          rec.closest && h('li', {}, h('b', {}, 'Closest game'), h('span', {}, `Team ${rec.closest.team_a} v Team ${rec.closest.team_b}, ${rec.closest.score_a}–${rec.closest.score_b}`), h('span', { class: 'muted small' }, dayTitle(rec.closest.played_on))))
+          : h('p', { class: 'muted' }, 'No games with scores in this stretch yet.')));
+  };
+  const sel = h('select', { 'aria-label': 'Period', onchange: e => { seasonPick = e.target.value; draw().catch(err => out.replaceChildren(h('p', { class: 'warn' }, err.message))); } },
+    periods.map(([v, t]) => h('option', { value: v, selected: v === seasonPick }, t)));
+  await draw();
+  return [h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Recap for'), sel)), out];
 }
 
 // Dots: x = rated gap, y = margin (both from the first team's side). Dashed line: margin = k × gap.
@@ -1519,7 +1768,7 @@ function scatterChart(box, dots, k) {
 async function ratingsPage() {
   const all = me.role === 'super';
   const [players, ratings, profiles] = await Promise.all([
-    q(sb.from('players').select('id,name,playing,tier,setting').eq('active', true).order('name')),
+    q(sb.from('players').select('*').eq('active', true).order('name')), // * so it works before the anchor column exists
     all ? q(sb.from('ratings').select('*')) : q(sb.from('ratings').select('*').eq('rater_id', me.id)),
     all ? q(sb.from('profiles').select('id,display_name')) : [],
   ]);
@@ -1544,6 +1793,9 @@ async function ratingsPage() {
   };
   const hist = historyCard(changeLog, players, ratings, raters, pname, short, all);
   if (!all) hist.draw([me.id]);
+  // Arrived from a profile's "Rating history" link.
+  if (pendingHistory != null && players.some(p => p.id === pendingHistory)) { const id = pendingHistory; setTimeout(() => hist.show(id), 0); }
+  pendingHistory = null;
   if (all) recompute();
   const picker = all ? await raterPicker(ids => {
     sel = ids;
@@ -1599,7 +1851,9 @@ async function ratingsPage() {
     if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
     body.replaceChildren(...rows.map(({ p, vals, key }) => {
       const guess = all && !rid && combined.get(p.id).guess;
-      return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name), p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
+      return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name),
+        all && ' ', all && h('a', { href: `#player/${p.id}`, class: 'profile-link', title: `${p.name}'s profile`, 'aria-label': `${p.name}'s profile` }, '↗'),
+        p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
         guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map((v, i) => h('td', { class: 'num' }, forPlayer(RATED[i], p) ? fmt(v) : '–')),
         h('td', { class: 'num' }, h('b', {}, fmt(key.total))),
         h('td', { class: 'num' }, fmt(key.weighted)),
@@ -1617,8 +1871,29 @@ async function ratingsPage() {
       toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
     hist.el,
+    all && coverageCard(players, ratings, short),
     all && matchStatsCard(players, ratings),
     all && extra);
+}
+
+// Super only: who has been rated by how many people, and how much of the group each rater covers. One rater's view
+// of a player swings the combined number; two or more (with leans taken out) settle it.
+function coverageCard(players, ratings, short) {
+  const by = new Map(players.map(p => [p.id, new Set()]));
+  for (const r of ratings) if (by.has(r.player_id) && SKILLS.some(s => r[s] != null)) by.get(r.player_id).add(r.rater_id);
+  const n = id => by.get(id).size;
+  const buckets = [[0, 'Nobody'], [1, 'One rater'], [2, 'Two'], [3, 'Three or more']].map(([k, label]) => ({ label, count: players.filter(p => k === 3 ? n(p.id) >= 3 : n(p.id) === k).length }));
+  const thin = players.filter(p => n(p.id) < 2).sort((a, b) => (b.playing - a.playing) || n(a.id) - n(b.id) || a.name.localeCompare(b.name));
+  const raters = [...new Set(ratings.map(r => r.rater_id))];
+  const covers = raters.map(rid => ({ rid, n: players.filter(p => by.get(p.id).has(rid)).length })).sort((a, b) => b.n - a.n);
+  const anchors = players.filter(p => p.anchor);
+  return h('div', { class: 'card' }, h('h3', {}, 'Coverage'),
+    h('p', { class: 'muted small' }, 'How many people have rated each player. Players with one rater or none show up on everyone\'s Rate page under ', h('b', {}, 'Worth a fresh look'), '.'),
+    h('div', { class: 'tiles' }, buckets.map(b => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(b.count)), h('b', {}, b.label), h('span', { class: 'muted small' }, 'players')))),
+    thin.length > 0 && h('div', { class: 'chips', style: 'margin:10px 0' }, thin.map(p => h('span', { class: `chip plain${n(p.id) ? '' : ' off'}` }, p.name, h('span', { class: 'muted small' }, ` · ${n(p.id)}`), p.playing && h('span', { class: 'badge on', style: 'margin-left:6px' }, 'Playing')))),
+    h('div', { class: 'scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Rater'), h('th', { class: 'num' }, 'Players rated'), h('th', { class: 'num' }, 'Of the group'), anchors.length > 0 && h('th', { class: 'num' }, 'Anchors rated'))),
+      h('tbody', {}, covers.map(c => h('tr', {}, h('td', {}, short(c.rid)), h('td', { class: 'num' }, String(c.n)), h('td', { class: 'num' }, pct(c.n / players.length)),
+        anchors.length > 0 && h('td', { class: 'num' }, `${anchors.filter(a => by.get(a.id).has(c.rid)).length} of ${anchors.length}`))))))));
 }
 
 // Super only: per-player numbers from tagged games, and SetMe's ratings worked out from them (see statRatings in
@@ -2197,8 +2472,14 @@ function disagreeCard(disagreements, short) {
 }
 
 // ---------- users (super) ----------
+// Accounts, their roles, and (after the club upgrade) which player each one is. Linking is done here by the super,
+// never by the person, so nobody has to find themselves in a list.
 async function usersPage() {
-  const profiles = await q(sb.from('profiles').select('*').order('display_name'));
+  const [profiles, players] = await Promise.all([
+    q(sb.from('profiles').select('*').order('display_name')),
+    q(sb.from('players').select('id,name,active').order('name')),
+  ]);
+  const club = profiles.some(p => 'player_id' in p); // the club upgrade has run
   const linkBox = h('div');
   const showLink = (label, link) => linkBox.replaceChildren(h('div', { class: 'card' },
     h('b', {}, label), h('p', { class: 'link' }, link),
@@ -2206,17 +2487,31 @@ async function usersPage() {
 
   const email = h('input', { type: 'email', placeholder: 'Email', 'aria-label': 'Email' });
   const name = h('input', { type: 'text', placeholder: 'Name', 'aria-label': 'Name' });
+  let inviteRole = club ? 'player' : 'rater';
+  const roleOptions = [...(club ? [['player', 'Player']] : []), ['rater', 'Rater'], ['organizer', 'Organizer']];
   const invite = async e => {
     e.preventDefault();
     try {
-      const { link } = await callFn('admin', { action: 'invite', email: email.value, name: name.value });
-      showLink(`Invite link for ${name.value || email.value}. Send it to them directly; it works once.`, link);
+      const { link } = await callFn('admin', { action: 'invite', email: email.value, name: name.value, role: inviteRole });
+      showLink(`Invite link for ${name.value || email.value} (${inviteRole}). Send it to them directly; it works once.${inviteRole === 'player' ? ' Then link their account to their player below.' : ''}`, link);
       email.value = name.value = '';
     } catch (err) { toast(err.message); }
   };
   const setRole = async (p, role) => {
-    try { await q(sb.from('profiles').update({ role }).eq('id', p.id)); toast('Saved'); }
+    try { await q(sb.from('profiles').update({ role }).eq('id', p.id)); p.role = role; toast('Saved'); }
     catch (err) { toast(err.message); return false; }
+  };
+  const linkPlayer = async (p, sel) => {
+    const v = sel.value ? Number(sel.value) : null;
+    const taken = v && profiles.find(x => x.player_id === v && x.id !== p.id);
+    if (taken && !confirm(`${taken.display_name}'s account is linked to that player. Move the link to ${p.display_name}?`)) { sel.value = p.player_id ?? ''; return; }
+    try {
+      if (taken) { await q(sb.from('profiles').update({ player_id: null }).eq('id', taken.id)); taken.player_id = null; }
+      await q(sb.from('profiles').update({ player_id: v }).eq('id', p.id)); p.player_id = v;
+      toast(v ? 'Linked' : 'Unlinked');
+      if (p.id === me.id) { me.player_id = v; render(); }
+      else if (taken) render();
+    } catch (err) { sel.value = p.player_id ?? ''; toast(err.message); }
   };
   const reset = async p => {
     try { showLink(`Password reset link for ${p.display_name}.`, (await callFn('admin', { action: 'reset', email: p.email })).link); }
@@ -2226,19 +2521,306 @@ async function usersPage() {
     if (!confirm(`Remove ${p.display_name}? Their ratings are deleted too.`)) return;
     try { await callFn('admin', { action: 'remove', id: p.id }); render(); } catch (err) { toast(err.message); }
   };
+  // Player picker: active players first; the account's current player stays listed even if inactive.
+  const playerSelect = p => {
+    const sel = h('select', { 'aria-label': `${p.display_name}'s player` }, h('option', { value: '' }, 'Not linked'),
+      players.filter(x => x.active || x.id === p.player_id).map(x => {
+        const other = profiles.find(o => o.player_id === x.id && o.id !== p.id);
+        return h('option', { value: x.id, selected: x.id === p.player_id }, other ? `${x.name} (linked to ${other.display_name})` : x.name);
+      }));
+    sel.onchange = () => linkPlayer(p, sel);
+    return sel;
+  };
+  const setme = p => p.email === 'setme@setme.invalid';
 
   return h('div', {},
-    pageHead('Users', 'Raters only rate. Organizers also run Players and Teams, but never see ratings.'),
-    h('form', { class: 'card row', onsubmit: invite }, name, email, h('button', {}, 'Create invite link')),
+    pageHead('Users', 'Players sign up and see published teams. Raters also rate. Organizers also run Players, Teams and Scores, but never see ratings.'),
+    h('form', { class: 'card row', onsubmit: invite }, name, email,
+      h('div', { class: 'field' }, h('span', {}, 'As'), seg(roleOptions, inviteRole, v => { inviteRole = v; }, 'Invite as')),
+      h('button', {}, 'Create invite link')),
     linkBox,
+    !club && h('p', { class: 'muted small' }, 'Player accounts, linking accounts to players, and the activity log need the database upgrade: run supabase/club.sql in Supabase.'),
     h('div', { class: 'grid' }, profiles.map(p => h('div', { class: 'card roster-card' },
       h('header', {}, avatar(p.display_name || '?'), h('div', { class: 'grow' }, h('b', {}, p.display_name), h('div', { class: 'muted small' }, p.email))),
       h('div', { class: 'row' },
-        p.role === 'super' ? h('span', { class: 'badge set' }, 'Super') : seg([['rater', 'Rater'], ['organizer', 'Organizer']], p.role, v => setRole(p, v), `${p.display_name} role`),
+        p.role === 'super' ? h('span', { class: 'badge set' }, 'Super') : seg(roleOptions.concat(p.role === 'player' && !club ? [['player', 'Player']] : []), p.role, v => setRole(p, v), `${p.display_name} role`),
         h('span', { class: 'grow' }),
         h('div', { class: 'row', style: 'gap:8px' },
-          h('button', { class: 'ghost sm', onclick: () => reset(p) }, 'Reset link'),
-          p.id !== me.id && h('button', { class: 'danger sm', onclick: () => remove(p) }, 'Remove')))))));
+          !setme(p) && h('button', { class: 'ghost sm', onclick: () => reset(p) }, 'Reset link'),
+          p.id !== me.id && h('button', { class: 'danger sm', onclick: () => remove(p) }, 'Remove'))),
+      club && !setme(p) && h('label', { class: 'field' }, h('span', {}, 'Player'), playerSelect(p))))),
+    backupCard(),
+    club && activityCard(profiles));
 }
+
+// Every table as one JSON file, for safekeeping. Pages through big tables (the API returns 1,000 rows at a time).
+// Tables that don't exist yet (upgrades not run) are listed as skipped.
+const BACKUP_TABLES = ['profiles', 'players', 'ratings', 'rating_history', 'sessions', 'games', 'rallies', 'touches', 'events', 'signups', 'drafts', 'audit_log'];
+function backupCard() {
+  const btn = h('button', { class: 'ghost' }, 'Download backup');
+  const note = h('p', { class: 'muted small' }, 'Everything in SetMe as one JSON file: players, accounts, every rating and its history, game days, scores, tags, sign-ups, drafts and the activity log. It holds everyone\'s ratings, so keep it somewhere private.');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const out = { app: 'SetMe', exported_at: new Date().toISOString(), tables: {}, skipped: [] };
+    try {
+      for (const t of BACKUP_TABLES) {
+        btn.textContent = `Reading ${t.replace('_', ' ')}…`;
+        const rows = [];
+        try {
+          for (let from = 0; ; from += 1000) {
+            const page = await q(sb.from(t).select('*').range(from, from + 999));
+            rows.push(...page);
+            if (page.length < 1000) break;
+          }
+          out.tables[t] = rows;
+        } catch (e) { if (missing(e)) out.skipped.push(t); else throw e; }
+      }
+      downloadFile(JSON.stringify(out, null, 1), `setme-backup-${today()}.json`, 'application/json');
+      const n = Object.values(out.tables).reduce((a, r) => a + r.length, 0);
+      note.textContent = `Downloaded ${n} rows from ${Object.keys(out.tables).length} tables${out.skipped.length ? ` (not set up yet: ${out.skipped.join(', ')})` : ''}.`;
+      sb.from('audit_log').insert({ action: 'backup downloaded', detail: { rows: n } }).then(() => {}, () => {});
+    } catch (e) { toast(`Backup failed: ${e.message}`); }
+    btn.disabled = false; btn.textContent = 'Download backup';
+  };
+  return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h3', {}, 'Backup'), btn), note);
+}
+
+// The activity log, newest first: roles, links, removals, players added or deleted, imports, backups.
+function activityCard(profiles) {
+  const el = h('div', { class: 'card' }, h('h3', {}, 'Activity'), h('p', { class: 'muted' }, 'Loading…'));
+  const who = new Map(profiles.map(p => [p.id, p.display_name]));
+  const say = r => {
+    const d = r.detail ?? {};
+    switch (r.action) {
+      case 'role changed': return `${d.name}: ${d.from} → ${d.to}`;
+      case 'account linked': return d.player ? `${d.name} linked to ${d.player}${d.was ? ` (was ${d.was})` : ''}` : `${d.name} unlinked from ${d.was}`;
+      case 'user removed': return `Removed ${d.name ?? d.email} (${d.role})`;
+      case 'player added': return `Added ${d.name}${d.tier ? ` (${d.tier})` : ''}`;
+      case 'player deleted': return `Deleted ${d.name}`;
+      case 'player renamed': return `Renamed ${d.from} → ${d.to}`;
+      case 'anchor added': return `${d.name} is now an anchor`;
+      case 'anchor removed': return `${d.name} is no longer an anchor`;
+      case 'game day deleted': return `Deleted the game day ${dayTitle(d.played_on)}`;
+      case 'ratings imported': return `Imported ${d.players} players' ratings for ${who.get(d.for) ?? 'another rater'}${d.file ? ` (${d.file})` : ''}`;
+      case 'invite link created': return `Invite link for ${d.email}${d.role ? ` as ${d.role}` : ''}`;
+      case 'reset link created': return `Password reset link for ${d.email}`;
+      case 'backup downloaded': return `Backup downloaded (${d.rows} rows)`;
+      default: return r.action;
+    }
+  };
+  let limit = 40;
+  const load = async () => {
+    try {
+      const rows = await q(sb.from('audit_log').select('*').order('at', { ascending: false }).limit(limit + 1));
+      const when = t => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      el.replaceChildren(h('h3', {}, 'Activity'), h('p', { class: 'muted small' }, 'Changes to accounts and players, imports and backups. Only you see this.'),
+        rows.length ? h('div', { class: 'history' }, rows.slice(0, limit).map(r => h('div', { class: 'history-item' },
+          h('div', { class: 'history-head' }, h('span', {}, say(r), h('span', { class: 'muted' }, ` · ${r.actor ? who.get(r.actor) ?? 'a removed account' : 'SQL editor or system'}`)), h('span', { class: 'muted small' }, when(r.at))))))
+          : h('p', { class: 'muted' }, 'Nothing yet.'),
+        ...(rows.length > limit ? [h('button', { class: 'ghost sm', onclick: () => { limit += 40; load(); } }, 'Show more')] : []));
+    } catch (e) { el.replaceChildren(h('h3', {}, 'Activity'), h('p', { class: 'muted' }, missing(e) ? 'Needs the database upgrade (supabase/club.sql).' : e.message)); }
+  };
+  load();
+  return el;
+}
+
+// ---------- sign up (everyone) ----------
+// Game days people sign up for (supabase/club.sql). The first `cap` sign-ups are in; the rest wait, in order, and move
+// up when someone drops out. Accounts linked to a player (Users page) sign themselves up or out while it's open;
+// organizers add or remove anyone, open and close it, and turn the list into the Playing list.
+async function signupPage() {
+  const organizer = me.role === 'organizer' || me.role === 'super';
+  const head = pageHead('Sign up', organizer ? 'Open a game day, share the site, and turn who\'s in into the Playing list.' : 'Say you\'re coming. If it\'s full you go on the waitlist and move up when someone drops out.');
+  let events, signups, players;
+  try {
+    [events, signups, players] = await Promise.all([
+      q(sb.from('events').select('*').order('played_on')),
+      q(sb.from('signups').select('*').order('created_at')),
+      q(sb.from('players').select('id,name,active').order('name')),
+    ]);
+  } catch (e) { if (missing(e)) return h('div', {}, head, needsUpgrade('Signing up')); throw e; }
+  const pname = new Map(players.map(p => [p.id, p.name]));
+  const mine = me.player_id;
+  const now = today();
+  const upcoming = events.filter(e => e.played_on >= now), past = events.filter(e => e.played_on < now).reverse().slice(0, 4);
+  const act = async (fn, msg) => { try { await fn(); if (msg) toast(msg); render(); } catch (e) { toast(e.message); } };
+
+  const eventCard = ev => {
+    const list = signups.filter(x => x.event_id === ev.id);
+    const ins = list.slice(0, ev.cap), wait = list.slice(ev.cap);
+    const at = list.findIndex(x => x.player_id === mine);
+    const old = ev.played_on < now;
+    const chip = (x, n) => h('span', { class: `chip${x.player_id === mine ? ' me' : ''}${organizer ? '' : ' plain'}` },
+      n != null && h('span', { class: 'muted small' }, `${n}. `), profileLink(x.player_id, pname.get(x.player_id) ?? 'Removed player'),
+      organizer && h('button', { type: 'button', 'aria-label': `Remove ${pname.get(x.player_id)}`, onclick: () => act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', x.player_id))) }, '×'));
+    const status = at < 0 ? null : at < ev.cap ? h('span', { class: 'badge on' }, 'You\'re in') : h('span', { class: 'badge' }, `Waitlist #${at - ev.cap + 1}`);
+    const meBtn = mine && !old && (at < 0
+      ? h('button', { class: 'ball', disabled: !ev.open, onclick: () => act(() => q(sb.from('signups').insert({ event_id: ev.id, player_id: mine })), ins.length >= ev.cap ? 'On the waitlist' : 'You\'re in') }, ins.length >= ev.cap ? 'Join the waitlist' : 'I\'m in')
+      : h('button', { class: 'ghost', disabled: !ev.open, onclick: () => confirm('Drop out of this game day?') && act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', mine)), 'Dropped out') }, 'Drop out'));
+    const add = organizer && h('select', { 'aria-label': 'Add a player' }, h('option', { value: '' }, '+ Add player'),
+      players.filter(p => p.active && !list.some(x => x.player_id === p.id)).map(p => h('option', { value: p.id }, p.name)));
+    if (add) add.onchange = () => add.value && act(() => q(sb.from('signups').insert({ event_id: ev.id, player_id: Number(add.value) })));
+    const capIn = organizer && h('input', { type: 'number', min: 2, max: 200, value: ev.cap, class: 'score-in', 'aria-label': 'Spots' });
+    if (capIn) capIn.onchange = () => { const v = Number(capIn.value); if (!Number.isInteger(v) || v < 2 || v > 200) { capIn.value = ev.cap; return toast('Spots: 2 to 200'); } act(() => q(sb.from('events').update({ cap: v }).eq('id', ev.id)), 'Saved'); };
+    const toPlaying = async () => {
+      if (!confirm(`Make the ${ins.length} people who are in this session's Playing list? Everyone else is unticked.`)) return;
+      act(async () => {
+        await q(sb.from('players').update({ playing: false }).eq('playing', true));
+        if (ins.length) await q(sb.from('players').update({ playing: true, active: true }).in('id', ins.map(x => x.player_id)));
+      }, `${ins.length} players set as playing`);
+    };
+    return h('div', { class: `card${old ? ' dim' : ''}` },
+      h('div', { class: 'card-head' },
+        h('div', {}, h('h3', {}, dayTitle(ev.played_on)), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+          `${ins.length} of ${ev.cap} in${wait.length ? ` · ${wait.length} waiting` : ''}${ev.open ? '' : ' · closed'}`, ev.note ? ` · ${ev.note}` : '')),
+        h('div', { class: 'row' }, status, meBtn)),
+      !ev.open && mine && !old && h('p', { class: 'muted small' }, 'Sign-ups are closed. Message an organizer if something changed.'),
+      h('div', { class: 'chips' }, ins.length ? ins.map(x => chip(x)) : h('span', { class: 'muted small' }, 'Nobody yet.')),
+      wait.length > 0 && h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, 'Waitlist')),
+      wait.length > 0 && h('div', { class: 'chips' }, wait.map((x, n) => chip(x, n + 1))),
+      organizer && h('div', { class: 'row', style: 'margin-top:14px; padding-top:12px; border-top:1px solid var(--line)' },
+        toggle('Open', ev.open, v => act(() => q(sb.from('events').update({ open: v }).eq('id', ev.id)), v ? 'Open for sign-ups' : 'Closed')),
+        h('label', { class: 'row', style: 'gap:6px' }, h('span', { class: 'muted small' }, 'Spots'), capIn),
+        add, h('span', { class: 'grow' }),
+        h('button', { class: 'sm', disabled: !ins.length, onclick: toPlaying }, 'Set as Playing list'),
+        h('button', { class: 'danger sm', onclick: () => confirm(`Delete ${dayTitle(ev.played_on)} and its ${list.length} sign-ups?`) && act(() => q(sb.from('events').delete().eq('id', ev.id)), 'Deleted') }, 'Delete')));
+  };
+
+  const date = h('input', { type: 'date', value: now, 'aria-label': 'Game day' });
+  const cap = h('input', { type: 'number', min: 2, max: 200, value: 24, class: 'score-in', 'aria-label': 'Spots' });
+  const note = h('input', { type: 'text', placeholder: 'Note (time, place…)', 'aria-label': 'Note' });
+  const create = e => {
+    e.preventDefault();
+    if (!date.value) return toast('Pick a date');
+    if (events.some(x => x.played_on === date.value)) return toast('That day is already open');
+    act(() => q(sb.from('events').insert({ played_on: date.value, cap: Number(cap.value) || 24, note: note.value.trim() || null })), 'Sign-ups open');
+  };
+  return h('div', {}, head,
+    !mine && !organizer && h('div', { class: 'card' }, h('p', { style: 'margin:0' }, 'Your account isn\'t linked to a player yet, so you can\'t sign up here. Ask the organizer to link it.')),
+    !mine && organizer && h('p', { class: 'muted small' }, 'To sign yourself up too, have the super link your account to your player on Users.'),
+    organizer && h('form', { class: 'card build-bar', onsubmit: create },
+      h('label', { class: 'field' }, h('span', {}, 'Game day'), date), h('label', { class: 'field' }, h('span', {}, 'Spots'), cap),
+      h('label', { class: 'field grow' }, h('span', {}, 'Note'), note), h('button', { class: 'ball' }, 'Open sign-ups')),
+    upcoming.length ? upcoming.map(eventCard) : h('div', { class: 'card empty' }, organizer ? 'No game days open. Open one above.' : 'No game days open for sign-ups right now.'),
+    organizer && past.length > 0 && h('details', { class: 'card' }, h('summary', {}, h('h3', { style: 'display:inline' }, 'Past game days')), past.map(eventCard)));
+}
+
+// ---------- lineup (players, raters) ----------
+// Game days whose teams an organizer published (Show to players on Scores): the teams and the scores, no numbers.
+async function lineupPage() {
+  const head = pageHead('Lineup', 'Teams for recent game days, once the organizers share them.');
+  let days;
+  try { days = await q(sb.rpc('published_lineups', { p_limit: 5 })); }
+  catch (e) { if (missing(e)) return h('div', {}, head, needsUpgrade('The lineup')); throw e; }
+  if (!days.length) return h('div', {}, head, h('div', { class: 'card empty' }, 'No teams shared yet. Check back on game day.'));
+  return h('div', {}, head, days.map((d, i) => {
+    const teams = d.teams.map(players => ({ players }));
+    let blob = null; const ready = courtImage(teams, { title: dayTitle(d.played_on), colors: TEAM_COLORS }).then(b => (blob = b));
+    const mineAt = teams.findIndex(t => t.players.some(p => p.id === me.player_id));
+    return h('section', { class: 'option' },
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on)),
+        mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on Team ${mineAt + 1}.`)),
+        h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
+      h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
+        h('header', {}, h('h4', {}, `Team ${k + 1}`)),
+        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
+      d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, 'Scores'),
+        h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `Team ${g.team_a} v Team ${g.team_b}`)),
+          h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))),
+      i < days.length - 1 && h('hr', { class: 'sep' }));
+  }));
+}
+
+// ---------- player profile ----------
+// Everything about one player in one place. Organizers and super: anyone; everyone else: the player their account is
+// linked to. Game days and record for all of those; ratings, results against ratings and match stats for the super only.
+async function profilePage(id) {
+  if (!canProfile(id)) return h('div', { class: 'card empty' }, 'You can only see your own profile.');
+  const [player] = await q(sb.from('players').select('*').eq('id', id));
+  if (!player) return h('div', { class: 'card empty' }, 'No such player.');
+  const isSuper = me.role === 'super', organizer = isSuper || me.role === 'organizer';
+  const head = h('div', { class: 'page-head' }, h('div', { class: 'row' }, avatar(player.name, 56),
+    h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
+      player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(' · ') || ' '))));
+  const parts = [head];
+
+  // Game days and games (player_games works for the player themself, organizers and super).
+  let days = null;
+  try { days = await q(sb.rpc('player_games', { p_player: id })); } catch (e) { if (!missing(e)) throw e; }
+  if (!days) parts.push(needsUpgrade('Game days on profiles'));
+  else {
+    const games = days.flatMap(d => d.games);
+    const r = record(games, id);
+    // Organizers can read every game day, so they also get how often and runs; players see their own days.
+    const all = organizer ? await q(sb.from('sessions').select('id,played_on,teams')).catch(() => null) : null;
+    const allGames = organizer && all ? await q(sb.from('games').select('session_id,players_a,players_b')).catch(() => []) : [];
+    const att = all ? attendance(all, allGames, today()).get(id) : null;
+    const tile = (v, label, sub) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, label), sub && h('span', { class: 'muted small' }, sub));
+    parts.push(h('div', { class: 'tiles' },
+      tile(String(days.length), 'Game days', att ? `${pct(att.rate)} since their first` : days.length ? `first ${dayTitle(days[0].played_on)}` : null),
+      tile(r.games ? `${r.wins}–${r.losses}` : '—', 'Record', r.games ? `${pct(r.wins / r.games)} won` : 'no games yet'),
+      tile(String(r.best), 'Best win streak', 'games in a row'),
+      att ? tile(String(att.streak), 'Game days in a row', att.missing ? 'Stopped coming lately' : `best ${att.best}`) : tile(days.length ? dayTitle(days.at(-1).played_on) : '—', 'Last came')));
+    if (att) parts.push(h('div', { class: 'card' }, h('h3', {}, 'Attendance'), h('p', { class: 'muted small' }, 'Every game day since their first, oldest on the left.'),
+      h('span', { class: 'dots big' }, att.history.slice(att.history.findIndex(d => d.came)).map(d => h('i', { class: d.came ? 'on' : null, title: `${dayTitle(d.played_on)}: ${d.came ? 'came' : 'missed'}` })))));
+    const recent = [...days].reverse().slice(0, 8);
+    if (recent.length) parts.push(h('div', { class: 'card' }, h('h3', {}, 'Recent game days'),
+      h('ol', { class: 'game-list' }, recent.map(d => {
+        const res = record(d.games, id);
+        return h('li', {}, h('div', { class: 'grow' }, h('b', {}, dayTitle(d.played_on)), d.team && h('span', { class: 'muted small' }, ` · Team ${d.team}`),
+          h('div', { class: 'muted small' }, d.games.map(g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return `${us > them ? 'W' : 'L'} ${us}–${them}`; }).join(' · ') || 'No games entered')),
+          res.games > 0 && h('span', { class: 'game-score' }, `${res.wins}–${res.losses}`));
+      }))));
+  }
+
+  // Sign-ups ahead.
+  const ev = await q(sb.from('events').select('id,played_on,cap').gte('played_on', today()).order('played_on')).catch(() => null);
+  if (ev?.length) {
+    const sg = await q(sb.from('signups').select('event_id,player_id,created_at').in('event_id', ev.map(e => e.id)).order('created_at')).catch(() => []);
+    const lines = ev.map(e => { const list = sg.filter(x => x.event_id === e.id); const at = list.findIndex(x => x.player_id === id);
+      return at < 0 ? null : h('li', {}, h('b', {}, dayTitle(e.played_on)), ' · ', at < e.cap ? 'in' : `waitlist #${at - e.cap + 1}`); }).filter(Boolean);
+    parts.push(h('div', { class: 'card' }, h('h3', {}, 'Signed up for'), lines.length ? h('ul', {}, lines) : h('p', { class: 'muted' }, 'Nothing coming up.', id === me.player_id ? [' ', h('a', { href: '#signup' }, 'Sign up')] : [])));
+  }
+
+  // Super only: ratings, results against ratings, match stats.
+  if (isSuper) {
+    const [players, ratings, profiles, games] = await Promise.all([
+      q(sb.from('players').select('id,name,tier,setting').eq('active', true)),
+      q(sb.from('ratings').select('*')),
+      q(sb.from('profiles').select('id,display_name')),
+      q(sb.from('games').select('*')).catch(() => []),
+    ]);
+    const rn = new Map(profiles.map(p => [p.id, p.display_name]));
+    const { combined } = combineRatings(players, ratings);
+    const c = combined.get(id);
+    const mineR = ratings.filter(r => r.player_id === id);
+    if (c) {
+      const adj = resultAdjustments(games).get(id);
+      const a = analyze(games), st = a.n ? playerStats(games, a.k).find(p => p.id === id) : null;
+      const row = (label, vals, extra) => h('tr', {}, h('td', {}, label), RATED.map((s, i) => h('td', { class: 'num' }, forPlayer(s, player) ? fmt(vals[i]) : '–')), h('td', { class: 'num' }, extra));
+      parts.push(h('div', { class: 'card' }, h('h3', {}, 'Ratings'), h('p', { class: 'muted small' }, 'Only you see this. Combined has each rater\'s lean taken out.',
+        c.guess ? ` Nobody has rated them, so the ${c.guess} stand-in level is used.` : ''),
+        h('div', { class: 'scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, ''), RATED.map(s => h('th', { class: 'num' }, SHORT[s])), h('th', { class: 'num' }, 'Weighted'))),
+          h('tbody', {}, row(h('b', {}, 'Combined'), RATED.map(s => c.skills[s]), h('b', {}, fmt(weightedTotal(c.skills)))),
+            mineR.map(r => { const v = RATED.map(s => r[s] == null ? null : Number(r[s])); const known = SKILLS.every(s => r[s] != null);
+              return row(rn.get(r.rater_id) ?? 'Removed rater', v, known ? fmt(weightedTotal(Object.fromEntries(SKILLS.map(s => [s, Number(r[s])])))) : 'U'); }))))),
+        st && h('p', { class: 'small' }, h('b', {}, 'Against their ratings: '), `${plusPts(st.over)} points a game over ${st.games} games`,
+          adj != null ? ` · Adjust for results adds ${signed(adj)}` : ''),
+        h('p', { class: 'small' }, h('a', { href: '#ratings', onclick: () => { pendingHistory = id; } }, 'Rating history →'))));
+    }
+    const statRow = await q(sb.from('player_stats').select('*').eq('player_id', id)).catch(() => []);
+    if (statRow.length) {
+      const m = metrics(tallyFromCounts(statRow).get(id));
+      const num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
+      parts.push(h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted small' }, `From ${m.games} tagged game${m.games === 1 ? '' : 's'}. Only you see these.`),
+        h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `${m.serves} serves`], [num(m.passAvg), 'Pass average', `${m.passes} passes, 0–3`],
+          [pct(m.killRate), 'Kills', `${m.attacks} attacks`], [num(m.attackEff), 'Attack efficiency', 'kills − errors − blocked'],
+          [num(m.stuffsPerGame), 'Blocks a game'], [num(m.digsPerGame), 'Digs a game']].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))))));
+    }
+  }
+  return h('div', {}, parts);
+}
+// Set by a profile's "Rating history" link: the All ratings page opens that player's history.
+let pendingHistory = null;
 
 boot();

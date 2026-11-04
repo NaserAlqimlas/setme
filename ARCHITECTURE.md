@@ -43,11 +43,15 @@ site/
   js/recapimg.mjs       draws the game / game-day recap PNG (results and a box score per team)
   js/scores.mjs         game margins, rotation, insights and weight fitting for the Scores page
   js/stats.mjs          match stats: tagging helpers, tallies, SetMe's ratings from stats
+  js/club.mjs           attendance, a player's record, season awards (results only)
+  js/seasonimg.mjs      draws the season recap PNG
 netlify/
   lib/supabase.mjs      server helpers: REST/admin calls with the secret key, caller(req) -> {id, role}
   functions/build-teams.mjs
   functions/admin.mjs
-supabase/schema.sql     tables, triggers, RLS policies (scores.sql: upgrade adding sessions and games)
+  functions/rate-queue.mjs   ids of players worth a fresh look on Rate (results off, few raters, anchors)
+supabase/schema.sql     tables, triggers, RLS policies (scores.sql: upgrade adding sessions and games;
+                        club.sql: player role, sign-ups, drafts, anchors, activity log)
 tools/make_seed.py      vb_skill.md -> private/ seed SQL + test fixture
 tests/                  node scripts, no framework
 ```
@@ -67,6 +71,16 @@ tests/                  node scripts, no framework
 | `touches` | rally_id, seq, player_id, action, grade, video_t | One per touch. `action` in serve, pass, set, attack, block, dig; `grade` 0–3 (see `ACTIONS` in stats.mjs). Cascades from rallies and players. |
 | `games.video_kind`, `video_ref` | 'file' + file name, or 'youtube' + video id | Which video the tags were made from. The video itself is never uploaded. |
 | views `player_stats`, `tagged_games` | | One row per player: games played (tagged games with a finished rally) and `<action>_<grade>` counts. Security invoker, so the table policies apply. |
+
+| `profiles.player_id` | player id, unique | Which player an account is. Set only by the super on Users. `my_player()` reads it for policies. |
+| `players.anchor` | boolean | Anchor players every rater rates first. |
+| `events` | played_on (unique), cap, open, note | A game day open for sign-ups. Everyone reads; organizers write. |
+| `signups` | event_id, player_id, added_by, created_at | First `cap` by created_at are in, the rest wait. Linked accounts add or remove their own player while the event is open; organizers anyone, any time. |
+| `sessions.published` | boolean | Teams and scores shown on Lineup through `published_lineups()` (security definer, names only). |
+| `drafts` | name, played_on, teams, raters, all_game, combos | Kept lineups. Organizers and super. |
+| `audit_log` | at, actor, action, detail | Written by triggers on profiles, players and sessions, by `admin.mjs`, and by the super's browser for imports and backups. Super reads. |
+
+`player_games(id)` (security definer) returns a player's game days and games to that player, organizers and super; a player doesn't see their team on a day that isn't published. Players can't insert or update rating rows.
 
 Combos (play together / keep apart) are **not stored**. The Teams page keeps them in memory and sends them with each build.
 
@@ -92,7 +106,10 @@ Combos (play together / keep apart) are **not stored**. The Teams page keeps the
 | Players | organizer, super | `players` (update; super insert/delete) |
 | Teams | organizer, super | `build-teams` function |
 | Scores | organizer, super | `sessions`, `games`, `build-teams` (`predict`); insights worked out in the browser with `scores.mjs`, player rows for super only. Tag (per game): `rallies`, `touches`, `save_game_tags` |
-| Users | super | `profiles`, `admin` function |
+| Users | super | `profiles`, `admin` function, `audit_log`, every table for Backup |
+| Sign up | everyone (after club.sql) | `events`, `signups`, `players` |
+| Lineup | player, rater (after club.sql) | `published_lineups()` |
+| Profile (`#player/ID`) | organizer, super: anyone; others: their linked player | `player_games()`, `events`, `signups`; super also `ratings`, `games`, `player_stats` |
 
 UI helpers at the top of app.js: `h()` builds elements, `seg()` is the pick-one button row, `toggle()` the switch, `stacked()` turns tables into cards on phones, `toast()`.
 
@@ -116,6 +133,10 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
 
 `weightedTotal` = receiving × 1.5 + hitting × 1.25 + serve × 1 + hustle × .75 + blocking × .5. Consistency is **not** part of strength.
 
+New raters: in step 2 a rater whose lean isn't fitted yet for a skill (fewer than 5 shared ratings) counts `UNCALIBRATED_WEIGHT` (.5) next to fitted raters, once anyone's lean is fitted for that skill.
+
+Adjust for results (`resultAdjustments` in scores.mjs, `adjustSkills` in teams.mjs): each player's "vs ratings" points per game ÷ k (points per 1.0 of gap), shrunk by games ÷ (games + 15), capped at ±.75, after 15 scored games; added evenly across the five skills so the weighted total moves by exactly that. Never used for `predict`.
+
 ### 3. Building: `buildTeams({ players, skills, combos, apart, numTeams, … })`
 
 - **Units.** Together-combos are merged (union-find) into units that always move as one. A keep-apart pair inside one unit is an error.
@@ -133,6 +154,7 @@ Returns `combined` (per-player skills, guess), `offsets` (leans), `raters` (shar
   | Women more than 1 apart between teams | 100 per extra |
   | Weak passers, unrated players, inconsistent players bunched | 20 per extra beyond 1, plus a small squared term |
   | Keep-apart pair on the same team | 100 |
+  | Pair who were teammates on a recent game day (Mix up teammates) | 1 last game day, .5 the one before, .25 the one before that (`VARIETY`) |
 
 - **Search.** Random restarts (up to 3,000, 7-second budget on the server), each improved by swapping equal-size units between teams and swapping a combo for the same number of single players, until no swap helps. Seeded random (mulberry32); with the time limit, results can differ slightly between runs.
 - **Options.** The best distinct lineups, up to 3, each at least 4 player moves away from the others.

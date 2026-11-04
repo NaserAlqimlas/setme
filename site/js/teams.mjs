@@ -14,6 +14,12 @@ export const ALL_GAME = { receiving: .5, hitting: .25 };
 // Stand-in levels for players nobody has rated: the group's lower quartile, average and upper quartile.
 export const TIERS = ['beginner', 'average', 'strong'];
 const MIN_RATINGS_FOR_OFFSET = 5; // a rater needs this many shared ratings in a skill before we adjust for them
+// Until then (once anyone else's lean is known), their ratings count this much next to calibrated raters' ones.
+// Anchor players (players.anchor) are the quickest way to get there: everyone rates them.
+export const UNCALIBRATED_WEIGHT = .5;
+// Teammate variety: what each pair of players who were on the same team last time costs a new lineup, for the
+// last game day, the one before, and the one before that. Small next to balance, so it only picks between near-equal splits.
+export const VARIETY = [1, .5, .25];
 
 // Combine every rater's ratings into one value per player per skill.
 // Each rating is treated as the player's level plus the rater's lean (some rate high, some low). Leans are
@@ -61,11 +67,14 @@ export function combineRatings(players, ratings) {
   }
 
   const combined = new Map();
+  // A rater whose lean isn't known yet counts for less, but only once someone's lean is known for that skill.
+  const anyFitted = Object.fromEntries(RATED.map(s => [s, raterIds.some(id => raters.get(id).applied[s])]));
+  const weight = (rid, s) => !anyFitted[s] || raters.get(rid)?.applied[s] ? 1 : UNCALIBRATED_WEIGHT;
   for (const [pid, rs] of byPlayer) {
     const v = {}, unknown = [];
     for (const s of RATED) {
-      const vals = rs.filter(r => r[s] != null).map(r => clamp(Number(r[s]) - (offsets.get(r.rater_id)?.[s] ?? 0)));
-      v[s] = vals.length ? avg(vals) : null;
+      const vals = rs.filter(r => r[s] != null).map(r => [clamp(Number(r[s]) - (offsets.get(r.rater_id)?.[s] ?? 0)), weight(r.rater_id, s)]);
+      v[s] = vals.length ? vals.reduce((a, [x, w]) => a + x * w, 0) / vals.reduce((a, [, w]) => a + w, 0) : null;
       if (!vals.length) unknown.push(s);
     }
     combined.set(pid, { skills: v, unknown, raters: rs.length });
@@ -133,12 +142,35 @@ export function teamSkills(players, combined, allGame) {
       setEff: sk.setting_skill ?? avgSet, allGame: true }];
   }));
 }
+// Skills shifted by how a player's teams have done against the ratings (resultAdjustments in scores.mjs): adj[id] is
+// in strength units, spread evenly over the five skills so the weighted total moves by exactly that much.
+export function adjustSkills(combined, adj) {
+  const W = SKILLS.reduce((a, s) => a + WEIGHTS[s], 0);
+  for (const [id, a] of adj) {
+    const c = combined.get(id);
+    if (!c || !a) continue;
+    c.skills = { ...c.skills, ...Object.fromEntries(SKILLS.map(s => [s, c.skills[s] + a / W])) };
+  }
+  return combined;
+}
+
+// Serving order (and so the rotation) for a team listed setter first, then backups, then strongest to weakest (as
+// describeTeam lists them): the setter serves first, then strong and weak players take turns, so no stretch of the
+// rotation has the weakest players side by side.
+export function servingOrder(players) {
+  const setters = players.filter(p => p.setting === 'M'), rest = players.filter(p => p.setting !== 'M');
+  const out = [...setters];
+  for (let i = 0, j = rest.length - 1; i <= j; i++, j--) { out.push(rest[i]); if (i !== j) out.push(rest[j]); }
+  return out;
+}
+
 // Weak passer: receiving .25 or below, unless they set all game (they're kept out of serve receive).
 const weakPasser = sk => !sk.allGame && sk.receiving <= .25;
 
 // players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N', unrated?: bool}], skills: Map id -> {receiving..}
 // combos: [[idA, idB]] play together; apart: [[idA, idB]] must not share a team. Pairs with someone not in `players` are skipped.
-export function buildTeams({ players, skills, combos = [], apart = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
+// history: recent game days' teams, newest first ([[[id, ...], ...], ...]); pairs who were teammates cost VARIETY each.
+export function buildTeams({ players, skills, combos = [], apart = [], history = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
   const n = players.length, T = numTeams;
   if (n < T || n % T) throw new Error(`${n} players can't be split into ${T} equal teams`);
   const size = n / T;
@@ -147,7 +179,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
   // Keep-apart pairs: each gets its own field, 1 for both players, so a team scoring 2 on it has the pair together.
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
 
-  const { F, feat, cost: scoreAgg } = makeScorer(players, skills, apartUsed, T);
+  const { F, feat, cost: scoreAgg } = makeScorer(players, skills, apartUsed, T, history);
 
   // Combos lock players into units that always move together.
   const parent = players.map((_, i) => i);
@@ -259,14 +291,17 @@ export function buildTeams({ players, skills, combos = [], apart = [], numTeams 
 
 // Per-player features and the score of a split (lower is better), shared by buildTeams and suggestSwaps.
 // Fields per player/team: 5 weighted skills, weighted setting (all-game setters only), main setters, backup setters,
-// women, weak passers, unrated players, inconsistent players, then one per keep-apart pair. The first NSK fields make
-// up a team's strength. cost(agg) reads the per-team sums of those fields (T * F).
-function makeScorer(players, skills, apartUsed, T) {
-  const NSK = 6, MAIN = 6, BACK = 7, WOMEN = 8, WEAK = 9, GUESS = 10, SHAKY = 11, BASE = 12, F = BASE + apartUsed.length;
+// women, weak passers, unrated players, inconsistent players, then one per keep-apart pair, then one per team of each
+// recent game day (history): 1 if the player was on that team, so a team summing to c on it has c(c-1)/2 old
+// teammate pairs. The first NSK fields make up a team's strength. cost(agg) reads the per-team sums (T * F).
+function makeScorer(players, skills, apartUsed, T, history = []) {
+  const NSK = 6, MAIN = 6, BACK = 7, WOMEN = 8, WEAK = 9, GUESS = 10, SHAKY = 11, BASE = 12, HB = BASE + apartUsed.length;
+  const past = history.slice(0, VARIETY.length).flatMap((teams, s) => (teams ?? []).map(t => ({ w: VARIETY[s], ids: new Set(t) })));
+  const F = HB + past.length;
   const feat = players.map(p => {
     const sk = skills.get(p.id);
     return [...SKILLS.map(s => sk[s] * WEIGHTS[s]), (sk.setEff ?? 0) * SETTING_WEIGHT, +(p.setting === 'M'), +(p.setting === 'B'), +(p.gender === 'F'), +weakPasser(sk), +!!p.unrated, +((sk.consistency ?? .5) <= .25),
-      ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b))];
+      ...apartUsed.map(([a, b]) => +(p.id === a || p.id === b)), ...past.map(h => +h.ids.has(p.id))];
   });
 
   const tot = new Float64Array(T);
@@ -306,7 +341,8 @@ function makeScorer(players, skills, apartUsed, T) {
     // Inconsistent players (consistency .25 or less) too, so no team leans on several on the same night.
     const sh = Math.round(shHi - shLo);
     c += 20 * Math.max(0, sh - 1) + .5 * sh * sh;
-    for (let t = 0; t < T; t++) for (let f = BASE; f < F; f++) if (agg[t * F + f] > 1.5) c += 100;
+    for (let t = 0; t < T; t++) for (let f = BASE; f < HB; f++) if (agg[t * F + f] > 1.5) c += 100;
+    for (let t = 0; t < T; t++) for (let i = 0; i < past.length; i++) { const a = Math.round(agg[t * F + HB + i]); if (a > 1) c += past[i].w * a * (a - 1) / 2; }
     return c;
   }
 
@@ -323,6 +359,16 @@ export function describeTeam(members, skills) {
     sums,
     weighted: ps.reduce((a, p) => a + strength(skills.get(p.id)), 0),
   };
+}
+
+// Pairs on the same team now who were also teammates on a recent game day: [{ a, b, ago }] (ago 0 = last game day).
+export function repeatPairs(teams, history = []) {
+  const out = [];
+  for (const t of teams) for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) {
+    const ago = history.slice(0, VARIETY.length).findIndex(day => (day ?? []).some(old => old.includes(t[i]) && old.includes(t[j])));
+    if (ago >= 0) out.push({ a: t[i], b: t[j], ago });
+  }
+  return out;
 }
 
 // Fewest players that must change teams to turn lineup a into lineup b.
@@ -404,14 +450,14 @@ export function teamProblems(teams, skills, apart = [], together = []) {
 // locked players never move, a "together" pair that's already on one team is never split, and fewer together pairs
 // on different teams always beats better balance (combos are a rule in buildTeams too), so reuniting swaps come first.
 // -> [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double if it beats them.
-export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], top = 3 }) {
+export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], history = [], top = 3 }) {
   const T = teams.length, byId = new Map(players.map(p => [p.id, p]));
   const members = teams.map(t => t.map(id => byId.get(id)));
   const flat = members.flat();
   const idx = new Map(flat.map((p, i) => [p.id, i]));
   const teamOf = new Map(); teams.forEach((t, k) => t.forEach(id => teamOf.set(id, k)));
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
-  const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T);
+  const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T, history);
   const fixed = new Set(locked);
   for (const [a, b] of combos) if (teamOf.has(a) && teamOf.get(a) === teamOf.get(b)) { fixed.add(a); fixed.add(b); }
   const split = combos.filter(([a, b]) => teamOf.has(a) && teamOf.has(b) && teamOf.get(a) !== teamOf.get(b));

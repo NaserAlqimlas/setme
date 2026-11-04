@@ -8,15 +8,26 @@
 // POST { predict: true, teams } returns only each team's numbers ({ teams: [{ weighted, sums, size, women, setters, unrated }] }),
 // stored with a game's score on the Scores page. Team totals only, like everything organizers get.
 // Organizers get team numbers, combined and per rater (byRater). Player-level ratings never leave the server for organizers.
-import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps } from '../../site/js/teams.mjs';
+// variety (default on): the last game days' teams before playedOn (sessions) are passed to the builder so the same
+// teammates don't keep landing together; each option lists its repeat pairs (names only, nothing from ratings).
+// resultsAdjust: shift each player's numbers by how their teams have done against the ratings (resultAdjustments in
+// scores.mjs) before building or checking. Never used for predict, so stored predictions stay ratings-only.
+import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps, adjustSkills, repeatPairs, VARIETY } from '../../site/js/teams.mjs';
+import { resultAdjustments } from '../../site/js/scores.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
+
+// Recent game days' teams, newest first, before `day` when given. [] before the scores upgrade.
+async function recentTeams(day) {
+  const rows = await rest(`sessions?select=played_on,teams&order=played_on.desc&limit=${VARIETY.length + 1}${day ? `&played_on=lt.${encodeURIComponent(day)}` : ''}`).catch(() => []);
+  return rows.slice(0, VARIETY.length).map(r => (Array.isArray(r.teams) ? r.teams : []).map(t => (Array.isArray(t) ? t : []).filter(Number.isInteger)));
+}
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false } = await req.json().catch(() => ({}));
   const [players, ratings] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
@@ -33,6 +44,15 @@ export default async (req) => {
     .filter(c => Number.isInteger(c?.player_a) && Number.isInteger(c?.player_b) && c.player_a !== c.player_b)
     .map(c => ({ player_a: c.player_a, player_b: c.player_b, kind: c.kind === 'apart' ? 'apart' : 'together' }));
   const { combined } = combineRatings(players, pick ? ratings.filter(r => pick.has(r.rater_id)) : ratings);
+  // Results-adjusted numbers (not for predictions, which must stay what the ratings alone said).
+  let adjusted = 0;
+  if (resultsAdjust && !predict) {
+    const adj = resultAdjustments(await rest('games?select=session_id,players_a,players_b,score_a,score_b,predicted').catch(() => []));
+    adjustSkills(combined, adj);
+    adjusted = [...adj.values()].filter(v => Math.abs(v) >= .005).length;
+  }
+  const day = typeof playedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(playedOn) ? playedOn : null;
+  const history = variety && !predict ? await recentTeams(day) : [];
   const playing = players.filter(p => p.playing).map(p => ({ ...p, unrated: !!combined.get(p.id).guess }));
   if (check) return json({ unrated: playing.filter(p => p.unrated).map(({ id, name }) => ({ id, name, tier: combined.get(id).guess })) });
   // Setters who set all game (picked on the Teams page; main setters if not sent): see teamSkills.
@@ -76,7 +96,7 @@ export default async (req) => {
     const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + strength(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
     result.suggestRater = solo ? suggestRater : null;
     const before = teamProblems(asPlayers(kept), sk, apart, together);
-    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart,
+    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart, history,
       locked: (Array.isArray(locked) ? locked : []).filter(id => byId.has(id)) });
     result.problems = before;
     result.suggestions = suggestions.map(sg => {
@@ -94,6 +114,7 @@ export default async (req) => {
       players: playing, skills, numTeams: Number(numTeams),
       combos: useCombos ? pairs.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [],
       apart: useCombos ? pairs.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [],
+      history,
       timeBudgetMs: 7000,
     });
   } catch (e) {
@@ -121,6 +142,13 @@ export default async (req) => {
       }));
     }
   }
+  // Pairs who were teammates on a recent game day, per option (ago 0 = the last one).
+  const pname = new Map(players.map(p => [p.id, p.name]));
+  for (const opt of result.options) {
+    opt.repeats = repeatPairs(opt.teams.map(t => t.players.map(p => p.id)), history).map(r => ({ a: pname.get(r.a), b: pname.get(r.b), ago: r.ago }));
+  }
+  result.variety = history.length;
+  result.adjusted = resultsAdjust ? adjusted : null;
   if (me.role !== 'super') {
     // Organizers see team numbers (combined or one rater's, per team) but never a single player's ratings.
     for (const opt of result.options) for (const t of opt.teams) t.players = t.players.map(({ id, name, setting, allGame }) => ({ id, name, setting, allGame }));

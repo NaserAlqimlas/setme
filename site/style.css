@@ -440,3 +440,25 @@ button.tag-grade.lost { border-color: var(--danger); background: color-mix(in sr
   .tag-players { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
 }
 .seg[hidden] { display: none; }
+
+/* ---------- club: sign-ups, lineup, profiles, attendance, season ---------- */
+.chip.me { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--surface-2)); }
+.chip a.name-link, .chip .name-link { font-weight: 600; }
+.card.dim { opacity: .75; }
+.team.mine { box-shadow: 0 0 0 2px var(--tc); }
+hr.sep { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.profile-link { color: var(--muted); text-decoration: none; font-size: .85rem; padding: 0 2px; }
+.profile-link:hover { color: var(--primary); }
+a.name-link.small { font-size: .85rem; font-weight: 600; }
+.page-head .row h2 { overflow-wrap: anywhere; }
+/* attendance: one dot per game day, filled when they came */
+.dots { display: inline-flex; flex-wrap: wrap; gap: 3px; vertical-align: middle; }
+.dots i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--line-strong); }
+.dots i.on { background: var(--ok); border-color: var(--ok); }
+.dots.big { gap: 5px; margin-top: 4px; }
+.dots.big i { width: 14px; height: 14px; }
+/* season awards */
+.awards { list-style: none; margin: 0; padding: 0; }
+.awards li { display: grid; grid-template-columns: minmax(0, 11em) minmax(0, 1fr) auto; gap: 4px 14px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); }
+.awards li:first-child { border-top: 0; }
+@media (max-width: 560px) { .awards li { grid-template-columns: 1fr auto; } .awards li > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; } }
