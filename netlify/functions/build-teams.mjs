@@ -102,6 +102,15 @@ export default async (req) => {
     if (sizes.size > 1) result.warnings.push(`Teams aren't the same size (${teams.map(t => t.players.length).join(', ')} players).`);
     const unratedOwn = flat.map(id => byId.get(id)).filter(p => p.unrated).map(p => `${p.name} (${combined.get(p.id).guess})`);
     if (unratedOwn.length) result.warnings.push(`No ratings yet for ${unratedOwn.join(', ')}.`);
+    // Against the playing list (once one is set): who's on a team but not playing, and who's playing but on no team.
+    if (playing.length) {
+      const on = new Set(flat);
+      const out = flat.map(id => byId.get(id)).filter(p => !p.playing).map(({ id, name }) => ({ id, name }));
+      const bench = playing.filter(p => !on.has(p.id)).map(({ id, name }) => ({ id, name }));
+      result.offList = { out, bench };
+      if (out.length) result.warnings.push(`Not on the playing list: ${out.map(p => p.name).join(', ')}. Tap them to replace them.`);
+      if (bench.length) result.warnings.push(`Playing but on no team: ${bench.map(p => p.name).join(', ')}.`);
+    }
 
     // What's off, and the smallest swaps that improve it.
     const kept = ids.filter(t => t.length);

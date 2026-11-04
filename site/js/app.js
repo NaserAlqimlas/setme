@@ -658,7 +658,7 @@ async function teamsPage() {
   // Built options on screen. Once you swap someone in an option it's checked like Your own teams (same numbers, problems,
   // suggestions, locks); the earlier version is kept for Undo. The raters and setters it was built with stay.
   // Per option i: checked[i] = the last check's response, undos[i] = earlier [option, check] pairs, locks[i] = locked ids.
-  let built = null, builtWith = null, view = null;
+  let built = null, builtWith = null, view = null, pool = null;
   let checked = [], undos = [], locks = [];
   const ids = i => built.options[i].teams.map(t => t.players.map(p => p.id));
   const check = async (i, teams) => {
@@ -672,7 +672,7 @@ async function teamsPage() {
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
   const draw = () => out.replaceChildren(...showTeams(built, {
-    view, onSwap: edit,
+    view, onSwap: edit, pool,
     onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
     onDraft: i => saveDraft(ids(i), builtWith, `Option ${i + 1}${checked[i] ? ' (swapped)' : ''}`).then(ok => ok && document.dispatchEvent(new Event('drafts'))),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
@@ -687,7 +687,7 @@ async function teamsPage() {
     btn.disabled = true; btn.textContent = 'Building…';
     try {
       builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
-      built = await callFn('build-teams', { numTeams, ...builtWith });
+      [built, pool] = await Promise.all([callFn('build-teams', { numTeams, ...builtWith }), ownTeams.roster().catch(() => null)]);
       checked = []; undos = []; locks = []; view = null;
       draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -719,7 +719,7 @@ async function teamsPage() {
 // Teams you made yourself: paste them or upload a text/CSV file, then see the same numbers and sharing as a built option.
 function ownTeamsCard(out, getOptions) {
   let players = null;
-  const roster = () => players ??= q(sb.from('players').select('id,name,setting').eq('active', true).order('name'));
+  const roster = () => players ??= q(sb.from('players').select('id,name,setting,playing').eq('active', true).order('name'));
   const box = h('textarea', { rows: 5, 'aria-label': 'Your teams',
     placeholder: 'Team 1: Reem, Mishal, HQ\nTeam 2: Fuwaires, Nasser, Adi\n\nOr a "Team" line then one name per line.' });
   const fileInput = h('input', { type: 'file', accept: '.txt,.csv,text/plain,text/csv', hidden: true });
@@ -769,14 +769,20 @@ function ownTeamsCard(out, getOptions) {
     const onSwap = (_, teams) => { history.push(current); current = teams; run().catch(e => { current = history.pop(); toast(e.message); run().catch(() => {}); }); };
     const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
     const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, card.title ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
-    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, extra: suggestionsPanel(res, {
+    const onUpdateDraft = card.draftId != null && (async () => {
+      try {
+        await q(sb.from('drafts').update({ teams: current, raters: opts.raters ?? null, all_game: allGameIds(await roster()), combos: opts.combos ?? [] }).eq('id', card.draftId));
+        toast('Draft updated'); document.dispatchEvent(new Event('drafts'));
+      } catch (e) { toast(e.message); }
+    });
+    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), extra: suggestionsPanel(res, {
       onApply: sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); },
       onUndo: history.length > 0 && (() => { current = history.pop(); run().catch(e => toast(e.message)); }),
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   check.onclick = async () => {
-    card.title = null;
+    card.title = null; card.draftId = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
     history = []; locked.clear();
     check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
@@ -796,11 +802,12 @@ function ownTeamsCard(out, getOptions) {
   // Ratings from changed at the top: re-check teams already on screen.
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
-  card.load = async (teams, title) => {
-    current = teams; history = []; locked.clear(); card.title = title;
+  card.load = async (teams, title, draftId = null) => {
+    current = teams; history = []; locked.clear(); card.title = title; card.draftId = draftId;
     try { await run({ scroll: true }); } catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
   document.addEventListener('setterplan', () => card.refresh());
+  card.roster = roster;
   return card;
 }
 
@@ -895,8 +902,9 @@ function setterBadge(p, onSetter) {
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
 // onSave(i): saves option i as the game day's teams for the Scores page.
-// onDraft(i): keeps option i as a draft to compare or come back to.
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, extra } = {}) {
+// onDraft(i): keeps option i as a draft to compare or come back to; onUpdateDraft(i) saves it over the draft it came from.
+// pool: active players ({ id, name, playing }) to replace someone with (tap them, then Replace with); goes through onSwap.
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool, extra } = {}) {
   const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   if (res.adjusted != null) parts.push(h('p', { class: 'muted small' }, res.adjusted
@@ -913,6 +921,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const grid = h('div', { class: 'team-grid' });
     const guessNote = h('p', { class: 'muted small', hidden: true });
     const lk = typeof locked === 'function' ? locked(i) : locked;
+    // On a team but not on the playing list (only known once a playing list is set).
+    const playingIds = pool?.some(p => p.playing) ? new Set(pool.filter(p => p.playing).map(p => p.id)) : null;
+    const off = new Set(playingIds ? opt.teams.flatMap(t => t.players.filter(p => p.id != null && !playingIds.has(p.id)).map(p => p.id)) : []);
     // Swapping: the player tapped first, as [team index, player id].
     let picked = null;
     const pick = (k, id) => {
@@ -932,10 +943,31 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     let hints = null;
     const rank = id => { const n = hints.findIndex(x => x.id === id); return n >= 0 && h('span', { class: 'badge hint-rank', title: `Swap #${n + 1} for ${pickedName()}` }, `#${n + 1}`); };
     const pickedName = () => opt.teams[picked[0]].players.find(x => x.id === picked[1])?.name;
+    // Someone dropped out: put another player in the tapped player's place (bench = playing but on no team, listed first).
+    const replaceRow = () => {
+      if (!pool?.length) return null;
+      const on = new Set(opt.teams.flatMap(t => t.players.map(p => p.id)));
+      const free = pool.filter(p => !on.has(p.id));
+      if (!free.length) return null;
+      const bench = free.filter(p => p.playing), rest = free.filter(p => !p.playing);
+      const opts = list => list.map(p => h('option', { value: p.id }, p.name));
+      const sel = h('select', { 'aria-label': `Replace ${pickedName()} with` }, h('option', { value: '' }, bench.length ? 'Choose player' : 'Choose player (nobody else is playing)'),
+        bench.length > 0 && h('optgroup', { label: 'Playing, on no team' }, opts(bench)),
+        rest.length > 0 && h('optgroup', { label: bench.length ? 'Not on the playing list' : 'Everyone else' }, opts(rest)));
+      sel.onchange = () => {
+        const to = Number(sel.value), from = picked[1];
+        if (!to) return;
+        picked = null;
+        grid.classList.add('busy');
+        onSwap(i, opt.teams.map(t => t.players.map(p => p.id === from ? to : p.id)));
+      };
+      return h('div', { class: 'row replace-row' }, h('span', { class: 'small' }, h('b', {}, `Replace ${pickedName()} with`)), sel);
+    };
     const hintBox = k => {
       const who = pickedName();
-      if (!hints.length) return h('div', { class: 'swap-hints' }, h('p', { class: 'muted small' }, `${who} is locked or kept with a combo partner, so no swaps to suggest.`));
-      return h('div', { class: 'swap-hints' },
+      if (!hints) return h('div', { class: 'swap-hints' }, replaceRow());
+      if (!hints.length) return h('div', { class: 'swap-hints' }, replaceRow(), h('p', { class: 'muted small' }, `${who} is locked or kept with a combo partner, so no swaps to suggest.`));
+      return h('div', { class: 'swap-hints' }, replaceRow(),
         h('p', { class: 'small' }, h('b', {}, `Best swaps for ${who}`), hints.some(x => x.better) ? '' : h('span', { class: 'muted' }, ' · none make the teams better')),
         h('ol', {}, hints.map(x => h('li', {},
           h('div', { class: 'grow' },
@@ -959,6 +991,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
         h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
           hints && rank(p.id),
+          off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
           setterBadge(p, onSetter),
           onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(lk.has(p.id)),
             title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lk.has(p.id) ? '🔒' : '🔓')))),
@@ -977,12 +1010,13 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     parts.push(h('section', { class: 'option' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
         h('div', { class: 'actions' },
-          onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, 'Save draft'),
+          onUpdateDraft && h('button', { class: 'ghost sm', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
+          onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i),
           onSave && h('button', { class: 'sm', onclick: () => onSave(i) }, 'Save for scores'))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
-      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
+      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
       grid, detail && guessNote,
       typeof extra === 'function' ? extra(i) : i === 0 && extra));
   });
@@ -1029,18 +1063,21 @@ function draftsCard(ownTeams) {
     const body = h('tbody');
     const row = d => {
       const cells = { gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
+      const offNote = h('div', { class: 'small warn-text', hidden: true });
       callFn('build-teams', { teams: d.teams, raters: d.raters, allGame: d.all_game, combos: d.combos, useCombos: true, ...buildExtras(), playedOn: d.played_on })
         .then(res => {
           const tot = res.options[0].teams.map(t => t.weighted);
           cells.gap.replaceChildren(h('b', {}, fmt(Math.max(...tot) - Math.min(...tot)))); cells.gap.className = 'num';
           cells.off.textContent = String(res.problems?.length ?? 0); cells.off.className = 'num';
           cells.rep.textContent = res.variety ? String(res.options[0].repeats?.length ?? 0) : '–'; cells.rep.className = 'num';
+          const gone = res.offList?.out ?? [];
+          if (gone.length) { offNote.hidden = false; offNote.textContent = `Not playing now: ${gone.map(p => p.name).join(', ')}. Open it to replace them.`; }
         }).catch(e => { cells.gap.textContent = '!'; cells.gap.title = e.message; });
       return h('tr', {},
-        h('td', {}, h('b', {}, d.name), h('div', { class: 'muted small' }, `${d.teams.length} teams of ${d.teams.map(t => t.length).join('/')}${d.played_on ? ` · for ${dayTitle(d.played_on)}` : ''}`)),
+        h('td', {}, h('b', {}, d.name), h('div', { class: 'muted small' }, `${d.teams.length} teams of ${d.teams.map(t => t.length).join('/')}${d.played_on ? ` · for ${dayTitle(d.played_on)}` : ''}`), offNote),
         cells.gap, cells.off, cells.rep,
         h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
-          h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name) }, 'Open'),
+          h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
           h('button', { class: 'ghost sm', 'aria-label': `Delete ${d.name}`, onclick: async () => {
             if (!confirm(`Delete the draft "${d.name}"?`)) return;
             try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
