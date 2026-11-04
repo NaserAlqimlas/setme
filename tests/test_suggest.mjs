@@ -49,5 +49,13 @@ ok(ap.includes('P1 and P2 are both on Team 1 (set to keep apart)'), 'keep-apart 
 const fair = suggestSwaps({ players, skills, teams: [[1, 4, 5, 8], [2, 3, 6, 7]] });
 ok(fair.suggestions.every(s => s.cost < fair.base), 'only improvements, even when nearly balanced');
 
+// Best swaps per player: up to 3 partners on other teams, best first, locked players left out.
+const pt = suggestSwaps({ players, skills, teams, locked: [1] });
+ok(!pt.partners.has(1) && [...pt.partners.values()].every(l => l.every(x => x.id !== 1)), 'locked player has no partners and is no one\'s partner');
+ok([...pt.partners].every(([a, l]) => l.length <= 3 && l.every(x => tOf(teams, x.id) !== tOf(teams, a))), 'partners are on other teams, at most 3');
+ok([...pt.partners.values()].every(l => l.every((x, n) => !n || l[n - 1].cost <= x.cost)), 'partners best first');
+const p5 = pt.partners.get(5);
+ok(p5.length === 3 && p5[0].cost < pt.base, `P5's best swap improves the teams: ${JSON.stringify(p5)}`);
+
 console.log(fail ? `${fail} failed` : 'ok');
 process.exit(fail ? 1 : 0);

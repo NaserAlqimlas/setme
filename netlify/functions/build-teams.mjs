@@ -23,6 +23,22 @@ async function recentTeams(day) {
   return rows.slice(0, VARIETY.length).map(r => (Array.isArray(r.teams) ? r.teams : []).map(t => (Array.isArray(t) ? t : []).filter(Number.isInteger)));
 }
 
+// Each movable player's best one-for-one swaps, shown when you tap them on a team card:
+// { [id]: [{ id, name, team, gap: [now, after], better, fixes, adds }] } (fixes/adds: short problem text).
+function swapHints(teams, { partners, base }, { byId, sk, apart, together, spreadWomen }) {
+  const asPlayers = ts => ts.map(t => t.map(id => byId.get(id)));
+  const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + strength(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
+  const before = teamProblems(asPlayers(teams), sk, apart, together, { spreadWomen }), gap = gapBy(teams);
+  const out = {};
+  for (const [a, list] of partners) out[a] = list.map(({ id: b, cost }) => {
+    const after = teams.map(t => t.map(id => id === a ? b : id === b ? a : id));
+    const probs = teamProblems(asPlayers(after), sk, apart, together, { spreadWomen });
+    return { id: b, name: byId.get(b).name, team: teams.findIndex(t => t.includes(b)) + 1, gap: [gap, gapBy(after)], better: cost < base - 1e-6,
+      fixes: before.filter(x => !probs.some(y => y.key === x.key)).map(x => x.short), adds: probs.filter(x => !before.some(y => y.key === x.key)).map(x => x.short) };
+  });
+  return out;
+}
+
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
   const me = await caller(req);
@@ -98,8 +114,10 @@ export default async (req) => {
     const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + strength(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
     result.suggestRater = solo ? suggestRater : null;
     const before = teamProblems(asPlayers(kept), sk, apart, together, { spreadWomen });
-    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart, history, spreadWomen,
+    const swapped = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart, history, spreadWomen,
       locked: (Array.isArray(locked) ? locked : []).filter(id => byId.has(id)) });
+    const { suggestions } = swapped;
+    result.options[0].partners = swapHints(kept, swapped, { byId, sk, apart, together, spreadWomen });
     result.problems = before;
     result.suggestions = suggestions.map(sg => {
       const after = teamProblems(asPlayers(sg.teams), sk, apart, together, { spreadWomen });
@@ -119,6 +137,15 @@ export default async (req) => {
       history, spreadWomen,
       timeBudgetMs: 7000,
     });
+    // Best swaps per player for each built option too, so a tap shows them before the first swap.
+    const byId = new Map(playing.map(p => [p.id, p]));
+    const together = useCombos ? pairs.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [];
+    const apart = useCombos ? pairs.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [];
+    for (const opt of result.options) {
+      const teams = opt.teams.map(t => t.players.map(p => p.id));
+      opt.partners = swapHints(teams, suggestSwaps({ players: playing, skills, teams, combos: together, apart, history, spreadWomen, top: 0 }),
+        { byId, sk: skills, apart, together, spreadWomen });
+    }
   } catch (e) {
     return json({ error: e.message }, 400);
   }

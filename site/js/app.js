@@ -928,17 +928,41 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       : [h('button', { type: 'button', class: 'pick', 'aria-pressed': String(picked?.[1] === p.id),
         title: picked && picked[0] !== k ? `Swap with ${opt.teams[picked[0]].players.find(x => x.id === picked[1])?.name}` : `Swap ${p.name} with someone`,
         onclick: () => pick(k, p.id) }, avatar(p.name, 28), h('span', { class: 'pname' }, p.name))];
+    // Best swaps for the tapped player (from the server, judged like Suggestions): listed under their team, marked on the others.
+    let hints = null;
+    const rank = id => { const n = hints.findIndex(x => x.id === id); return n >= 0 && h('span', { class: 'badge hint-rank', title: `Swap #${n + 1} for ${pickedName()}` }, `#${n + 1}`); };
+    const pickedName = () => opt.teams[picked[0]].players.find(x => x.id === picked[1])?.name;
+    const hintBox = k => {
+      const who = pickedName();
+      if (!hints.length) return h('div', { class: 'swap-hints' }, h('p', { class: 'muted small' }, `${who} is locked or kept with a combo partner, so no swaps to suggest.`));
+      return h('div', { class: 'swap-hints' },
+        h('p', { class: 'small' }, h('b', {}, `Best swaps for ${who}`), hints.some(x => x.better) ? '' : h('span', { class: 'muted' }, ' · none make the teams better')),
+        h('ol', {}, hints.map(x => h('li', {},
+          h('div', { class: 'grow' },
+            h('div', {}, h('b', {}, x.name), h('span', { class: 'muted' }, ` (Team ${x.team})`)),
+            h('div', { class: 'muted small' }, [
+              detail && `Gap ${fmt(x.gap[0])} → ${fmt(x.gap[1])}`,
+              x.fixes.length > 0 && `fixes: ${x.fixes.join('; ')}`,
+              !x.better && 'not better',
+              !detail && x.better && !x.fixes.length && 'more even',
+            ].filter(Boolean).join(' · ')),
+            x.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${x.adds.join('; ')}`)),
+          h('button', { type: 'button', class: x.better ? 'sm' : 'ghost sm', onclick: () => pick(x.team - 1, x.id) }, 'Swap')))));
+    };
     const paint = () => {
+      hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
       gapLine.textContent = `${view.id ? `${view.name.split(/[\s.@]/)[0]}'s ratings: totals` : 'Totals'} ${fmt(lo)} to ${fmt(hi)}, a gap of ${fmt(hi - lo)}`;
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
           h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
-        h('ul', {}, t.players.map(p => h('li', {}, ...name(k, p),
+        h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
+          hints && rank(p.id),
           setterBadge(p, onSetter),
           onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(lk.has(p.id)),
             title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lk.has(p.id) ? '🔒' : '🔓')))),
+        picked?.[0] === k && hintBox(k),
         detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', {}, h('small', {}, s === 'setting' ? 'Set' : SHORT[s]), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
       guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their stand-in level was used.`;
@@ -958,7 +982,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           shareButton(opt.teams, i),
           onSave && h('button', { class: 'sm', onclick: () => onSave(i) }, 'Save for scores'))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
-      canSwap && h('p', { class: 'muted small swap-hint' }, 'Tap a player, then a player on another team, to swap them.'),
+      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
       grid, detail && guessNote,
       typeof extra === 'function' ? extra(i) : i === 0 && extra));
   });

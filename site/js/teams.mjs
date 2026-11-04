@@ -450,8 +450,10 @@ export function teamProblems(teams, skills, apart = [], together = [], { spreadW
 // Smallest changes that make your own teams better by buildTeams' score: one-for-one swaps, then pairs of swaps.
 // locked players never move, a "together" pair that's already on one team is never split, and fewer together pairs
 // on different teams always beats better balance (combos are a rule in buildTeams too), so reuniting swaps come first.
-// -> [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double if it beats them.
-export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], history = [], spreadWomen = true, top = 3 }) {
+// -> { base, suggestions: [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double
+// if it beats them, partners: Map id -> [{ id, cost }] the best perPlayer one-for-one swaps for each player who can move
+// (better or not, best first; compare cost with base) }.
+export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], history = [], spreadWomen = true, top = 3, perPlayer = 3 }) {
   const T = teams.length, byId = new Map(players.map(p => [p.id, p]));
   const members = teams.map(t => t.map(id => byId.get(id)));
   const flat = members.flat();
@@ -476,6 +478,11 @@ export function suggestSwaps({ players, skills, teams, combos = [], apart = [], 
     swap([a.id, b.id]); singles.push({ swaps: [[a.id, b.id]], cost: score() }); swap([a.id, b.id]);
   }
   singles.sort((x, y) => x.cost - y.cost);
+  const partners = new Map();
+  for (const { swaps: [[a, b]], cost: c } of singles) for (const [x, y] of [[a, b], [b, a]]) {
+    const list = partners.get(x) ?? partners.set(x, []).get(x);
+    if (list.length < perPlayer) list.push({ id: y, cost: c });
+  }
   // Pairs of swaps from the most promising singles (a swap that's flat on its own can still set up a great second one).
   const pool = singles.slice(0, 40), doubles = [];
   for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) {
@@ -490,7 +497,7 @@ export function suggestSwaps({ players, skills, teams, combos = [], apart = [], 
   const bestDouble = doubles.find(d => better(d) && d.cost < (picks[0]?.cost ?? base) - 1e-6);
   if (bestDouble && picks.length < top) picks.push(bestDouble);
   for (const x of singles.filter(better).slice(picks.filter(p => p.swaps.length === 1).length)) { if (picks.length >= top) break; picks.push(x); }
-  return { base, suggestions: picks.map(x => {
+  return { base, partners, suggestions: picks.map(x => {
     const after = teams.map(t => [...t]);
     for (const [a, b] of x.swaps) {
       const ta = after.findIndex(t => t.includes(a)), tb = after.findIndex(t => t.includes(b));
