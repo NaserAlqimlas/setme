@@ -151,7 +151,7 @@ Adjust for results (`resultAdjustments` in scores.mjs, `adjustSkills` in teams.m
   | Team without exactly one main setter | 100, plus 100 per extra main setter |
   | Team with no main setter and no backup | 40 |
   | Team with 2+ backups | 5 |
-  | Women more than 1 apart between teams | 100 per extra |
+  | Women more than 1 apart between teams (only with Spread women evenly, `spreadWomen`, on by default) | 100 per extra |
   | Weak passers, unrated players, inconsistent players bunched | 20 per extra beyond 1, plus a small squared term |
   | Keep-apart pair on the same team | 100 |
   | Pair who were teammates on a recent game day (Mix up teammates) | 1 last game day, .5 the one before, .25 the one before that (`VARIETY`) |

@@ -563,9 +563,9 @@ async function playersPage() {
 // they last while the page is open (switching tabs keeps them) and are sent along when teams are built.
 let sessionCombos = [];
 // Build options that last while the page is open: mix up teammates from recent game days (on), and shift players by
-// how their teams have done against their ratings (off).
-let mixTeammates = true, adjustResults = false;
-const buildExtras = () => ({ variety: mixTeammates, resultsAdjust: adjustResults, playedOn: gameDate || null });
+// how their teams have done against their ratings (off), and split women evenly across teams (on).
+let mixTeammates = true, adjustResults = false, spreadWomen = true;
+const buildExtras = () => ({ variety: mixTeammates, resultsAdjust: adjustResults, spreadWomen, playedOn: gameDate || null });
 // Which setters set all game, for this session (not saved): player id -> true / false. Not set yet = main setters do.
 const setterPlan = new Map();
 const setsAllGame = p => setterPlan.get(p.id) ?? p.setting === 'M';
@@ -707,6 +707,8 @@ async function teamsPage() {
       toggle('Use combos', true, v => { useCombos = v; }),
       h('span', { title: 'Avoid putting the same people together as on the last game days. Only picks between splits that are about as balanced.' },
         toggle('Mix up teammates', mixTeammates, v => { mixTeammates = v; ownTeams.refresh(); })),
+      h('span', { title: 'Split women (gender F) as evenly as possible: team counts at most 1 apart. Off, gender is ignored.' },
+        toggle('Spread women evenly', spreadWomen, v => { spreadWomen = v; ownTeams.refresh(); })),
       h('span', { title: `Shift each player by how their teams have done against their ratings (needs ${ADJUST_MIN_GAMES} games with scores). Saved predictions stay ratings-only.` },
         toggle('Adjust for results', adjustResults, v => { adjustResults = v; ownTeams.refresh(); })),
       h('span', { class: 'grow' }), btn),

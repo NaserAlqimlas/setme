@@ -10,6 +10,7 @@
 // Organizers get team numbers, combined and per rater (byRater). Player-level ratings never leave the server for organizers.
 // variety (default on): the last game days' teams before playedOn (sessions) are passed to the builder so the same
 // teammates don't keep landing together; each option lists its repeat pairs (names only, nothing from ratings).
+// spreadWomen (default on): split women evenly across teams (and flag it when they aren't); false ignores gender.
 // resultsAdjust: shift each player's numbers by how their teams have done against the ratings (resultAdjustments in
 // scores.mjs) before building or checking. Never used for predict, so stored predictions stay ratings-only.
 import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps, adjustSkills, repeatPairs, VARIETY } from '../../site/js/teams.mjs';
@@ -27,7 +28,7 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false, spreadWomen: sentSpread = true } = await req.json().catch(() => ({}));
   const [players, ratings] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
@@ -51,6 +52,7 @@ export default async (req) => {
     adjustSkills(combined, adj);
     adjusted = [...adj.values()].filter(v => Math.abs(v) >= .005).length;
   }
+  const spreadWomen = sentSpread !== false;
   const day = typeof playedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(playedOn) ? playedOn : null;
   const history = variety && !predict ? await recentTeams(day) : [];
   const playing = players.filter(p => p.playing).map(p => ({ ...p, unrated: !!combined.get(p.id).guess }));
@@ -95,12 +97,12 @@ export default async (req) => {
     const sk = solo ? teamSkills(players, combineRatings(players, ratings.filter(r => r.rater_id === suggestRater)).combined, allGame) : skills;
     const gapBy = ts => { const tot = ts.map(t => t.reduce((a, id) => a + strength(sk.get(id)), 0)); return Math.max(...tot) - Math.min(...tot); };
     result.suggestRater = solo ? suggestRater : null;
-    const before = teamProblems(asPlayers(kept), sk, apart, together);
-    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart, history,
+    const before = teamProblems(asPlayers(kept), sk, apart, together, { spreadWomen });
+    const { suggestions } = suggestSwaps({ players: [...byId.values()], skills: sk, teams: kept, combos: together, apart, history, spreadWomen,
       locked: (Array.isArray(locked) ? locked : []).filter(id => byId.has(id)) });
     result.problems = before;
     result.suggestions = suggestions.map(sg => {
-      const after = teamProblems(asPlayers(sg.teams), sk, apart, together);
+      const after = teamProblems(asPlayers(sg.teams), sk, apart, together, { spreadWomen });
       return {
         swaps: sg.swaps.map(([a, b]) => [a, b].map(id => ({ id, name: byId.get(id).name, team: kept.findIndex(t => t.includes(id)) + 1 }))),
         teams: sg.teams,
@@ -114,7 +116,7 @@ export default async (req) => {
       players: playing, skills, numTeams: Number(numTeams),
       combos: useCombos ? pairs.filter(c => c.kind !== 'apart').map(c => [c.player_a, c.player_b]) : [],
       apart: useCombos ? pairs.filter(c => c.kind === 'apart').map(c => [c.player_a, c.player_b]) : [],
-      history,
+      history, spreadWomen,
       timeBudgetMs: 7000,
     });
   } catch (e) {

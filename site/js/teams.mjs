@@ -170,7 +170,8 @@ const weakPasser = sk => !sk.allGame && sk.receiving <= .25;
 // players: [{id, name, gender: 'M'|'F'|'U', setting: 'M'|'B'|'N', unrated?: bool}], skills: Map id -> {receiving..}
 // combos: [[idA, idB]] play together; apart: [[idA, idB]] must not share a team. Pairs with someone not in `players` are skipped.
 // history: recent game days' teams, newest first ([[[id, ...], ...], ...]); pairs who were teammates cost VARIETY each.
-export function buildTeams({ players, skills, combos = [], apart = [], history = [], numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
+// spreadWomen (default on): women split as evenly as possible (team counts at most 1 apart); off, gender is ignored.
+export function buildTeams({ players, skills, combos = [], apart = [], history = [], spreadWomen = true, numTeams = 4, timeBudgetMs = 5000, maxRestarts = 3000, seed = 11, options = 3 }) {
   const n = players.length, T = numTeams;
   if (n < T || n % T) throw new Error(`${n} players can't be split into ${T} equal teams`);
   const size = n / T;
@@ -179,7 +180,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], history =
   // Keep-apart pairs: each gets its own field, 1 for both players, so a team scoring 2 on it has the pair together.
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
 
-  const { F, feat, cost: scoreAgg } = makeScorer(players, skills, apartUsed, T, history);
+  const { F, feat, cost: scoreAgg } = makeScorer(players, skills, apartUsed, T, history, { spreadWomen });
 
   // Combos lock players into units that always move together.
   const parent = players.map((_, i) => i);
@@ -294,7 +295,7 @@ export function buildTeams({ players, skills, combos = [], apart = [], history =
 // women, weak passers, unrated players, inconsistent players, then one per keep-apart pair, then one per team of each
 // recent game day (history): 1 if the player was on that team, so a team summing to c on it has c(c-1)/2 old
 // teammate pairs. The first NSK fields make up a team's strength. cost(agg) reads the per-team sums (T * F).
-function makeScorer(players, skills, apartUsed, T, history = []) {
+function makeScorer(players, skills, apartUsed, T, history = [], { spreadWomen = true } = {}) {
   const NSK = 6, MAIN = 6, BACK = 7, WOMEN = 8, WEAK = 9, GUESS = 10, SHAKY = 11, BASE = 12, HB = BASE + apartUsed.length;
   const past = history.slice(0, VARIETY.length).flatMap((teams, s) => (teams ?? []).map(t => ({ w: VARIETY[s], ids: new Set(t) })));
   const F = HB + past.length;
@@ -334,7 +335,7 @@ function makeScorer(players, skills, apartUsed, T, history = []) {
     }
     const wk = Math.round(wkHi - wkLo);
     c += 20 * Math.max(0, wk - 1) + .5 * wk * wk;
-    c += 100 * Math.max(0, Math.round(woHi - woLo) - 1);
+    if (spreadWomen) c += 100 * Math.max(0, Math.round(woHi - woLo) - 1);
     // Unrated players' numbers are guesses; spread them so no team stacks up several.
     const gu = Math.round(guHi - guLo);
     c += 20 * Math.max(0, gu - 1) + .5 * gu * gu;
@@ -410,7 +411,7 @@ const clamp = v => Math.min(1, Math.max(0, v));
 // teams: [[player, ...], ...] (players with id, name, setting, gender, unrated); skills: Map id -> skills.
 // -> [{ key, text, short, rating }]: key stays the same while the problem lasts (to tell fixed from new after a swap),
 // text is the full story with every team's count and names, short fits in a suggestion line, rating = comes from ratings.
-export function teamProblems(teams, skills, apart = [], together = []) {
+export function teamProblems(teams, skills, apart = [], together = [], { spreadWomen = true } = {}) {
   const out = [];
   const label = k => `Team ${k + 1}`;
   const names = ps => ps.map(p => p.name).join(', ');
@@ -428,7 +429,7 @@ export function teamProblems(teams, skills, apart = [], together = []) {
       text: `${what}${rule ? ` (${rule})` : ''} are bunched up: ${each}. Best is no more than 1 apart.` });
   };
   spread('weak', p => weakPasser(skills.get(p.id)), 'Weak passers', 'receiving .25 or below, not counting setters who set all game', true);
-  spread('women', p => p.gender === 'F', 'Women', '', false);
+  if (spreadWomen) spread('women', p => p.gender === 'F', 'Women', '', false);
   spread('unrated', p => p.unrated, 'Unrated players', 'no ratings yet, so a stand-in level is used', false);
   spread('shaky', p => (skills.get(p.id).consistency ?? .5) <= .25, 'Inconsistent players', 'consistency .25 or below', true);
   for (const [a, b] of apart) {
@@ -450,14 +451,14 @@ export function teamProblems(teams, skills, apart = [], together = []) {
 // locked players never move, a "together" pair that's already on one team is never split, and fewer together pairs
 // on different teams always beats better balance (combos are a rule in buildTeams too), so reuniting swaps come first.
 // -> [{ swaps: [[idA, idB], ...], cost, teams }] best first: up to two single swaps, then a double if it beats them.
-export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], history = [], top = 3 }) {
+export function suggestSwaps({ players, skills, teams, combos = [], apart = [], locked = [], history = [], spreadWomen = true, top = 3 }) {
   const T = teams.length, byId = new Map(players.map(p => [p.id, p]));
   const members = teams.map(t => t.map(id => byId.get(id)));
   const flat = members.flat();
   const idx = new Map(flat.map((p, i) => [p.id, i]));
   const teamOf = new Map(); teams.forEach((t, k) => t.forEach(id => teamOf.set(id, k)));
   const apartUsed = apart.filter(([a, b]) => idx.has(a) && idx.has(b) && a !== b);
-  const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T, history);
+  const { F, feat, cost } = makeScorer(flat, skills, apartUsed, T, history, { spreadWomen });
   const fixed = new Set(locked);
   for (const [a, b] of combos) if (teamOf.has(a) && teamOf.get(a) === teamOf.get(b)) { fixed.add(a); fixed.add(b); }
   const split = combos.filter(([a, b]) => teamOf.has(a) && teamOf.has(b) && teamOf.get(a) !== teamOf.get(b));
