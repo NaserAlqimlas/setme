@@ -1,5 +1,7 @@
 // POST /.netlify/functions/admin  (super only)
-//   { action: 'invite', email, name }  -> { link }   invite link to send yourself (no email is sent)
+//   { action: 'invite', email, name, role? } -> { link }   invite link to send yourself (no email is sent); role: player,
+//                                                    rater (default) or organizer
+// Each action is written to the activity log (audit_log) with who did it, once the club upgrade has been run.
 // Links point at the site, which only signs in when the person taps Continue. Link previews (WhatsApp etc.)
 // open links automatically, which would use up a one-time Supabase link before the person ever sees it.
 //   { action: 'reset', email }         -> { link }   password reset link
@@ -9,6 +11,8 @@
 import { authAdmin, caller, json, rest } from '../lib/supabase.mjs';
 
 const SETME_EMAIL = 'setme@setme.invalid';
+// Activity log entry; skipped quietly before the club upgrade (supabase/club.sql) adds the table.
+const audit = (actor, action, detail) => rest('audit_log', { method: 'POST', headers: { prefer: 'return=minimal' }, body: JSON.stringify({ actor, action, detail }) }).catch(() => {});
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -31,6 +35,13 @@ export default async (req) => {
       });
       const hashed = res.hashed_token ?? res.properties?.hashed_token;
       const type = body.action === 'invite' ? 'invite' : 'recovery';
+      const userId = res.id ?? res.user?.id;
+      if (type === 'invite' && ['player', 'organizer'].includes(body.role) && userId) {
+        // The profile row comes from the new-user trigger; 'player' needs the club upgrade, so say so if it fails.
+        await rest(`profiles?id=eq.${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role: body.role }) })
+          .catch(e => { throw new Error(body.role === 'player' ? 'Invite made, but the player role needs the database upgrade (supabase/club.sql). They are a rater for now.' : e.message); });
+      }
+      await audit(me.id, type === 'invite' ? 'invite link created' : 'reset link created', { email, ...(type === 'invite' ? { role: ['player', 'organizer'].includes(body.role) ? body.role : 'rater' } : {}) });
       return json({ link: hashed ? `${redirect_to}/?token_hash=${encodeURIComponent(hashed)}&type=${type}` : (res.action_link ?? res.properties?.action_link) });
     }
     if (body.action === 'setme') {
@@ -44,7 +55,9 @@ export default async (req) => {
     }
     if (body.action === 'remove') {
       if (body.id === me.id) return json({ error: "You can't remove yourself" }, 400);
+      const [who] = await rest(`profiles?id=eq.${encodeURIComponent(body.id)}&select=display_name,email,role`).catch(() => []);
       await authAdmin(`users/${encodeURIComponent(body.id)}`, { method: 'DELETE' });
+      await audit(me.id, 'user removed', { name: who?.display_name, email: who?.email, role: who?.role });
       return json({ ok: true });
     }
   } catch (e) {

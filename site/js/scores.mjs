@@ -129,3 +129,18 @@ export function nextPairing(numTeams, games, busy = []) {
   const least = Math.min(...free.map(([a, b]) => count.get(key(a, b)) ?? 0));
   return free.find(([a, b]) => (count.get(key(a, b)) ?? 0) === least);
 }
+
+// Results-adjusted ratings: how much stronger (+) or weaker (−) than rated each player has played, in strength units
+// (the same scale as a team's weighted total). A player whose teams beat the prediction by `over` points a game is
+// worth about over / k more, where k = points per 1.0 of rated gap. Pulled toward 0 as if they'd played ADJUST_PRIOR
+// games level with their ratings, and capped at ±ADJUST_CAP, so a handful of lucky games barely moves anyone.
+// Nothing until ADJUST_MIN_GAMES games have scores and predictions, or while bigger gaps don't mean bigger wins.
+export const ADJUST_MIN_GAMES = 15, ADJUST_PRIOR = 15, ADJUST_CAP = .75;
+export function resultAdjustments(games) {
+  const a = analyze(games);
+  if (a.n < ADJUST_MIN_GAMES || !(a.k > 0)) return new Map();
+  return new Map(playerStats(games, a.k).map(p => {
+    const v = (p.over / a.k) * p.games / (p.games + ADJUST_PRIOR);
+    return [p.id, Math.max(-ADJUST_CAP, Math.min(ADJUST_CAP, v))];
+  }));
+}
