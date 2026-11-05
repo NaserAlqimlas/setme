@@ -17,7 +17,7 @@ function fit(ctx, text, weight, size, family, maxW, min = 18) {
 export async function seasonImage(rec, { title, name }) {
   try { await Promise.all([document.fonts.load(`700 44px ${HEAD}`), document.fonts.load(`600 30px ${BODY}`)]); } catch { /* fall back to system fonts */ }
   const rows = [...rec.awards.map(a => ({ title: a.title, who: a.who.map(name).join(', '), detail: a.detail })),
-    ...(rec.closest ? [{ title: 'Closest game', who: `Team ${rec.closest.team_a} v Team ${rec.closest.team_b}`, detail: `${rec.closest.score_a}–${rec.closest.score_b}` }] : [])];
+    ...(rec.closest ? [{ title: 'Closest game', who: rec.closest.names?.join(' v ') ?? `Team ${rec.closest.team_a} v Team ${rec.closest.team_b}`, detail: `${rec.closest.score_a}–${rec.closest.score_b}` }] : [])];
   const H = 330 + Math.max(1, rows.length) * (ROW_H + 14) + 80;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;

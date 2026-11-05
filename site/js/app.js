@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
-import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal, adjustSkills } from './teams.mjs';
+import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal, adjustSkills, teamNames } from './teams.mjs';
 import { matchPasted, parseTeams } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
@@ -864,7 +864,7 @@ async function teamsPage() {
     catch (e) { toast(e.message); draw(); }
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
-  const draw = () => out.replaceChildren(...showTeams(built, {
+  const draw = () => { out.dataset.shows = 'built'; out.replaceChildren(...showTeams(built, {
     view, onSwap: edit, pool, open, onOpen: i => { open = i; },
     edited: i => undos[i]?.length > 0,
     notice: i => changes[i] && changeLine(changes[i], built.options[i], () => undo(i)),
@@ -877,10 +877,12 @@ async function teamsPage() {
       onApply: sg => edit(i, sg.teams),
       onUndo: undos[i]?.length > 0 && (() => undo(i)),
     }),
-  }));
+  })); };
   const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; draw(); };
+  ownTeams.builtEdited = () => undos.some(u => u?.length);
   btn.onclick = async () => {
-    if (undos.some(u => u?.length) && !confirm('Build new teams? The swaps you made on the options below will be lost. Teams already saved for the day stay saved.')) return;
+    if (out.dataset.shows === 'built' && ownTeams.builtEdited() && !confirm('Build new teams? The swaps you made on the options below will be lost. Teams already saved for the day stay saved.')) return;
+    if (out.dataset.shows === 'own' && ownTeams.edited() && !confirm('Build new teams? The swaps you made on your own teams below will be lost. Teams already saved for the day stay saved.')) return;
     btn.disabled = true; btn.textContent = 'Building…'; out.classList.add('busy');
     try {
       builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
@@ -892,6 +894,7 @@ async function teamsPage() {
       draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     catch (e) {
+      out.dataset.shows = '';
       out.replaceChildren(h('div', { class: 'card build-error', role: 'alert' },
         h('p', { class: 'warn', style: 'margin:0' }, `Couldn't build teams: ${e.message}`),
         h('button', { type: 'button', class: 'ghost sm', onclick: () => btn.click() }, 'Try again')));
@@ -963,6 +966,8 @@ function ownTeamsCard(out, getOptions) {
   // After a check: the teams as they stand now (player ids), earlier versions for Undo, and players locked in place.
   // viewRater: whose ratings the cards and suggestions use (null = the picked raters combined).
   let current = null, history = [], viewRater = null, lastOpt = null, changedFrom = null;
+  // The opened draft's name and id; null for pasted teams. Not card.title: that's the tooltip attribute, and null turns into "null".
+  let teamsTitle = null, draftId = null;
   const locked = new Set();
   const run = async ({ scroll = false } = {}) => {
     const opts = getOptions();
@@ -978,28 +983,36 @@ function ownTeamsCard(out, getOptions) {
     const onSwap = (_, teams) => { history.push(current); changedFrom = lastOpt; current = teams; run().catch(e => { current = history.pop(); changedFrom = null; toast(e.message); run().catch(() => {}); }); };
     const undo = history.length > 0 && (() => { current = history.pop(); changedFrom = null; run().catch(e => toast(e.message)); });
     const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
-    const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, card.title ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
-    const onUpdateDraft = card.draftId != null && (async () => {
+    const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, teamsTitle ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
+    const onUpdateDraft = draftId != null && (async () => {
       try {
-        await q(sb.from('drafts').update({ teams: current, raters: opts.raters ?? null, all_game: allGameIds(await roster()), combos: opts.combos ?? [] }).eq('id', card.draftId));
+        await q(sb.from('drafts').update({ teams: current, raters: opts.raters ?? null, all_game: allGameIds(await roster()), combos: opts.combos ?? [] }).eq('id', draftId));
         toast('Draft updated'); document.dispatchEvent(new Event('drafts'));
       } catch (e) { toast(e.message); }
     });
     const notice = changeLine(changedFrom, res.options[0], undo);
     lastOpt = res.options[0];
-    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), notice, extra: suggestionsPanel(res, {
+    out.dataset.shows = 'own';
+    out.replaceChildren(...showTeams(res, { title: teamsTitle ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), notice, extra: suggestionsPanel(res, {
       onApply: sg => { history.push(current); changedFrom = lastOpt; current = sg.teams; run().catch(e => toast(e.message)); },
       onUndo: undo,
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+  // The results area holds either built options or these teams. Ask before replacing work that would be lost.
+  const okToReplace = what => {
+    if (out.dataset.shows === 'built') return confirm(`${what}? The built options below will be replaced${card.builtEdited?.() ? ', and the swaps you made on them will be lost' : ''}. Teams already saved for the day stay saved.`);
+    if (out.dataset.shows === 'own' && history.length) return confirm(`${what}? The swaps you made on the teams below will be lost.`);
+    return true;
+  };
   check.onclick = async () => {
-    card.title = null; card.draftId = null;
+    if (!okToReplace('Check these teams')) return;
+    teamsTitle = null; draftId = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
     history = []; locked.clear(); changedFrom = null;
     check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
     try { await run({ scroll: true }); }
-    catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+    catch (e) { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
     check.disabled = false; check.textContent = label;
   };
   const card = h('details', { class: 'card own' },
@@ -1014,12 +1027,14 @@ function ownTeamsCard(out, getOptions) {
   // Ratings from changed at the top: re-check teams already on screen.
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
-  card.load = async (teams, title, draftId = null) => {
-    current = teams; history = []; locked.clear(); changedFrom = null; card.title = title; card.draftId = draftId;
-    try { await run({ scroll: true }); } catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+  card.load = async (teams, title, id = null) => {
+    if (!okToReplace(`Open "${title}"`)) return;
+    current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = id;
+    try { await run({ scroll: true }); } catch (e) { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
   document.addEventListener('setterplan', () => card.refresh());
   card.roster = roster;
+  card.edited = () => history.length > 0;
   return card;
 }
 
@@ -1027,7 +1042,8 @@ function ownTeamsCard(out, getOptions) {
 // onApply(suggestion); onUndo shows an Undo button when given.
 function suggestionsPanel(res, { onApply, onUndo }) {
   const detail = me.role === 'super' || me.role === 'organizer';
-  const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (Team ${p.team})`));
+  const tn = teamNames(res.options[0]?.teams.map(t => t.players) ?? []);
+  const who = p => h('span', {}, h('b', {}, p.name), h('span', { class: 'muted' }, ` (${tn[p.team - 1] ?? `Team ${p.team}`})`));
   const basis = !detail ? null : res.suggestRater ? `Based on ${firstName(res.options[0]?.byRater?.find(r => r.rater_id === res.suggestRater)?.name)}'s ratings` : 'Based on the combined ratings';
   return h('div', { class: 'suggestions' },
     h('div', { class: 'card-head' },
@@ -1063,7 +1079,7 @@ function shareButton(teams, i) {
     if (btn && !btn.isConnected) return document.removeEventListener('gamedate', prep);
     name = `teams-${gameDate || 'lineup'}${i ? `-${i + 1}` : ''}.png`;
     blob = null;
-    ready = courtImage(teams, { title: dayTitle(gameDate), colors: TEAM_COLORS }).then(b => (blob = b));
+    ready = courtImage(teams, { title: dayTitle(gameDate), colors: TEAM_COLORS, names: teamNames(teams.map(t => t.players)) }).then(b => (blob = b));
   };
   prep();
   document.addEventListener('gamedate', prep);
@@ -1167,7 +1183,8 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     ? `Adjusted for results: ${res.adjusted} player${res.adjusted === 1 ? '\'s' : 's\''} numbers moved by how their teams have done against their ratings.`
     : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`));
   res.options.forEach((opt, i) => {
-    const text = opt.teams.map((t, k) => `Team ${k + 1}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
+    const tn = teamNames(opt.teams.map(t => t.players));
+    const text = opt.teams.map((t, k) => `${tn[k]}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
     // Whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
     const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
@@ -1228,7 +1245,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
         h('p', { class: 'small' }, h('b', {}, `Best swaps for ${who}`), hints.some(x => x.better) ? '' : h('span', { class: 'muted' }, ' · the teams are already as even as a swap can make them')),
         h('ol', {}, hints.map(x => h('li', {},
           h('div', { class: 'grow' },
-            h('div', {}, h('b', {}, x.name), h('span', { class: 'muted' }, ` (Team ${x.team})`)),
+            h('div', {}, h('b', {}, x.name), h('span', { class: 'muted' }, ` (${tn[x.team - 1]})`)),
             h('div', { class: 'muted small' }, [
               detail && `Gap ${num2(x.gap[0])} → ${num2(x.gap[1])}`,
               x.fixes.length > 0 && `fixes: ${x.fixes.join('; ')}`,
@@ -1244,7 +1261,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' }, `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team.`));
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
-        h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
+        h('header', {}, h('h4', {}, tn[k]), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
           h('small', {}, 'Total'), num2(totals[k]), view.guessed?.[k] ? '*' : '')),
         h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
           hints && rank(p.id),
@@ -1443,16 +1460,26 @@ async function saveLineup(teams, { raters, allGame, source }) {
 }
 
 let scoresTab = 'games', scoresDay = null;
+// (session id, team number from 1) -> that team's name on that day, from who is on it now (late changes included).
+function sessionTeamNamer(sessions, players) {
+  const byId = new Map(players.map(p => [p.id, p])), byS = new Map(sessions.map(s => [s.id, s]));
+  return (sid, k) => {
+    const s = byS.get(sid);
+    const names = s && Array.isArray(s.teams) ? teamNames(s.teams.map(t => (Array.isArray(t) ? t : []).map(id => byId.get(id)).filter(Boolean)), new Set(s.all_game ?? [])) : [];
+    return names[k - 1] ?? `Team ${k}`;
+  };
+}
 async function scoresPage() {
   const [sessions, players] = await Promise.all([
     q(sb.from('sessions').select('*').order('played_on', { ascending: false })),
     q(sb.from('players').select('id,name,setting,active').order('name')),
   ]);
   const pname = new Map(players.map(p => [p.id, p.name]));
+  const tname = sessionTeamNamer(sessions, players);
   const body = h('div');
   const tabs = seg([['games', 'Games'], ['insights', 'Insights'], ['attendance', 'Attendance'], ['season', 'Season']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
-  const views = { games: () => gamesView(sessions, players, pname), insights: () => insightsView(sessions, pname),
-    attendance: () => attendanceView(sessions, players, pname), season: () => seasonView(sessions, pname) };
+  const views = { games: () => gamesView(sessions, players, pname, tname), insights: () => insightsView(sessions, pname, tname),
+    attendance: () => attendanceView(sessions, players, pname), season: () => seasonView(sessions, pname, tname) };
   const draw = async () => {
     body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
     try { body.replaceChildren(...await views[scoresTab]()); }
@@ -1462,7 +1489,7 @@ async function scoresPage() {
   return h('div', {}, pageHead('Scores', 'Enter each game\'s score. Insights show how well the teams were balanced.', tabs), body);
 }
 
-async function gamesView(sessions, players, pname) {
+async function gamesView(sessions, players, pname, tname) {
   if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save for scores'), '.')];
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
@@ -1471,7 +1498,7 @@ async function gamesView(sessions, players, pname) {
   const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
     .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
   const tagGame = games.find(g => g.id === taggingGame);
-  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, () => { taggingGame = null; render(); })];
+  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); })];
   taggingGame = null;
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
@@ -1482,7 +1509,7 @@ async function gamesView(sessions, players, pname) {
   } }, 'Delete day');
 
   const N = () => ses.teams.length;
-  const teamName = k => `Team ${k}`;
+  const teamName = k => tname(ses.id, k);
   const teamsBox = h('div'), entry = h('div'), list = h('div', { class: 'card' });
   let editing = false;
 
@@ -1512,7 +1539,7 @@ async function gamesView(sessions, players, pname) {
         h('option', { value: '' }, '+ Add player'),
         active.filter(p => !ids.includes(p.id)).map(p => {
           const on = ses.teams.findIndex(t => t.includes(p.id));
-          return h('option', { value: p.id }, on >= 0 ? `${p.name} (from Team ${on + 1})` : p.name);
+          return h('option', { value: p.id }, on >= 0 ? `${p.name} (from ${teamName(on + 1)})` : p.name);
         }));
       if (add) add.onchange = () => {
         const id = Number(add.value); if (!id) return;
@@ -1683,7 +1710,7 @@ async function youtubeVideo(box, id) {
   return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy() };
 }
 
-async function tagView(g, n, pname, back) {
+async function tagView(g, n, pname, tname, back) {
   const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
   // What the database has: each rally as last saved (to send only what changed), and the video.
   const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
@@ -1704,7 +1731,7 @@ async function tagView(g, n, pname, back) {
     setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
   }
 
-  const name = { a: `Team ${g.team_a}`, b: `Team ${g.team_b}` };
+  const name = { a: tname(g.session_id, g.team_a), b: tname(g.session_id, g.team_b) };
   const color = { a: TEAM_COLORS[(g.team_a - 1) % TEAM_COLORS.length], b: TEAM_COLORS[(g.team_b - 1) % TEAM_COLORS.length] };
   const lineup = { a: g.players_a, b: g.players_b };
   const pn = id => firstName(pname.get(id) ?? '?');
@@ -1859,7 +1886,7 @@ async function tagView(g, n, pname, back) {
         h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
-  const gameRecap = recapButton('Share recap', `Game ${n} recap`, `Team ${g.team_a} v Team ${g.team_b}`, `recap-game-${g.id}.png`, pname);
+  const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname);
   const paint = () => { paintScore(); paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
@@ -1897,7 +1924,7 @@ const pct = v => v == null ? '—' : `${Math.round(v * 100)}%`;
 const pts = v => v == null ? '—' : (Math.round(v * 10) / 10).toFixed(1);
 const plusPts = v => v == null ? '—' : `${v > 0 ? '+' : ''}${pts(v)}`;
 
-async function insightsView(sessions, pname) {
+async function insightsView(sessions, pname, tname) {
   const games = await q(sb.from('games').select('*').order('created_at'));
   const day = new Map(sessions.map(s => [s.id, s.played_on]));
   const a = analyze(games);
@@ -1921,7 +1948,7 @@ async function insightsView(sessions, pname) {
       a.k > 0 ? ` (about ${pts(a.k)} points per 1.0 of gap).` : '.', ' Hollow dots stopped early (time up).'),
     chartBox);
   scatterChart(chartBox, a.rows.map(r => ({ x: r.gap, y: r.m, early: !finished(r.g),
-    label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `Team ${r.g.team_a} v Team ${r.g.team_b}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
+    label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `${tname(r.g.session_id, r.g.team_a)} v ${tname(r.g.session_id, r.g.team_b)}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
 
   // Per game day.
   const bySes = sessions.map(s => ({ s, rows: a.rows.filter(r => r.g.session_id === s.id) })).filter(x => x.rows.length);
@@ -2018,7 +2045,7 @@ async function attendanceView(sessions, players, pname) {
 // ---------- season recap (organizers) ----------
 // Awards for a month, a few months or the year, from results (and tagged games), shared as an image.
 let seasonPick = 'month';
-async function seasonView(sessions, pname) {
+async function seasonView(sessions, pname, tname) {
   if (!sessions.length) return [h('div', { class: 'card empty' }, 'No game days saved yet.')];
   const ym = d => d.slice(0, 7);
   const now = today();
@@ -2043,6 +2070,7 @@ async function seasonView(sessions, pname) {
     const rallies = games.length ? await q(sb.from('rallies').select('game_id,id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
     const docs = games.map(g => ({ game: g, rallies: fromRows(rallies.filter(r => r.game_id === g.id)) })).filter(d => d.rallies.some(r => r.won));
     const rec = seasonRecap(ses, games, docs.length ? tally(docs) : null);
+    if (rec.closest) rec.closest.names = [tname(rec.closest.session_id, rec.closest.team_a), tname(rec.closest.session_id, rec.closest.team_b)];
     const names = who => who.map(id => pname.get(id) ?? 'Someone');
     let blob = null;
     const ready = seasonImage(rec, { title: label, name: id => pname.get(id) ?? 'Someone' }).then(b => (blob = b));
@@ -2058,7 +2086,7 @@ async function seasonView(sessions, pname) {
           h('button', { class: 'sm', disabled: !rec.games, onclick: async () => sharePng(blob ?? await ready, file) }, 'Share image')),
         rec.awards.length || rec.closest ? h('ul', { class: 'awards' },
           rec.awards.map(a => h('li', {}, h('b', {}, a.title), h('span', {}, names(a.who).join(', ')), h('span', { class: 'muted small' }, a.detail))),
-          rec.closest && h('li', {}, h('b', {}, 'Closest game'), h('span', {}, `Team ${rec.closest.team_a} v Team ${rec.closest.team_b}, ${rec.closest.score_a}–${rec.closest.score_b}`), h('span', { class: 'muted small' }, dayTitle(rec.closest.played_on))))
+          rec.closest && h('li', {}, h('b', {}, 'Closest game'), h('span', {}, `${rec.closest.names.join(' v ')}, ${rec.closest.score_a}–${rec.closest.score_b}`), h('span', { class: 'muted small' }, dayTitle(rec.closest.played_on))))
           : h('p', { class: 'muted' }, 'No games with scores in this stretch yet.')));
   };
   const sel = h('select', { 'aria-label': 'Period', onchange: e => { seasonPick = e.target.value; draw().catch(err => out.replaceChildren(h('p', { class: 'warn' }, err.message))); } },
@@ -3070,17 +3098,18 @@ async function lineupPage() {
   if (!days.length) return h('div', {}, head, h('div', { class: 'card empty' }, 'No teams shared yet. Check back on game day.'));
   return h('div', {}, head, days.map((d, i) => {
     const teams = d.teams.map(players => ({ players }));
-    let blob = null; const ready = courtImage(teams, { title: dayTitle(d.played_on), colors: TEAM_COLORS }).then(b => (blob = b));
+    const tn = teamNames(d.teams);
+    let blob = null; const ready = courtImage(teams, { title: dayTitle(d.played_on), colors: TEAM_COLORS, names: tn }).then(b => (blob = b));
     const mineAt = teams.findIndex(t => t.players.some(p => p.id === me.player_id));
     return h('section', { class: 'option' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on)),
-        mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on Team ${mineAt + 1}.`)),
+        mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on ${tn[mineAt]}.`)),
         h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
-        h('header', {}, h('h4', {}, `Team ${k + 1}`)),
+        h('header', {}, h('h4', {}, tn[k])),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
       d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
-        h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `Team ${g.team_a} v Team ${g.team_b}`)),
+        h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${tn[g.team_a - 1] ?? `Team ${g.team_a}`} v ${tn[g.team_b - 1] ?? `Team ${g.team_b}`}`)),
           h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))),
       i < days.length - 1 && h('hr', { class: 'sep' }));
   }));

@@ -1,4 +1,4 @@
-// Draw a lineup as a PNG: Team 1 v Team 2 on court 1, Team 3 v Team 4 on court 2, ...
+// Draw a lineup as a PNG: Team 1 v Team 2 (or the teams' names) on court 1, Team 3 v Team 4 on court 2, ...
 // An odd team out goes on a "next up" bench under the courts.
 // Each name carries its serving order (servingOrder in teams.mjs); a team of six stands in its starting rotation
 // (1 back right, 2 front right, 3 front middle, 4 front left, 5 back left, 6 back middle), so the first server is in 1.
@@ -92,8 +92,12 @@ function matchTitle(ctx, y, n, parts) {
   let x = PAD;
   ctx.font = `700 30px ${HEAD}`; ctx.fillStyle = '#9fb0e0';
   ctx.fillText(`COURT ${n}`, x, y); x += ctx.measureText(`COURT ${n}`).width + 24;
+  // Team names can be long ("Mohammed's Team"): shrink the line so it fits the image.
+  const font = (color, k) => color ? `700 ${Math.round(44 * k)}px ${HEAD}` : `600 ${Math.round(30 * k)}px ${HEAD}`;
+  const width = k => parts.reduce((w, [text, color]) => { ctx.font = font(color, k); return w + ctx.measureText(text).width + 16; }, 0);
+  const k = Math.min(1, (W - PAD - x) / width(1));
   for (const [text, color] of parts) {
-    ctx.font = color ? `700 44px ${HEAD}` : `600 30px ${HEAD}`;
+    ctx.font = font(color, k);
     ctx.fillStyle = color ?? '#9fb0e0';
     ctx.fillText(text, x, y); x += ctx.measureText(text).width + 16;
   }
@@ -110,7 +114,8 @@ function bench(ctx, y, team, label, color) {
 }
 
 // teams: [{players: [{name, setting}]}] -> Promise<Blob> (image/png)
-export async function courtImage(teams, { title = '', colors }) {
+// names: each team's name (default Team 1, Team 2, ...).
+export async function courtImage(teams, { title = '', colors, names = teams.map((_, k) => `Team ${k + 1}`) }) {
   try { await Promise.all([document.fonts.load(`700 44px ${HEAD}`), document.fonts.load(`600 30px ${BODY}`)]); } catch { /* fall back to system fonts */ }
   const courts = Math.floor(teams.length / 2), odd = teams.length % 2 ? teams[teams.length - 1] : null;
   const benchH = odd ? 90 + Math.ceil(odd.players.length / 3) * 76 : 0;
@@ -130,11 +135,11 @@ export async function courtImage(teams, { title = '', colors }) {
   let y = top;
   for (let c = 0; c < courts; c++) {
     const a = 2 * c, b = a + 1;
-    matchTitle(ctx, y + 50, c + 1, [[`TEAM ${a + 1}`, colors[a % colors.length]], ['vs'], [`TEAM ${b + 1}`, colors[b % colors.length]]]);
+    matchTitle(ctx, y + 50, c + 1, [[names[a].toUpperCase(), colors[a % colors.length]], ['vs'], [names[b].toUpperCase(), colors[b % colors.length]]]);
     court(ctx, y + 80, teams[a], teams[b], colors[a % colors.length], colors[b % colors.length]);
     y += COURT_H + 110;
   }
-  if (odd) bench(ctx, y + 50, odd, `Team ${teams.length}`, colors[(teams.length - 1) % colors.length]);
+  if (odd) bench(ctx, y + 50, odd, names[teams.length - 1], colors[(teams.length - 1) % colors.length]);
   ctx.font = `500 22px ${BODY}`; ctx.fillStyle = '#6f80b8'; ctx.textAlign = 'left';
   ctx.fillText('1–6 = serving order (a team of six starts in its rotation spots)   S = setter   B = backup', PAD, H - 24);
 

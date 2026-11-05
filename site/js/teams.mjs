@@ -407,13 +407,24 @@ const quantile = (xs, q) => {
 };
 const clamp = v => Math.min(1, Math.max(0, v));
 
+// Each team's name: its setter's ("Nasser's Team"), or "Team 3" when it has none.
+// teams: [[player, ...], ...] with name and setting (M main, B backup, N not a setter); allGame: ids of setters who set
+// all game (a player's own allGame flag counts too). More than one setter: the all-game setter, then main, then backup,
+// then whoever is listed first. Teams that would share a name keep their numbers.
+export function teamNames(teams, allGame = new Set()) {
+  const rank = p => !p || (p.setting !== 'M' && p.setting !== 'B') ? null : p.allGame || allGame.has(p.id) ? 0 : p.setting === 'M' ? 1 : 2;
+  const caps = teams.map(t => (t ?? []).filter(p => rank(p) != null).sort((a, b) => rank(a) - rank(b))[0]?.name?.trim() || null);
+  return caps.map((c, k) => c && caps.filter(x => x === c).length === 1 ? `${c}'s Team` : `Team ${k + 1}`);
+}
+
 // What's off about a split, in plain words, using the same rules buildTeams balances.
 // teams: [[player, ...], ...] (players with id, name, setting, gender, unrated); skills: Map id -> skills.
 // -> [{ key, text, short, rating }]: key stays the same while the problem lasts (to tell fixed from new after a swap),
 // text is the full story with every team's count and names, short fits in a suggestion line, rating = comes from ratings.
 export function teamProblems(teams, skills, apart = [], together = [], { spreadWomen = true } = {}) {
   const out = [];
-  const label = k => `Team ${k + 1}`;
+  const tn = teamNames(teams.map(t => t.map(p => ({ ...p, allGame: !!skills.get(p.id)?.allGame }))));
+  const label = k => tn[k];
   const names = ps => ps.map(p => p.name).join(', ');
   teams.forEach((t, k) => {
     const mains = t.filter(p => p.setting === 'M'), backs = t.filter(p => p.setting === 'B');

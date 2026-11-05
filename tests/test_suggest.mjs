@@ -13,9 +13,9 @@ const byId = new Map(players.map(p => [p.id, p]));
 
 const txt = ps => ps.map(x => x.text);
 const probs = txt(teamProblems(teams.map(t => t.map(id => byId.get(id))), skills));
-ok(probs.includes('Team 1 has no setter or backup setter') && probs.includes('Team 2 has 2 main setters (P5, P6)'), `problems: ${probs}`);
+ok(probs.includes('Team 1 has no setter or backup setter') && probs.includes("P5's Team has 2 main setters (P5, P6)"), `problems: ${probs}`);
 const weak = probs.find(x => x.startsWith('Weak passers'));
-ok(weak === 'Weak passers (receiving .25 or below, not counting setters who set all game) are bunched up: Team 1 has none · Team 2 has 2 (P5, P6). Best is no more than 1 apart.', `weak text: ${weak}`);
+ok(weak === "Weak passers (receiving .25 or below, not counting setters who set all game) are bunched up: Team 1 has none · P5's Team has 2 (P5, P6). Best is no more than 1 apart.", `weak text: ${weak}`);
 
 const { base, suggestions } = suggestSwaps({ players, skills, teams });
 ok(suggestions.length >= 1 && suggestions.length <= 3, `count ${suggestions.length}`);
@@ -35,7 +35,7 @@ ok(tog.suggestions.every(s => s.swaps.flat().every(id => ![1, 2, 5, 6].includes(
 // A together pair on different teams: listed, and the top suggestion reunites them.
 const splitPair = [[3, 7]];
 const sp = txt(teamProblems(teams.map(t => t.map(id => byId.get(id))), skills, [], splitPair));
-ok(sp.includes('P3 is on Team 1 and P7 is on Team 2 (set to play together)'), `split together pair listed: ${sp}`);
+ok(sp.includes("P3 is on Team 1 and P7 is on P5's Team (set to play together)"), `split together pair listed: ${sp}`);
 const re = suggestSwaps({ players, skills, teams, combos: splitPair });
 const tOf = (ts, id) => ts.findIndex(t => t.includes(id));
 ok(re.suggestions.length && tOf(re.suggestions[0].teams, 3) === tOf(re.suggestions[0].teams, 7), 'top suggestion reunites the pair');
