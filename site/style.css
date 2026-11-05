@@ -22,6 +22,8 @@
 }
 
 * { box-sizing: border-box; }
+/* hidden always hides, even on elements whose class sets display (flex rows, cards, grids). */
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -133,7 +135,6 @@ body, .top { transition: padding .28s ease; }
 .guide-panel .guide-item { margin-top: 10px; transition: border-color .2s, background .2s; }
 .guide-panel .guide-item.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--surface-2)); }
 .guide-fab { position: fixed; right: 16px; bottom: 16px; z-index: 15; border-radius: 999px; padding: 10px 18px; box-shadow: var(--shadow); }
-.guide-fab[hidden] { display: none; }
 @media (min-width: 900px) {
   .guide-panel { top: 0; right: 0; bottom: 0; width: 360px; border: 0; border-left: 1px solid var(--line); border-radius: 0; transform: translateX(100%); }
   body.guide-open { padding-right: 360px; }
@@ -193,7 +194,6 @@ body, .top { transition: padding .28s ease; }
 .build .count { color: var(--fg); font-variant-numeric: tabular-nums; }
 .build-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 18px; }
 .saved-line { margin: -4px 0 0; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--ok) 12%, var(--surface)); color: var(--fg); }
-.saved-line[hidden] { display: none; }
 .empty-list { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
 a.button { display: inline-flex; align-items: center; min-height: 44px; padding: 9px 16px; border-radius: 10px; background: var(--primary); color: var(--primary-fg); font-weight: 600; text-decoration: none; }
 a.button:hover { filter: brightness(1.08); }
@@ -220,14 +220,12 @@ details.fold + details.fold, .card + details.fold { margin-top: -6px; }
 .option-tabs button span { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .option-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
 .option-tabs + .option { margin-top: 14px; }
-.option[hidden] { display: none; }
 .option-foot { margin-top: 10px; }
 .option-foot .muted { margin: 0; }
 .hide-skills .team .stats, .hide-skills .weights { display: none; }
 /* Super's "Ratings from" chips: on = filled with a tick, off = faded and crossed out. */
 .rater-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .rater-chips > button.sm { min-height: 36px; }
-.need-rater[hidden] { display: none; }
 .rater-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 12px 4px 5px; border-radius: 999px;
   background: color-mix(in srgb, var(--primary) 14%, var(--surface)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent); font-weight: 600; }
 .rater-chip .tick { color: var(--primary); font-weight: 800; }
@@ -496,7 +494,6 @@ button.tag-grade.lost { border-color: var(--danger); background: color-mix(in sr
   .tag-teams { grid-template-columns: 1fr; }
   .tag-players { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
 }
-.seg[hidden] { display: none; }
 
 /* ---------- club: sign-ups, lineup, profiles, attendance, season ---------- */
 .chip.me { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--surface-2)); }
@@ -590,7 +587,6 @@ h2, h3, h4 { text-wrap: balance; }
 .option-actions > button, .option-actions > details > summary { min-height: 44px; }
 .option-actions > button:not(.ghost) { padding-inline: 18px; font-size: .92rem; }
 .option-actions .menu-list { left: auto; right: 0; }
-.option-actions .menu-list > button[hidden] { display: none; }
 /* Teams sit in rows that fit their count: 2 or 4 as pairs, 3, 5 or 6 in threes. */
 @media (min-width: 641px) { .team-grid[data-n="2"], .team-grid[data-n="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 900px) { .team-grid[data-n="3"], .team-grid[data-n="5"], .team-grid[data-n="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
