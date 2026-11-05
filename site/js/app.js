@@ -19,7 +19,8 @@ const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: 'Srv', b
 const LABEL = { receiving: 'Receiving', hitting: 'Hitting', hustle: 'Hustle', serve: 'Serve', blocking: 'Blocking', setting_skill: 'Setting', consistency: 'Consistency' };
 // Rated only for players marked as setters (main or backup).
 const forPlayer = (s, p) => s !== 'setting_skill' || (p.setting && p.setting !== 'N');
-const RATING_OPTIONS = [[null, 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
+// 'U' is a tap on don't know. A skill with nothing pressed hasn't been answered yet.
+const RATING_OPTIONS = [['U', 'U', 'u'], [0, '0'], [.25, '.25'], [.5, '.5'], [.75, '.75'], [1, '1']];
 const TIER_OPTIONS = TIERS.map(t => [t, t[0].toUpperCase() + t.slice(1)]);
 const TEAM_COLORS = ['#2f6fde', '#e8663a', '#18a36f', '#c99400', '#8b5cf6', '#d6407a'];
 // Players (role 'player', from the club upgrade) don't rate: they sign up for game days and see published teams.
@@ -332,18 +333,27 @@ function ratingGuide(onToggle) {
 // Ratings older than this are worth another look.
 const STALE_DAYS = 120;
 async function ratePage() {
-  const [players, mine, queue] = await Promise.all([
+  const [players, mine, queue, hasUnknown] = await Promise.all([
     q(sb.from('players').select('*').eq('active', true).order('name')), // * so it works before the anchor column exists
     q(sb.from('ratings').select('*').eq('rater_id', me.id)),
     callFn('rate-queue', {}).catch(() => null),
+    // The unknown column (rating_unknown.sql) tells don't know apart from not answered yet.
+    q(sb.from('ratings').select('unknown').limit(1)).then(() => true, () => false),
   ]);
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
+  const asked = p => RATED.filter(s => forPlayer(s, p));
+  const unknownOf = r => r?.unknown ?? [];
+  const answered = p => { const r = byPlayer.get(p.id); return r ? asked(p).filter(s => r[s] != null || unknownOf(r).includes(s)).length : 0; };
+  // Rated = every skill answered. Before the upgrade a blank can't be told from U, so any saved row counts.
+  const done = p => hasUnknown ? answered(p) === asked(p).length : byPlayer.has(p.id);
+  // What a skill row shows: the number, U if they said don't know, or nothing pressed if not answered yet.
+  const shown = (r, s) => r?.[s] != null ? Number(r[s]) : (hasUnknown ? unknownOf(r).includes(s) : r != null) ? 'U' : undefined;
   let onlyPlaying = false, onlyUnrated = false, onlyLook = false, search = '';
   // Why a player is worth a (fresh) look: ids only from the server, never which way.
   const sets = { results: new Set(queue?.results), few: new Set(queue?.few), anchors: new Set(queue?.anchors ?? players.filter(p => p.anchor).map(p => p.id)) };
   const reasons = p => {
     const r = byPlayer.get(p.id), out = [];
-    if (sets.anchors.has(p.id) && !r) out.push('Anchor player: rate them first');
+    if (sets.anchors.has(p.id) && !done(p)) out.push('Anchor player: rate them first');
     if (sets.results.has(p.id)) out.push('Results don\'t match their ratings');
     if (sets.few.has(p.id)) out.push('Few people have rated them');
     if (r?.updated_at && Date.now() - Date.parse(r.updated_at) > STALE_DAYS * 864e5) out.push(`Your rating is over ${Math.round(STALE_DAYS / 30)} months old`);
@@ -352,7 +362,7 @@ async function ratePage() {
   const lookCard = h('div', { class: 'card' });
   const paintLook = () => {
     const list = players.map(p => ({ p, why: reasons(p) })).filter(x => x.why.length);
-    const anchorsLeft = players.filter(p => sets.anchors.has(p.id) && !byPlayer.has(p.id));
+    const anchorsLeft = players.filter(p => sets.anchors.has(p.id) && !done(p));
     lookCard.hidden = !list.length;
     lookCard.replaceChildren(
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Worth a fresh look'),
@@ -370,18 +380,21 @@ async function ratePage() {
   guide.init();
   const bar = h('span'), countEl = h('span', { class: 'small muted' });
   const progress = () => {
-    const n = players.filter(p => byPlayer.has(p.id)).length;
+    const n = players.filter(done).length;
     bar.style.width = `${players.length ? n / players.length * 100 : 0}%`;
     countEl.textContent = `${n} of ${players.length} players rated`;
   };
 
-  const save = async (pid, skill, value) => {
-    const row = { ...Object.fromEntries(RATED.map(s => [s, null])), ...byPlayer.get(pid), [skill]: value };
+  const save = async (pid, skill, picked) => {
+    const value = picked === 'U' ? null : picked, prev = byPlayer.get(pid);
+    const row = { ...Object.fromEntries(RATED.map(s => [s, null])), ...prev, [skill]: value };
+    // U goes on the unknown list; a number takes the skill off it.
+    const unknown = hasUnknown ? { unknown: [...unknownOf(prev).filter(s => s !== skill), ...(picked === 'U' ? [skill] : [])] } : {};
     // Send Setting only when it's the skill tapped or the saved row has it, so other taps still save before the
     // setting_skill column is added in Supabase.
     const cols = RATED.filter(s => s !== 'setting_skill' || skill === s || (byPlayer.get(pid) && s in byPlayer.get(pid)));
     try {
-      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(cols.map(s => [s, row[s]])) }).select().single());
+      const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(cols.map(s => [s, row[s]])), ...unknown }).select().single());
       byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); paintLook(); toast('Saved');
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
@@ -390,8 +403,12 @@ async function ratePage() {
   const card = p => {
     const r = byPlayer.get(p.id);
     const totalEl = h('div', { class: 'totals' });
+    const leftEl = h('span', { class: 'muted small answered' });
     const paint = () => {
       const row = byPlayer.get(p.id);
+      // How far along a started card is, so a half-rated player doesn't look finished.
+      const n = answered(p), of = asked(p).length;
+      leftEl.textContent = hasUnknown && n > 0 && n < of ? `${n} of ${of}` : '';
       const known = row && SKILLS.every(s => row[s] != null);
       const sk = known ? Object.fromEntries(SKILLS.map(s => [s, Number(row[s])])) : null;
       totalEl.replaceChildren(
@@ -402,16 +419,16 @@ async function ratePage() {
     return h('div', { class: 'card player-card' },
       h('header', {}, avatar(p.name), h('b', {}, p.name), sets.anchors.has(p.id) && h('span', { class: 'badge backup', title: 'Anchor player: everyone rates them, so SetMe can compare raters' }, 'Anchor'),
         reasons(p).length > 0 && !sets.anchors.has(p.id) && h('span', { class: 'badge', title: reasons(p).join(' · ') }, 'Look again'),
-        p.playing && h('span', { class: 'badge on' }, 'Playing')),
+        p.playing && h('span', { class: 'badge on' }, 'Playing'), leftEl),
       RATED.filter(s => forPlayer(s, p)).map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
-        seg(RATING_OPTIONS, r?.[s] == null ? null : Number(r[s]), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
+        seg(RATING_OPTIONS, shown(r, s), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
       totalEl);
   };
   const draw = () => {
-    // Unrated = no rating saved yet, same as the progress count. A card stays put after a tap until the list is redrawn.
-    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !byPlayer.has(p.id)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))
+    // Still to rate = not every skill answered, same as the progress count. A card stays put after a tap until the list is redrawn.
+    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !done(p)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))
       // Anchors you haven't rated come first, so a new rater starts with them.
-      .sort((a, b) => (sets.anchors.has(b.id) && !byPlayer.has(b.id)) - (sets.anchors.has(a.id) && !byPlayer.has(a.id)));
+      .sort((a, b) => (sets.anchors.has(b.id) && !done(b)) - (sets.anchors.has(a.id) && !done(a)));
     grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, 'No players match.')]));
   };
   progress(); draw();
@@ -432,7 +449,7 @@ async function ratePage() {
       : null;
     const apply = async () => {
       try {
-        await q(sb.from('ratings').upsert(rows.map(r => ({ rater_id: raterId, player_id: r.player.id, ...r.values }))));
+        await q(sb.from('ratings').upsert(rows.map(r => ({ rater_id: raterId, player_id: r.player.id, ...r.values, ...(hasUnknown && { unknown: r.unknown }) }))));
         toast(`${rows.length} ratings imported`);
         if (raterId !== me.id) sb.from('audit_log').insert({ action: 'ratings imported', detail: { players: rows.length, for: raterId, file: file.name } }).then(() => {}, () => {});
         if (raterId === me.id) render(); else importBox.replaceChildren();
@@ -450,7 +467,7 @@ async function ratePage() {
       list(`${unmatched.length} names not recognized (skipped)`, unmatched, 'off'),
       h('div', { class: 'row', style: 'margin-top:14px; align-items:end' }, raterPick,
         h('button', { class: 'ball', onclick: apply, disabled: !rows.length }, `Import ${rows.length} ratings`),
-        h('span', { class: 'muted small' }, 'Replaces existing ratings for these players. Empty cells and U count as unknown.'))));
+        h('span', { class: 'muted small' }, hasUnknown ? 'Replaces existing ratings for these players. U means don\'t know; empty cells stay unanswered.' : 'Replaces existing ratings for these players. Empty cells and U count as unknown.'))));
     importBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   const downloadCsv = (text, name) => downloadFile(text, name, 'text/csv');
@@ -471,13 +488,15 @@ async function ratePage() {
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
         h('div', { class: 'filter-chips', role: 'group', 'aria-label': 'Show only' },
           filterChip('Playing this session', v => { onlyPlaying = v; draw(); }),
-          filterChip('Not rated yet', v => { onlyUnrated = v; draw(); }),
+          filterChip(hasUnknown ? 'Still to rate' : 'Not rated yet', v => { onlyUnrated = v; draw(); }),
           filterChip('Worth a look', v => { onlyLook = v; draw(); })))),
     lookCard,
     layout);
 }
 
 // ---------- players (organizers) ----------
+// Who was playing before the last paste or clear, so Undo can put the list back. Lasts while the page is open.
+let playingUndo = null;
 async function playersPage() {
   const players = await q(sb.from('players').select('*').order('name'));
   const update = async (p, patch) => {
@@ -535,16 +554,28 @@ async function playersPage() {
   const checkPaste = () => {
     const { matched, waitlist, unmatched } = matchPasted(box.value, players);
     if (!matched.length && !waitlist.length && !unmatched.length) return pasteResult.replaceChildren();
+    // The paste replaces the whole list, so say who comes off it (and who's new) before anything changes.
+    const now = new Set(players.filter(p => p.playing).map(p => p.id)), next = new Set(matched.map(m => m.player.id));
+    const adding = matched.filter(m => !now.has(m.player.id)), removing = players.filter(p => now.has(p.id) && !next.has(p.id));
     const apply = async () => {
+      const before = [...now];
       try {
         await q(sb.from('players').update({ playing: false }).eq('playing', true));
         if (matched.length) await q(sb.from('players').update({ playing: true, active: true }).in('id', matched.map(m => m.player.id)));
+        playingUndo = { ids: before, what: `Playing list set to ${matched.length}${removing.length ? `, ${removing.length} taken off` : ''}.` };
         toast(`${matched.length} players set as playing`); render();
       } catch (err) { toast(err.message); }
     };
-    pasteResult.replaceChildren(
+    const section = (title, note, list, cls) => list.length > 0 && [
+      h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, title), note && h('span', { class: 'muted' }, note)),
+      h('div', { class: 'chips' }, list.map(([name, line]) => h('span', { class: `chip plain ${cls}`, title: line }, name)))];
+    // Wrapped in a div: h() skips false and flattens lists, replaceChildren doesn't.
+    pasteResult.replaceChildren(h('div', {},
       h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, `${matched.length} matched`)),
       h('div', { class: 'chips' }, matched.map(m => h('span', { class: 'chip plain', title: m.line }, m.player.name))),
+      section(`${removing.length} taken off`, ' (playing now, not in the paste)', removing.map(p => [p.name]), ''),
+      section(`${adding.length} new to the list`, null, adding.map(m => [m.player.name, m.line]), ''),
+      matched.length > 0 && !removing.length && !adding.length && h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'Same as the current playing list.'),
       waitlist.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' }, h('b', {}, `${waitlist.length} on the waitlist`), ' (not ticked)'),
       waitlist.length > 0 && h('div', { class: 'chips' }, waitlist.map(m => h('span', { class: 'chip plain off', title: m.line }, m.player.name))),
       unmatched.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' },
@@ -552,18 +583,31 @@ async function playersPage() {
       unmatched.length > 0 && h('div', { class: 'chips' }, unmatched.map(l => h('span', { class: 'chip plain off' }, l))),
       h('div', { class: 'row', style: 'margin-top:14px' },
         h('button', { class: 'ball', onclick: apply, disabled: !matched.length }, `Set playing list (${matched.length})`),
-        h('span', { class: 'muted small' }, 'Replaces the current playing list.')));
+        h('span', { class: 'muted small' }, removing.length ? `Takes ${removing.length} off. You can undo it.` : 'Replaces the current playing list.'))));
   };
   box.addEventListener('input', checkPaste);
 
   const clearPlaying = async () => {
     if (!confirm('Untick everyone from the Playing list?')) return;
-    try { await q(sb.from('players').update({ playing: false }).eq('playing', true)); render(); }
-    catch (err) { toast(err.message); }
+    const before = players.filter(p => p.playing).map(p => p.id);
+    try {
+      await q(sb.from('players').update({ playing: false }).eq('playing', true));
+      playingUndo = { ids: before, what: `Playing list cleared (${before.length} taken off).` }; render();
+    } catch (err) { toast(err.message); }
+  };
+  const undoPlaying = async () => {
+    try {
+      await q(sb.from('players').update({ playing: false }).eq('playing', true));
+      if (playingUndo.ids.length) await q(sb.from('players').update({ playing: true }).in('id', playingUndo.ids));
+      toast(`Playing list put back (${playingUndo.ids.length})`); playingUndo = null; render();
+    } catch (err) { toast(`Not undone: ${err.message}`); }
   };
 
   return h('div', {},
     pageHead('Players', 'Who\'s playing this session, and each player\'s setter role.', countEl),
+    playingUndo && h('div', { class: 'card undo-line', role: 'status' }, h('span', {}, playingUndo.what),
+      h('button', { class: 'ghost sm', onclick: undoPlaying }, 'Undo'),
+      h('button', { class: 'ghost sm', 'aria-label': 'Dismiss', onclick: e => { playingUndo = null; e.target.closest('.undo-line').remove(); } }, '×')),
     me.role === 'super' && h('form', { class: 'card add-player', onsubmit: add },
       h('div', { class: 'row' }, name, h('button', {}, 'Add player')),
       h('div', { class: 'field' }, h('span', {}, 'Level until rated'), tierPick)),

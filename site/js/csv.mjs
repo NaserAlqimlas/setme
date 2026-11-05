@@ -31,7 +31,7 @@ export function parseCsv(text) {
   return rows.filter(r => r.some(f => f.trim()));
 }
 
-// -> { rows: [{ player, values: {receiving..} }], unmatched: [name], errors: [message], blank: [name] }
+// -> { rows: [{ player, values: {receiving..}, unknown: [skills marked U] }], unmatched: [name], errors: [message], blank: [name] }
 export function readRatingsCsv(text, players) {
   const [header, ...lines] = parseCsv(text);
   if (!header) return { rows: [], unmatched: [], blank: [], errors: ['The file is empty.'] };
@@ -44,11 +44,11 @@ export function readRatingsCsv(text, players) {
   for (const line of lines) {
     const name = (line[nameCol] ?? '').replace(/[\u200B-\u200F\u2060\uFEFF]/g, '').trim();
     if (!name) continue;
-    const values = {};
+    const values = {}, unknown = [];
     let bad = false;
     for (const s of RATED.filter(s => cols.includes(s))) {
       const raw = (line[cols.indexOf(s)] ?? '').trim();
-      if (raw === '' || /^u$/i.test(raw)) { values[s] = null; continue; }
+      if (raw === '' || /^u$/i.test(raw)) { values[s] = null; if (raw) unknown.push(s); continue; }
       const v = Number(raw.replace(',', '.'));
       if (!VALID.includes(v)) { errors.push(`${name}: ${s} is "${raw}" (use 0, .25, .5, .75, 1 or U)`); bad = true; }
       else values[s] = v;
@@ -59,7 +59,7 @@ export function readRatingsCsv(text, players) {
     if (seen.has(player.id)) { errors.push(`${name}: ${player.name} appears more than once; using the first row`); continue; }
     seen.add(player.id);
     if (Object.values(values).every(v => v == null)) { blank.push(player.name); continue; }
-    rows.push({ player, values });
+    rows.push({ player, values, unknown });
   }
   return { rows, unmatched, blank, errors };
 }
@@ -75,10 +75,11 @@ export function ratingsTemplate(players) {
 }
 
 // Your saved ratings in the same layout, so the file imports straight back. byPlayer: Map player id -> ratings row.
-// Unrated players get an empty row; a saved but unknown skill is U. The setting column holds the player's setter letter.
+// Unrated players get an empty row; a skill marked don't know is U, one not answered yet is empty
+// (rows saved before the unknown column existed have no list, so their blanks are U as before). The setting column holds the player's setter letter.
 export function ratingsExport(players, byPlayer) {
   return toFile(players.map(p => {
     const r = byPlayer.get(p.id);
-    return [esc(p.name), ...COLS.map(c => c === null ? (p.setting ?? '') : !r ? '' : r[c] == null ? 'U' : String(Number(r[c])))].join(',');
+    return [esc(p.name), ...COLS.map(c => c === null ? (p.setting ?? '') : !r ? '' : r[c] != null ? String(Number(r[c])) : !r.unknown || r.unknown.includes(c) ? 'U' : '')].join(',');
   }));
 }
