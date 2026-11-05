@@ -87,7 +87,7 @@ function accountMenu() {
     h('div', { class: 'menu-list', role: 'menu' },
       h('p', { class: 'small' }, h('b', {}, me.display_name), h('br'), h('span', { class: 'muted' }, `${session.user.email}, ${me.role}`)),
       me.player_id && h('a', { href: `#player/${me.player_id}`, role: 'menuitem', onclick: () => { box.open = false; } }, 'My profile'),
-      h('button', { type: 'button', role: 'menuitem', onclick: () => sb.auth.signOut() }, 'Sign out')));
+      h('button', { type: 'button', role: 'menuitem', onclick: () => { teamsStore.clear(); sb.auth.signOut(); } }, 'Sign out')));
   return box;
 }
 // Close any open menu on an outside click or Escape.
@@ -916,8 +916,15 @@ async function teamsPage() {
     catch (e) { toast(e.message); draw(); }
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
-  const draw = () => { out.dataset.shows = 'built'; out.replaceChildren(...showTeams(built, {
-    view, onSwap: edit, pool, open, onOpen: i => { open = i; },
+  // Kept after each change. Undo goes back 10 steps per option at most, and is dropped if storage is full.
+  const keepBuilt = () => {
+    const state = { built, builtWith, checked, locks: locks.map(l => l ? [...l] : null), view, open };
+    teamsStore.write({ shows: 'built', own: null, built: { ...state, undos: undos.map(u => u?.slice(-10) ?? null), changes } })
+      || teamsStore.write({ shows: 'built', own: null, built: { ...state, undos: [], changes: [] } });
+  };
+  ownTeams.onRun = () => { restoredLine.hidden = restoring ? restoredLine.hidden : true; teamsStore.write({ shows: 'own', built: null, own: ownTeams.snapshot() }); };
+  const draw = () => { out.dataset.shows = 'built'; if (!restoring) restoredLine.hidden = true; keepBuilt(); out.replaceChildren(...showTeams(built, {
+    view, onSwap: edit, pool, open, onOpen: i => { open = i; keepBuilt(); },
     edited: i => undos[i]?.length > 0,
     notice: i => changes[i] && changeLine(changes[i], built.options[i], () => undo(i)),
     onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
@@ -955,6 +962,34 @@ async function teamsPage() {
     btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
   new MutationObserver(() => markSaved()).observe(out, { childList: true });
+  // Coming back: put back what was on screen (built options as they were; own teams checked again).
+  const restoredLine = h('div', { class: 'card undo-line restored-line', role: 'status', hidden: true });
+  const clearKept = () => {
+    teamsStore.write({ shows: null, built: null, own: null });
+    built = null; checked = []; undos = []; locks = []; changes = []; view = null; ownTeams.reset();
+    out.dataset.shows = ''; out.replaceChildren(); restoredLine.hidden = true;
+  };
+  let restoring = false;
+  const kept = teamsStore.read();
+  if (kept?.shows === 'built' && kept.built?.built?.options?.length) {
+    restoring = true;
+    ({ built, builtWith, checked = [], undos = [], changes = [], view = null, open = 0 } = kept.built);
+    locks = (kept.built.locks ?? []).map(l => l ? new Set(l) : null);
+    pool = await ownTeams.roster().catch(() => null);
+    draw();
+    restoring = false;
+  } else if (kept?.shows === 'own' && kept.own?.current) {
+    restoring = true;
+    // Offline or the check failed: say so and keep what's stored, so the next visit can try again.
+    await ownTeams.restore(kept.own).catch(e => { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, `Couldn't bring back your teams: ${e.message}. Reload to try again.`)); });
+    restoring = false;
+  }
+  if (out.dataset.shows) {
+    const at = new Date(kept.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    restoredLine.replaceChildren(h('span', {}, `Restored your ${out.dataset.shows === 'built' ? 'options' : 'teams'} from ${at}.`),
+      h('button', { type: 'button', class: 'ghost sm', onclick: clearKept }, 'Clear'));
+    restoredLine.hidden = false;
+  }
   const nobody = !playing.length && h('div', { class: 'card empty-list' },
     h('p', { style: 'margin:0' }, h('b', {}, 'Nobody is on the playing list yet.'), ' Paste the WhatsApp list or tick who\'s playing on Players, then come back to build.'),
     h('a', { class: 'button', href: '#players' }, 'Go to Players'));
@@ -976,6 +1011,7 @@ async function teamsPage() {
     options,
     newPlayers,
     ownTeams,
+    restoredLine,
     out,
     drafts);
 }
@@ -1050,6 +1086,7 @@ function ownTeamsCard(out, getOptions) {
       onUndo: undo,
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    card.onRun?.();
   };
   // The results area holds either built options or these teams. Ask before replacing work that would be lost.
   const okToReplace = async (what, ok) => {
@@ -1087,6 +1124,15 @@ function ownTeamsCard(out, getOptions) {
   document.addEventListener('setterplan', () => card.refresh());
   card.roster = roster;
   card.edited = () => history.length > 0;
+  // Kept on this device between visits (teamsStore): what's pasted and the checked teams with their swaps and locks.
+  card.snapshot = () => ({ text: box.value, current, history: history.slice(-20), locked: [...locked], viewRater, teamsTitle, draftId });
+  card.restore = async st => {
+    box.value = st.text ?? ''; if (box.value) { update(); card.open = true; }
+    current = st.current; history = st.history ?? []; locked.clear(); (st.locked ?? []).forEach(id => locked.add(id));
+    viewRater = st.viewRater ?? null; teamsTitle = st.teamsTitle ?? null; draftId = st.draftId ?? null; changedFrom = null;
+    await run();
+  };
+  card.reset = () => { current = null; history = []; locked.clear(); changedFrom = null; teamsTitle = null; draftId = null; };
   return card;
 }
 
@@ -1118,6 +1164,32 @@ function suggestionsPanel(res, { onApply, onUndo }) {
 }
 
 let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
+
+// Work on Teams kept on this device, so a reload, a locked phone or a trip to WhatsApp doesn't lose it: the built
+// options with their swaps, Undo and locks, or your own checked teams, plus combos, the setter plan and the switches.
+// Kept until its game day has passed; cleared on sign out. Only this device has it (to hand over, save the teams).
+// { at, day, shows: 'built' | 'own', built, own, combos, setterPlan, switches }
+const TEAMS_KEY = 'setme.teams';
+const teamsStore = {
+  read() { try { const v = JSON.parse(localStorage.getItem(TEAMS_KEY)); return v?.day && v.day >= today() ? v : null; } catch { return null; } },
+  write(patch) {
+    const v = { ...(this.read() ?? {}), ...patch, at: Date.now(), day: gameDate,
+      combos: sessionCombos, setterPlan: [...setterPlan], switches: { mixTeammates, adjustResults, spreadWomen } };
+    try { localStorage.setItem(TEAMS_KEY, JSON.stringify(v)); return true; } catch { return false; } // full or blocked
+  },
+  clear() { try { localStorage.removeItem(TEAMS_KEY); } catch { /* nothing kept */ } },
+};
+{
+  const kept = teamsStore.read();
+  if (kept) {
+    gameDate = kept.day;
+    sessionCombos.push(...(kept.combos ?? []));
+    for (const [id, v] of kept.setterPlan ?? []) setterPlan.set(id, v);
+    ({ mixTeammates = mixTeammates, adjustResults = adjustResults, spreadWomen = spreadWomen } = kept.switches ?? {});
+  }
+}
+// Combos, setters and switches change without a redraw: keep them when the page is left or hidden.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') teamsStore.write({}); });
 const dayTitle = iso => {
   const [y, m, d] = iso.split('-').map(Number);
   return iso ? new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : '';
