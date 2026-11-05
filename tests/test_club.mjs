@@ -92,3 +92,4 @@ const { combined } = combineRatings(players, rows);
 ok('new rater counts less', near(combined.get(0).skills.receiving, (1.5 + UNCALIBRATED_WEIGHT) / (3 + UNCALIBRATED_WEIGHT)), combined.get(0).skills.receiving);
 
 console.log(fail ? `${fail} failed` : 'ok');
+process.exit(fail ? 1 : 0);

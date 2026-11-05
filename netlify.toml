@@ -1,10 +1,13 @@
 [build]
+  # Tests run before every deploy; a failing test stops the deploy, so the live site keeps the last good version.
+  command = "npm test"
   publish = "site"
   functions = "netlify/functions"
 
 # site/config.js holds the Supabase URL and publishable key, which are public by design.
 # The secret key only lives in Netlify's environment variables and is still scanned for.
 [build.environment]
+  NODE_VERSION = "22"
   SECRETS_SCAN_OMIT_KEYS = "SUPABASE_URL"
   SECRETS_SCAN_OMIT_PATHS = "site/config.js"
 

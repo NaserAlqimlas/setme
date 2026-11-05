@@ -49,3 +49,4 @@ const ps = new Map(playerStats(fixed, 3).map(p => [p.id, p]));
 ok('player plus', ps.get(1).over === 5 && ps.get(1).wins === 4 && ps.get(2).over === -5 && ps.get(2).games === 4, [...ps.values()]);
 
 console.log(fail ? `${fail} failed` : 'ok');
+process.exit(fail ? 1 : 0);

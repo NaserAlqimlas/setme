@@ -1,8 +1,11 @@
 // Run: node tests/test_teams.mjs   (needs private/fixture.json from tools/make_seed.py)
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { combineRatings, buildTeams, SKILLS } from '../site/js/teams.mjs';
 
-const data = JSON.parse(readFileSync(new URL('../private/fixture.json', import.meta.url), 'utf8'));
+// The fixture holds everyone's ratings, so it never leaves this machine: CI and Netlify skip this test.
+const fixture = new URL('../private/fixture.json', import.meta.url);
+if (!existsSync(fixture)) { console.log('skipped: no private/fixture.json'); process.exit(0); }
+const data = JSON.parse(readFileSync(fixture, 'utf8'));
 const playing = data.players.filter(p => p.playing);
 const { combined, offsets, disagreements } = combineRatings(data.players, data.ratings);
 const skills = new Map([...combined].map(([id, c]) => [id, c.skills]));

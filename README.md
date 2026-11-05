@@ -107,8 +107,12 @@ Local runs use the **real** database. Building teams only reads, but ticking pla
 
 ## Tests
 
+`npm test` runs them all (Node 22 or later, nothing to install). GitHub runs it on every push, and Netlify runs it
+before every deploy: a failing test stops the deploy and the live site keeps the last good version. One at a time:
+
 ```
-node tests/test_teams.mjs          # team builder on your real data (needs private/fixture.json)
+node tests/test_load.mjs           # every browser module loads (app.js, ui.mjs, pages/): imports, syntax
+node tests/test_teams.mjs          # team builder on your real data (needs private/fixture.json; skipped without it)
 node tests/test_unknowns.mjs       # unrated players: inferred skills, levels, spreading
 node tests/test_raters.mjs         # rater leans with several raters
 node tests/test_setters.mjs        # setters spread when short
