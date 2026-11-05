@@ -559,3 +559,20 @@ button.filter-chip[aria-pressed=true]::before { content: '✓'; margin-right: 6p
 .standings li:first-child::before { color: var(--ball-fg); background: var(--ball); border-radius: 50%; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; font-size: 1rem; }
 .standings li b { color: var(--tc); font: 700 1.3rem/1 var(--display); }
 @media (max-width: 480px) { .standings li { grid-template-columns: 1.6rem 1fr auto; } .standings li > span:last-child { grid-column: 2 / -1; } }
+
+/* ---------- saved state and swap results (Teams) ---------- */
+a { color: var(--primary); text-underline-offset: 3px; }
+p.muted.small, .switch-row p { text-wrap: pretty; }
+.saved-line.differs { background: var(--warn-bg); color: var(--warn-fg); }
+.saved-line.differs a { color: inherit; }
+.option-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.saved-badge { display: none; background: color-mix(in srgb, var(--ok) 14%, var(--surface)); color: var(--fg); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.option.is-saved .saved-badge { display: inline-flex; }
+.tab-mark { font-weight: 500; color: var(--muted); }
+.saved-mark { display: none; color: var(--ok); font-weight: 650; }
+.option-tabs button.is-saved .saved-mark { display: inline; }
+.change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 12px; padding: 8px 8px 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.change-line p { margin: 0; flex: 1 1 220px; }
+.change-line.worse { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
+.change-line.worse button.ghost { color: var(--warn-fg); border-color: currentColor; }
+.build-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }

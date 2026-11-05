@@ -666,13 +666,44 @@ function comboCard(playing, combos, useSwitch) {
   return card;
 }
 
+// The teams saved for the picked date ({ day, key }), so whatever on screen matches gets a Saved mark. null: none, or unknown.
+let savedLineup = null;
+// Same teams in any order, with players in any order, give the same key.
+const lineupKey = teams => teams.map(t => [...t].sort((a, b) => a - b).join(',')).sort().join('|');
+const optionIds = opt => opt.teams.map(t => t.players.map(p => p.id));
+function markSaved() {
+  const key = savedLineup?.day === gameDate ? savedLineup.key : null;
+  document.querySelectorAll('[data-key]').forEach(el => el.classList.toggle('is-saved', el.dataset.key === key));
+  document.dispatchEvent(new Event('savedmarks'));
+}
+// Said right after a swap, next to the teams: who moved, how the gap changed, and Undo.
+function changeLine(before, after, onUndo) {
+  if (!before || !after) return null;
+  const gap = o => { const t = o.teams.map(x => x.weighted); return Math.max(...t) - Math.min(...t); };
+  const teamOf = new Map(before.teams.flatMap((t, k) => t.players.map(p => [p.id, k])));
+  const moved = after.teams.flatMap((t, k) => t.players.filter(p => teamOf.get(p.id) !== k).map(p => `${p.name} to Team ${k + 1}`));
+  const [g0, g1] = [gap(before), gap(after)];
+  const worse = g1 > g0 + 0.005;
+  const detail = me.role === 'super' || me.role === 'organizer';
+  return h('div', { class: `change-line${worse ? ' worse' : ''}`, role: 'status' },
+    h('p', { class: 'small' }, h('b', {}, moved.length ? `Moved ${moved.join(', ')}.` : 'Swapped.'), ' ',
+      detail ? `Gap ${fmt(g0)} → ${fmt(g1)}, ${worse ? 'less even' : g1 < g0 - 0.005 ? 'more even' : 'about the same'}.` : worse ? 'Less even than before.' : ''),
+    onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo'));
+}
+// Database upgrade messages: the super can run the SQL file; anyone else is told who can.
+const needsSql = (what, file) => me.role === 'super' ? `${what} need the database upgrade (supabase/${file})` : `${what} aren't set up yet. Ask the site owner to finish the upgrade.`;
+
 // Teams of about 6: the count the build starts on for this many players.
 const suggestTeams = n => Math.min(6, Math.max(2, Math.round(n / 6) || 4));
 const teamSizes = (n, k) => { const lo = Math.floor(n / k); return n % k ? `${lo} or ${lo + 1}` : String(lo); };
 // "Thursday's teams" for the save button; the button follows the date picked above.
 const dayName = iso => iso ? new Date(`${iso}T12:00`).toLocaleDateString(undefined, { weekday: 'long' }) : '';
 function saveButton(onclick) {
-  const btn = h('button', { class: 'sm', onclick });
+  const btn = h('button', { class: 'sm', onclick: async () => {
+    if (btn.disabled) return;
+    const text = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
+    try { await onclick(); } finally { btn.disabled = false; btn.textContent = text; }
+  } });
   const label = () => {
     if (!btn.isConnected && btn.dataset.drawn) return document.removeEventListener('gamedate', label);
     btn.dataset.drawn = '1';
@@ -737,11 +768,28 @@ async function teamsPage() {
     dayWords.textContent = gameDate ? dayTitle(gameDate) : 'Pick a date';
     if (!gameDate) { saved.hidden = true; return; }
     const day = gameDate;
-    const [row] = await q(sb.from('sessions').select('id').eq('played_on', day)).catch(() => []);
+    const [row] = await q(sb.from('sessions').select('id,teams').eq('played_on', day)).catch(() => []);
     if (day !== gameDate) return;
-    saved.hidden = !row;
-    saved.replaceChildren('✓ Teams are saved for ', h('b', {}, dayTitle(day)), '. ', h('a', { href: '#scores' }, 'Enter scores'));
+    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null } : null;
+    markSaved();
   };
+  // Which option on screen is the saved one, if any. Re-said whenever options or the saved teams change.
+  const paintSaved = () => {
+    if (!saved.isConnected && saved.dataset.drawn) return document.removeEventListener('savedmarks', paintSaved);
+    saved.dataset.drawn = '1';
+    const on = savedLineup?.day === gameDate;
+    saved.hidden = !on;
+    if (!on) return;
+    const shown = [...out.querySelectorAll('.option')];
+    const match = shown.find(o => o.classList.contains('is-saved'));
+    const day = h('b', {}, dayTitle(gameDate));
+    const scores = h('a', { href: '#scores' }, 'Enter scores');
+    saved.classList.toggle('differs', shown.length > 0 && !match);
+    saved.replaceChildren(...(match ? ['✓ ', match.querySelector('h3')?.textContent ?? 'These teams', ' is saved for ', day, '. ', scores]
+      : shown.length ? ['Teams are already saved for ', day, ', but not the ones below. Saving these replaces them. ', scores]
+      : ['✓ Teams are saved for ', day, '. ', scores]));
+  };
+  document.addEventListener('savedmarks', paintSaved);
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); paintDay(); };
   const onSaved = () => { if (!out.isConnected) return document.removeEventListener('lineupsaved', onSaved); paintDay(); };
   document.addEventListener('lineupsaved', onSaved);
@@ -755,7 +803,7 @@ async function teamsPage() {
   // suggestions, locks); the earlier version is kept for Undo. The raters and setters it was built with stay.
   // Per option i: checked[i] = the last check's response, undos[i] = earlier [option, check] pairs, locks[i] = locked ids.
   let built = null, builtWith = null, view = null, pool = null, open = 0;
-  let checked = [], undos = [], locks = [];
+  let checked = [], undos = [], locks = [], changes = [];
   const ids = i => built.options[i].teams.map(t => t.players.map(p => p.id));
   const check = async (i, teams) => {
     const res = await callFn('build-teams', { ...builtWith, teams, locked: [...(locks[i] ?? [])], suggestRater: view });
@@ -763,12 +811,14 @@ async function teamsPage() {
   };
   const edit = async (i, teams) => {
     const before = [built.options[i], checked[i]];
-    try { await check(i, teams); (undos[i] ??= []).push(before); draw(); toast('Swapped'); }
+    try { await check(i, teams); (undos[i] ??= []).push(before); changes[i] = before[0]; draw(); }
     catch (e) { toast(e.message); draw(); }
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
   const draw = () => out.replaceChildren(...showTeams(built, {
     view, onSwap: edit, pool, open, onOpen: i => { open = i; },
+    edited: i => undos[i]?.length > 0,
+    notice: i => changes[i] && changeLine(changes[i], built.options[i], () => undo(i)),
     onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
     onDraft: i => saveDraft(ids(i), builtWith, `Option ${i + 1}${checked[i] ? ' (swapped)' : ''}`).then(ok => ok && document.dispatchEvent(new Event('drafts'))),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
@@ -776,25 +826,31 @@ async function teamsPage() {
     onLock: (id, i) => { locks[i].has(id) ? locks[i].delete(id) : locks[i].add(id); recheck(i); },
     extra: i => checked[i] && suggestionsPanel(checked[i], {
       onApply: sg => edit(i, sg.teams),
-      onUndo: undos[i]?.length > 0 && (() => { [built.options[i], checked[i]] = undos[i].pop(); draw(); }),
+      onUndo: undos[i]?.length > 0 && (() => undo(i)),
     }),
   }));
+  const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; draw(); };
   btn.onclick = async () => {
-    if (checked.some(Boolean) && !confirm('Build new teams? The swaps you made on the options below will be lost.')) return;
+    if (undos.some(u => u?.length) && !confirm('Build new teams? The swaps you made on the options below will be lost. Teams already saved for the day stay saved.')) return;
     btn.disabled = true; btn.textContent = 'Building…'; out.classList.add('busy');
     try {
       builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
       [built, pool] = await Promise.all([callFn('build-teams', { numTeams, ...builtWith }), ownTeams.roster().catch(() => null)]);
-      checked = []; undos = []; locks = []; view = null;
+      checked = []; undos = []; locks = []; changes = []; view = null;
       // Open the most even option first.
       const gap = o => { const t = o.teams.map(x => x.weighted); return Math.max(...t) - Math.min(...t); };
       open = built.options.reduce((best, o, i) => gap(o) < gap(built.options[best]) ? i : best, 0);
       draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    catch (e) { out.replaceChildren(h('p', { class: 'warn' }, `Couldn't build teams: ${e.message}`)); }
+    catch (e) {
+      out.replaceChildren(h('div', { class: 'card build-error', role: 'alert' },
+        h('p', { class: 'warn', style: 'margin:0' }, `Couldn't build teams: ${e.message}`),
+        h('button', { type: 'button', class: 'ghost sm', onclick: () => btn.click() }, 'Try again')));
+    }
     out.classList.remove('busy');
     btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
+  new MutationObserver(() => markSaved()).observe(out, { childList: true });
   const nobody = !playing.length && h('div', { class: 'card empty-list' },
     h('p', { style: 'margin:0' }, h('b', {}, 'Nobody is on the playing list yet.'), ' Paste the WhatsApp list or tick who\'s playing on Players, then come back to build.'),
     h('a', { class: 'button', href: '#players' }, 'Go to Players'));
@@ -857,7 +913,7 @@ function ownTeamsCard(out, getOptions) {
   };
   // After a check: the teams as they stand now (player ids), earlier versions for Undo, and players locked in place.
   // viewRater: whose ratings the cards and suggestions use (null = the picked raters combined).
-  let current = null, history = [], viewRater = null;
+  let current = null, history = [], viewRater = null, lastOpt = null, changedFrom = null;
   const locked = new Set();
   const run = async ({ scroll = false } = {}) => {
     const opts = getOptions();
@@ -870,7 +926,8 @@ function ownTeamsCard(out, getOptions) {
       const p = (await roster()).find(x => x.id === id);
       setterPlan.set(id, !setsAllGame(p)); setterPlanChanged();
     };
-    const onSwap = (_, teams) => { history.push(current); current = teams; run().catch(e => { current = history.pop(); toast(e.message); run().catch(() => {}); }); };
+    const onSwap = (_, teams) => { history.push(current); changedFrom = lastOpt; current = teams; run().catch(e => { current = history.pop(); changedFrom = null; toast(e.message); run().catch(() => {}); }); };
+    const undo = history.length > 0 && (() => { current = history.pop(); changedFrom = null; run().catch(e => toast(e.message)); });
     const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
     const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, card.title ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
     const onUpdateDraft = card.draftId != null && (async () => {
@@ -879,16 +936,18 @@ function ownTeamsCard(out, getOptions) {
         toast('Draft updated'); document.dispatchEvent(new Event('drafts'));
       } catch (e) { toast(e.message); }
     });
-    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), extra: suggestionsPanel(res, {
-      onApply: sg => { history.push(current); current = sg.teams; run().then(() => toast('Swapped')).catch(e => toast(e.message)); },
-      onUndo: history.length > 0 && (() => { current = history.pop(); run().catch(e => toast(e.message)); }),
+    const notice = changeLine(changedFrom, res.options[0], undo);
+    lastOpt = res.options[0];
+    out.replaceChildren(...showTeams(res, { title: card.title ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), notice, extra: suggestionsPanel(res, {
+      onApply: sg => { history.push(current); changedFrom = lastOpt; current = sg.teams; run().catch(e => toast(e.message)); },
+      onUndo: undo,
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   check.onclick = async () => {
     card.title = null; card.draftId = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
-    history = []; locked.clear();
+    history = []; locked.clear(); changedFrom = null;
     check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
     try { await run({ scroll: true }); }
     catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
@@ -907,7 +966,7 @@ function ownTeamsCard(out, getOptions) {
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
   card.load = async (teams, title, draftId = null) => {
-    current = teams; history = []; locked.clear(); card.title = title; card.draftId = draftId;
+    current = teams; history = []; locked.clear(); changedFrom = null; card.title = title; card.draftId = draftId;
     try { await run({ scroll: true }); } catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
   document.addEventListener('setterplan', () => card.refresh());
@@ -1014,10 +1073,11 @@ const lockIcon = on => {
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
 // open: which option shows when there are several (a switcher picks); onOpen(i) is told when it changes.
+// edited(i): option i was swapped since it was built (marked on its tab). notice: shown above the teams, or i => that.
 // onSave(i): saves option i as the game day's teams for the Scores page.
 // onDraft(i): keeps option i as a draft to compare or come back to; onUpdateDraft(i) saves it over the draft it came from.
 // pool: active players ({ id, name, playing }) to replace someone with (tap them, then Replace with); goes through onSwap.
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool, extra, open = 0, onOpen } = {}) {
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool, extra, open = 0, onOpen, edited, notice } = {}) {
   const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
   const sections = [];
@@ -1031,7 +1091,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       sections.forEach((sec, n) => { sec.hidden = n !== i; });
       onOpen?.(i);
     };
-    res.options.forEach((opt, i) => tabs.append(h('button', { type: 'button', role: 'tab', id: `opt-tab-${i}`, 'aria-controls': `opt-${i}`,
+    res.options.forEach((opt, i) => tabs.append(h('button', { type: 'button', role: 'tab', id: `opt-tab-${i}`, 'aria-controls': `opt-${i}`, 'data-key': lineupKey(optionIds(opt)),
       onclick: () => show(i),
       onkeydown: e => {
         const to = { ArrowRight: i + 1, ArrowLeft: i - 1 }[e.key];
@@ -1039,7 +1099,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
         const n = (to + res.options.length) % res.options.length;
         show(n); tabs.children[n].focus();
       } },
-      h('b', {}, `Option ${i + 1}`),
+      h('b', {}, `Option ${i + 1}`, edited?.(i) ? h('span', { class: 'tab-mark' }, ' · swapped') : '', h('span', { class: 'tab-mark saved-mark' }, ' · saved')),
       h('span', { class: 'small' }, [detail && `Gap ${fmt(gapOf(opt))}`,
         res.variety > 0 && (opt.repeats?.length ? `${opt.repeats.length} repeat${opt.repeats.length === 1 ? '' : 's'}` : 'no repeats')].filter(Boolean).join(' · ')))));
     parts.push(tabs);
@@ -1118,7 +1178,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
               !detail && x.better && !x.fixes.length && 'more even',
             ].filter(Boolean).join(' · ')),
             x.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${x.adds.join('; ')}`)),
-          h('button', { type: 'button', class: x.better ? 'sm' : 'ghost sm', onclick: () => pick(x.team - 1, x.id) }, 'Swap')))));
+          h('button', { type: 'button', class: x.better ? 'sm' : 'ghost sm', onclick: () => pick(x.team - 1, x.id) }, x.better ? 'Swap' : 'Swap anyway')))));
     };
     const paint = () => {
       hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
@@ -1152,8 +1212,8 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       document.documentElement.classList.toggle('hide-skills', !showSkills);
       document.querySelectorAll('.skills-btn').forEach(b => { b.setAttribute('aria-pressed', String(showSkills)); b.textContent = showSkills ? 'Hide skill numbers' : 'Show skill numbers'; });
     } }, showSkills ? 'Hide skill numbers' : 'Show skill numbers');
-    const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null },
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
+    const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null, 'data-key': opt.teams.every(t => t.players.every(p => p.id != null)) ? lineupKey(optionIds(opt)) : null },
+      h('div', { class: 'card-head' }, h('div', {}, h('div', { class: 'option-title' }, h('h3', {}, title ?? `Option ${i + 1}`), h('span', { class: 'badge saved-badge' }, '✓ Saved')), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
         h('div', { class: 'actions' },
           onUpdateDraft && h('button', { class: 'ghost sm', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
           onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
@@ -1162,6 +1222,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           onSave && saveButton(() => onSave(i)))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
       canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
+      typeof notice === 'function' ? notice(i) : notice,
       grid, detail && h('div', { class: 'row option-foot' }, guessNote, h('span', { class: 'grow' }), skillsBtn),
       typeof extra === 'function' ? extra(i) : i === 0 && extra);
     sections.push(section);
@@ -1192,7 +1253,7 @@ async function saveDraft(teams, opts, label) {
       all_game: opts.allGame ?? [], combos: opts.combos ?? [] }));
     toast('Draft saved');
     return true;
-  } catch (e) { toast(missing(e) ? 'Drafts need the database upgrade (supabase/club.sql)' : e.message); return false; }
+  } catch (e) { toast(missing(e) ? needsSql('Drafts', 'club.sql') : e.message); return false; }
 }
 
 // Set once the drafts table answers (club upgrade), so Save draft only shows when it can work.
@@ -1317,7 +1378,7 @@ async function saveLineup(teams, { raters, allGame, source }) {
     } else await q(sb.from('sessions').insert(row));
     toast(`Saved for ${dayTitle(day)}. Enter scores on Scores.`);
     document.dispatchEvent(new Event('lineupsaved'));
-  } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? 'Scores need the database upgrade (supabase/scores.sql)' : e.message); }
+  } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? needsSql('Scores', 'scores.sql') : `Not saved: ${e.message}`); }
 }
 
 let scoresTab = 'games', scoresDay = null;
