@@ -623,3 +623,6 @@ dialog.choose button.danger { background: var(--danger); color: #fff; border: 0;
 details.round-past { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 details.round-past > summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; gap: 4px; }
 details.round-past .team-grid { margin-top: 10px; }
+/* Save that would replace teams already saved for the day. */
+button.replace { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid color-mix(in srgb, var(--warn-fg) 35%, transparent); }
+button:disabled.ghost { opacity: .75; cursor: default; }

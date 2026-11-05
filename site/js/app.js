@@ -725,7 +725,8 @@ function comboCard(playing, combos, useSwitch) {
   return card;
 }
 
-// The teams saved for the picked date ({ day, key }), so whatever on screen matches gets a Saved mark. null: none, or unknown.
+// The teams saved for the picked date ({ day, key, round, games: games entered in that round }), so whatever on screen
+// matches gets a Saved mark and Save buttons say what they'll do. null: none, or unknown.
 let savedLineup = null;
 // Same teams in any order, with players in any order, give the same key.
 const lineupKey = teams => teams.map(t => [...t].sort((a, b) => a - b).join(',')).sort().join('|');
@@ -762,20 +763,47 @@ const suggestTeams = n => Math.min(6, Math.max(2, Math.round(n / 6) || 4));
 const teamSizes = (n, k) => { const lo = Math.floor(n / k); return n % k ? `${lo} or ${lo + 1}` : String(lo); };
 // "Thursday's teams" for the save button; the button follows the date picked above.
 const dayName = iso => iso ? new Date(`${iso}T12:00`).toLocaleDateString(undefined, { weekday: 'long' }) : '';
+// Says what saving will do, from the teams already saved for the picked date and whether these are them:
+// "Save as Thursday's teams" (nothing saved yet), "Saved ✓" (these are the saved teams; nothing to do),
+// "Replace Thursday's teams" (others saved, no games yet), "Save new teams for Thursday…" (others saved with games:
+// saving asks whether to start a new round or replace them).
 function saveButton(onclick) {
+  let saving = false;
   const btn = h('button', { class: 'sm', onclick: async () => {
     if (btn.disabled) return;
-    const text = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
-    try { await onclick(); } finally { btn.disabled = false; btn.textContent = text; }
+    saving = true; btn.disabled = true; btn.textContent = 'Saving…';
+    try { await onclick(); } finally { saving = false; label(); }
   } });
   const label = () => {
-    if (!btn.isConnected && btn.dataset.drawn) return document.removeEventListener('gamedate', label);
-    btn.dataset.drawn = '1';
-    btn.textContent = gameDate ? `Save as ${dayName(gameDate)}'s teams` : 'Save for scores';
-    btn.title = gameDate ? `Save for ${dayTitle(gameDate)}, so scores can be entered on Scores` : '';
+    if (!btn.isConnected && btn.dataset.drawn) {
+      document.removeEventListener('gamedate', label); document.removeEventListener('savedmarks', label); return;
+    }
+    if (btn.isConnected) btn.dataset.drawn = '1';
+    if (saving) return;
+    const day = gameDate && dayName(gameDate);
+    const saved = savedLineup?.day === gameDate ? savedLineup : null;
+    const here = btn.closest('[data-key]');
+    const isSaved = !!saved && !!here?.dataset.key && here.dataset.key === saved.key;
+    const round = saved?.round > 1 ? ` (round ${saved.round})` : '';
+    btn.disabled = isSaved;
+    btn.classList.toggle('ghost', isSaved);
+    btn.classList.toggle('replace', !!saved && !isSaved);
+    btn.textContent = !gameDate ? 'Save for scores'
+      : isSaved ? 'Saved ✓'
+      : !saved ? `Save as ${day}'s teams`
+      : saved.games ? `Save new teams for ${day}…`
+      : `Replace ${day}'s teams${round}`;
+    btn.title = !gameDate ? ''
+      : isSaved ? `These are the teams saved for ${dayTitle(gameDate)}${round}`
+      : !saved ? `Save for ${dayTitle(gameDate)}, so scores can be entered on Scores`
+      : saved.games ? `${dayTitle(gameDate)} already has ${saved.games} game${saved.games === 1 ? '' : 's'}${round}. You'll pick: start a new round, or replace the teams.`
+      : `Replaces the teams saved for ${dayTitle(gameDate)}${round}. No games entered yet.`;
   };
+  // Drawn before it's on the page; label again once it is, so it can see which option it belongs to.
+  queueMicrotask(label);
   label();
   document.addEventListener('gamedate', label);
+  document.addEventListener('savedmarks', label);
   return btn;
 }
 // On/off switch with a line under it saying what it does.
@@ -834,9 +862,13 @@ async function teamsPage() {
     const day = gameDate;
     const [row] = await q(sb.from('sessions').select('id,teams').eq('played_on', day)).catch(() => []);
     // Which round is playing (rounds.sql; 1 before it runs).
-    const kept = row ? await q(sb.from('rounds').select('n').eq('session_id', row.id)).catch(() => []) : [];
+    const [kept, played] = row ? await Promise.all([
+      q(sb.from('rounds').select('n').eq('session_id', row.id)).catch(() => []),
+      q(sb.from('games').select('*').eq('session_id', row.id)).catch(() => []),
+    ]) : [[], []];
     if (day !== gameDate) return;
-    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null, round: kept.length + 1 } : null;
+    const round = kept.length + 1;
+    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null, round, games: played.filter(g => (g.round ?? 1) === round).length } : null;
     markSaved();
   };
   // Which option on screen is the saved one, if any. Re-said whenever options or the saved teams change.
@@ -1541,7 +1573,7 @@ async function scoresPage() {
 }
 
 async function gamesView(sessions, players, pname, tname, roundRows) {
-  if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save for scores'), '.')];
+  if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save'), '.')];
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
   let games = await q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at'));
