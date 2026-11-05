@@ -82,6 +82,8 @@ Club features: paste and run `supabase/club.sql` (player role and account links,
 
 Rounds: paste and run `supabase/rounds.sql` after `scores.sql` and `club.sql` (adds `rounds`, a `round` column on `games`, the `start_round` and `undo_round` functions, and rounds on the Lineup page). Safe to run again. Until then a game day has one round, and saving new teams for a day with games replaces them, as before.
 
+Remembered names: paste and run `supabase/aliases.sql` (adds `player_aliases`). Safe to run again. Until then, Match to… on Players works for the paste on screen but isn't remembered for the next one.
+
 Rating history: paste and run `supabase/rating_history.sql` (safe to run again if you ran an earlier version). It records changes from then on; earlier changes weren't kept.
 
 ## Running it locally

@@ -1,6 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 import { SKILLS, RATED, TIERS, WEIGHTS, SETTING_WEIGHT, ALL_GAME, combineRatings, weightedTotal, adjustSkills, teamNames } from './teams.mjs';
-import { matchPasted, parseTeams } from './paste.mjs';
+import { matchPasted, parseTeams, closestPlayers, compact } from './paste.mjs';
 import { readRatingsCsv, ratingsTemplate, ratingsExport } from './csv.mjs';
 import { courtImage } from './courtimg.mjs';
 import { recapImage } from './recapimg.mjs';
@@ -515,7 +515,12 @@ async function ratePage() {
 // Who was playing before the last paste or clear, so Undo can put the list back. Lasts while the page is open.
 let playingUndo = null;
 async function playersPage() {
-  const players = await q(sb.from('players').select('*').order('name'));
+  const [players, savedAliases] = await Promise.all([
+    q(sb.from('players').select('*').order('name')),
+    q(sb.from('player_aliases').select('alias,player_id')).catch(() => null), // null before aliases.sql
+  ]);
+  // Names matched by hand: remembered ones (aliases.sql), plus this visit's when they can't be remembered.
+  const aliases = [...(savedAliases ?? [])];
   const update = async (p, patch) => {
     try { Object.assign(p, await q(sb.from('players').update(patch).eq('id', p.id).select().single())); toast('Saved'); count(); }
     catch (e) { toast(`Not saved: ${e.message}`); return false; }
@@ -569,7 +574,7 @@ async function playersPage() {
   const box = h('textarea', { rows: 5, placeholder: 'Paste the list from the WhatsApp group…', 'aria-label': 'Pasted list' });
   const pasteResult = h('div');
   const checkPaste = () => {
-    const { matched, waitlist, unmatched } = matchPasted(box.value, players);
+    const { matched, waitlist, unmatched, skipped, guests } = matchPasted(box.value, players, aliases);
     if (!matched.length && !waitlist.length && !unmatched.length) return pasteResult.replaceChildren();
     // The paste replaces the whole list, so say who comes off it (and who's new) before anything changes.
     const now = new Set(players.filter(p => p.playing).map(p => p.id)), next = new Set(matched.map(m => m.player.id));
@@ -595,14 +600,50 @@ async function playersPage() {
       matched.length > 0 && !removing.length && !adding.length && h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'Same as the current playing list.'),
       waitlist.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' }, h('b', {}, `${waitlist.length} on the waitlist`), ' (not ticked)'),
       waitlist.length > 0 && h('div', { class: 'chips' }, waitlist.map(m => h('span', { class: 'chip plain off', title: m.line }, m.player.name))),
-      unmatched.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' },
-        h('b', {}, `${unmatched.length} not recognized`), me.role === 'super' ? ' (ignored; add them as players first if they should count)' : ' (ignored)'),
-      unmatched.length > 0 && h('div', { class: 'chips' }, unmatched.map(l => h('span', { class: 'chip plain off' }, l))),
+      guests.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' }, h('b', {}, `+ ${guests.reduce((a, x) => a + x.n, 0)} guest${guests.reduce((a, x) => a + x.n, 0) === 1 ? '' : 's'}`),
+        ` (${guests.map(x => x.host ? `${x.host.name} +${x.n}` : `+${x.n}`).join(', ')}). Guests aren't on the list; add them as players if they should be on a team.`),
+      unmatched.length > 0 && h('p', { class: 'small', style: 'margin:12px 0 6px' },
+        h('b', {}, `${unmatched.length} not recognized`), h('span', { class: 'muted' }, ' · pick who each one is, or leave them out')),
+      unmatched.length > 0 && h('div', { class: 'unknown-list' }, unmatched.map(matchRow)),
+      skipped.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 0', title: skipped.join('\n') },
+        `Skipped ${skipped.length} line${skipped.length === 1 ? '' : 's'} that ${skipped.length === 1 ? 'isn\'t a name' : 'aren\'t names'}: ${skipped.map(x => `"${x}"`).join(', ')}.`),
       h('div', { class: 'row', style: 'margin-top:14px' },
         h('button', { class: 'ball', onclick: apply, disabled: !matched.length }, `Set playing list (${matched.length})`),
         h('span', { class: 'muted small' }, removing.length ? `Takes ${removing.length} off. You can undo it.` : 'Replaces the current playing list.'))));
   };
   box.addEventListener('input', checkPaste);
+  // An unrecognized name: pick who it is (closest names first). Remembered for the next paste, for everyone, once
+  // aliases.sql has run. The super can also add them as a new player.
+  const matchRow = line => {
+    const active = players.filter(p => p.active);
+    const near = closestPlayers(line, active, 5);
+    const sel = h('select', { 'aria-label': `Who is ${line}?` },
+      h('option', { value: '' }, 'Match to…'),
+      h('optgroup', { label: 'Closest' }, near.map(p => h('option', { value: p.id }, p.name))),
+      h('optgroup', { label: 'Everyone' }, active.filter(p => !near.includes(p)).map(p => h('option', { value: p.id }, p.name))),
+      me.role === 'super' && h('optgroup', { label: 'New' }, h('option', { value: 'new' }, `Add "${line}" as a new player`)));
+    sel.onchange = async () => {
+      if (!sel.value) return;
+      sel.disabled = true;
+      try {
+        if (sel.value === 'new') {
+          const row = await q(sb.from('players').insert({ name: line, tier: 'beginner' }).select().single());
+          players.push(row); players.sort((a, b) => a.name.localeCompare(b.name)); draw(); count();
+          toast(`Added ${row.name}`);
+        } else {
+          const p = players.find(x => x.id === Number(sel.value)), alias = compact(line);
+          const i = aliases.findIndex(a => a.alias === alias); if (i >= 0) aliases.splice(i, 1);
+          aliases.push({ alias, player_id: p.id });
+          if (savedAliases) {
+            await q(sb.from('player_aliases').upsert({ alias, player_id: p.id }));
+            toast(`"${line}" will match ${p.name} from now on`);
+          } else toast(me.role === 'super' ? `Matched to ${p.name} for this paste. Run supabase/aliases.sql to remember it.` : `Matched to ${p.name} for this paste`);
+        }
+      } catch (err) { toast(err.message); }
+      checkPaste();
+    };
+    return h('div', { class: 'unknown-row' }, h('span', { class: 'chip plain off' }, line), sel);
+  };
 
   const clearPlaying = async () => {
     if (!await ask('Clear the playing list?', 'Everyone is unticked. You can undo it right after.', 'Clear list')) return;

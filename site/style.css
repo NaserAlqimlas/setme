@@ -642,3 +642,8 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .change-line:focus:not(:focus-visible), .verdict:focus:not(:focus-visible) { outline: none; }
 /* The player picked to swap: a check mark as well as the colour, so it doesn't rely on colour alone. */
 .team li .pick[aria-pressed=true] .pname::after { content: " ✓"; color: var(--tc); font-weight: 700; }
+/* Players: unrecognized pasted names, each with a Match to… picker. */
+.unknown-list { display: grid; gap: 8px; }
+.unknown-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.unknown-row .chip { padding-right: 12px; }
+.unknown-row select { flex: 1 1 180px; max-width: 280px; }
