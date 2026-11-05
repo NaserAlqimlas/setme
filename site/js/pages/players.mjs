@@ -1,4 +1,4 @@
-import { ask, avatar, h, me, pageHead, q, render, sb, seg, TIER_OPTIONS, toast, toggle } from '../ui.mjs';
+import { ask, avatar, filterChip, h, me, pageHead, q, render, sb, seg, TIER_OPTIONS, toast, toggle } from '../ui.mjs';
 import { closestPlayers, compact, matchPasted } from '../paste.mjs';
 
 // Players page (organizers): who's playing, setter roles, aliases, guests.
@@ -6,6 +6,8 @@ import { closestPlayers, compact, matchPasted } from '../paste.mjs';
 // ---------- players (organizers) ----------
 // Who was playing before the last paste or clear, so Undo can put the list back. Lasts while the page is open.
 let playingUndo = null;
+// Playing only: kept while the app is open, so it stays on after a paste or Undo redraws the page.
+let onlyPlaying = false;
 export async function playersPage() {
   const [players, savedAliases] = await Promise.all([
     q(sb.from('players').select('*').order('name')),
@@ -67,10 +69,15 @@ export async function playersPage() {
     } catch (e) { toast(e.message); }
   };
   const draw = () => {
-    const list = players.filter(p => p.name.toLowerCase().includes(search));
-    grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, 'No players match.')]));
+    // Unticking someone while Playing only is on leaves them listed until the next search or filter change,
+    // so a mis-tap can be ticked again.
+    const list = players.filter(p => p.name.toLowerCase().includes(search) && (!onlyPlaying || (p.playing && p.active)));
+    const none = onlyPlaying && !search ? 'Nobody is ticked as playing. Paste the group\'s list above, or turn off Playing only to tick players.' : 'No players match.';
+    grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, none)]));
   };
   draw();
+  const playingChip = filterChip('Playing only', v => { onlyPlaying = v; draw(); });
+  playingChip.setAttribute('aria-pressed', String(onlyPlaying));
 
   const name = h('input', { type: 'text', placeholder: 'New player name', 'aria-label': 'New player name' });
   let newTier = 'beginner';
@@ -188,6 +195,7 @@ export async function playersPage() {
       ': a well-known player every rater rates first. Pick 4 to 6 across the range (strong, average, newer), so a new rater\'s lean is known quickly.'),
     h('div', { class: 'card toolbar' },
       h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
+      playingChip,
       h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
     grid,
     h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team.'));
