@@ -104,7 +104,7 @@ function avatar(name, size) {
   let hash = 0;
   for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) % 360;
   const initials = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-  return h('span', { class: 'avatar', style: `background: hsl(${hash} 50% 38%)${size ? `; width:${size}px; height:${size}px` : ''}`, 'aria-hidden': 'true' }, initials);
+  return h('span', { class: 'avatar', style: `background: hsl(${hash} 50% 31%)${size ? `; width:${size}px; height:${size}px` : ''}`, 'aria-hidden': 'true' }, initials);
 }
 
 // Pick-one buttons. onpick returns false when saving failed, which puts the old choice back.
@@ -144,7 +144,9 @@ function stacked(table) {
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.hidden = false;
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, 1800);
+  t.onclick = () => { t.hidden = true; };
+  // Long enough to read: short confirmations go quickly, longer messages (usually errors) stay up to 7 seconds.
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, Math.min(7000, Math.max(2200, msg.length * 70)));
 }
 async function callFn(name, body) {
   const res = await fetch(`/.netlify/functions/${name}`, {
@@ -593,16 +595,27 @@ const setsAllGame = p => setterPlan.get(p.id) ?? p.setting === 'M';
 const allGameIds = players => players.filter(p => p.setting && p.setting !== 'N' && setsAllGame(p)).map(p => p.id);
 const setterPlanChanged = () => document.dispatchEvent(new Event('setterplan'));
 
+// A card that folds: the title and a line saying how it's set now; tap to open.
+function fold(title, cls = '') {
+  const state = h('span', { class: 'muted small fold-state' });
+  const body = h('div', { class: 'fold-body' });
+  const card = h('details', { class: `card fold ${cls}` }, h('summary', {}, h('h3', {}, title), state), body);
+  card.state = state; card.body = body;
+  return card;
+}
+
 // Tonight's setters: who sets all game (their Setting counts, hitting and receiving count for less) and who rotates.
 function settersCard(playing) {
   const setters = playing.filter(p => p.setting === 'M' || p.setting === 'B');
-  const card = h('div', { class: 'card', hidden: !setters.length });
+  const card = fold('Setters');
+  card.hidden = !setters.length;
   const paint = () => {
     if (!card.isConnected && card.dataset.drawn) return document.removeEventListener('setterplan', paint);
     card.dataset.drawn = '1';
-    card.replaceChildren(
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Setters'),
-        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Who sets the whole game? Their setting counts; their hitting and passing count for less. Rotating setters count like everyone else.'))),
+    const all = setters.filter(setsAllGame).map(p => firstName(p.name));
+    card.state.textContent = all.length ? `${all.join(', ')} set${all.length === 1 ? 's' : ''} all game${all.length < setters.length ? `, ${setters.length - all.length} rotate${setters.length - all.length === 1 ? 's' : ''}` : ''}` : 'Everyone rotates';
+    card.body.replaceChildren(
+      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'A setter who sets the whole game counts for their setting; their hitting and passing count for less. Setters who rotate count like everyone else.'),
       h('div', { class: 'new-players' }, setters.map(p => h('div', { class: 'new-player' },
         h('span', {}, h('b', {}, p.name), ' ', h('span', { class: `badge ${p.setting === 'M' ? 'set' : 'backup'}` }, p.setting === 'M' ? 'Setter' : 'Backup')),
         seg([[true, 'All game'], [false, 'Rotates']], setsAllGame(p), v => { setterPlan.set(p.id, v); setterPlanChanged(); }, `${p.name} sets`)))));
@@ -611,9 +624,9 @@ function settersCard(playing) {
   document.addEventListener('setterplan', paint);
   return card;
 }
-function comboCard(playing, combos) {
+function comboCard(playing, combos, useSwitch) {
   const name = new Map(playing.map(p => [p.id, p.name]));
-  const card = h('div', { class: 'card' });
+  const card = fold('Combos');
   let kind = 'together';
   const draw = () => {
     const sel = label => h('select', { 'aria-label': label }, h('option', { value: '' }, 'Choose player'), playing.map(p => h('option', { value: p.id }, p.name)));
@@ -637,9 +650,12 @@ function comboCard(playing, combos) {
     const section = (title, list, empty) => h('div', { class: 'combo-section' },
       h('h4', {}, title, h('span', { class: 'muted' }, ` ${list.length || ''}`)),
       h('div', { class: 'chips' }, list.length ? list.map(chip) : h('span', { class: 'muted small' }, empty)));
-    card.replaceChildren(
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Combos'), h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Who should play together, and who shouldn\'t. Used for this build only; not saved.')),
+    const together = combos.filter(c => c.kind !== 'apart').length, apart = combos.length - together;
+    card.state.textContent = combos.length ? [together && `${together} together`, apart && `${apart} apart`].filter(Boolean).join(', ') : 'None';
+    card.body.replaceChildren(
+      h('div', { class: 'card-head' }, h('p', { class: 'muted small', style: 'margin:0' }, 'Pairs who should play on the same team, or never on the same team. Kept while this page is open; not saved.'),
         combos.length > 0 && h('button', { class: 'ghost sm', onclick: clear }, 'Clear all')),
+      useSwitch,
       h('form', { class: 'row combo-add', onsubmit: add }, a, b,
         seg([['together', 'Together'], ['apart', 'Apart']], kind, v => { kind = v; }, 'Pair type'),
         h('button', { class: 'ghost' }, 'Add')),
@@ -650,18 +666,47 @@ function comboCard(playing, combos) {
   return card;
 }
 
+// Teams of about 6: the count the build starts on for this many players.
+const suggestTeams = n => Math.min(6, Math.max(2, Math.round(n / 6) || 4));
+const teamSizes = (n, k) => { const lo = Math.floor(n / k); return n % k ? `${lo} or ${lo + 1}` : String(lo); };
+// "Thursday's teams" for the save button; the button follows the date picked above.
+const dayName = iso => iso ? new Date(`${iso}T12:00`).toLocaleDateString(undefined, { weekday: 'long' }) : '';
+function saveButton(onclick) {
+  const btn = h('button', { class: 'sm', onclick });
+  const label = () => {
+    if (!btn.isConnected && btn.dataset.drawn) return document.removeEventListener('gamedate', label);
+    btn.dataset.drawn = '1';
+    btn.textContent = gameDate ? `Save as ${dayName(gameDate)}'s teams` : 'Save for scores';
+    btn.title = gameDate ? `Save for ${dayTitle(gameDate)}, so scores can be entered on Scores` : '';
+  };
+  label();
+  document.addEventListener('gamedate', label);
+  return btn;
+}
+// On/off switch with a line under it saying what it does.
+const switchRow = (label, on, onchange, hint) => h('div', { class: 'switch-row' }, toggle(label, on, onchange), h('p', { class: 'muted small' }, hint));
+// Which built option is open, and whether skill numbers show (open on wider screens to start).
+let showSkills = matchMedia('(min-width: 641px)').matches;
+document.documentElement.classList.toggle('hide-skills', !showSkills);
+
 async function teamsPage() {
   const playing = await q(sb.from('players').select('id,name,setting').eq('playing', true).eq('active', true).order('name'));
   const combos = sessionCombos;
-  let numTeams = 4, useCombos = true;
+  let numTeams = suggestTeams(playing.length), useCombos = true;
   // Whose ratings to build from. null = everyone's.
   let raterIds = null;
   const newPlayers = newPlayersCard(() => raterIds);
-  const out = h('div');
+  const out = h('div', { class: 'teams-out' });
   const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })), ...buildExtras() }));
   const drafts = draftsCard(ownTeams);
+  const btn = h('button', { class: 'ball big', disabled: !playing.length }, 'Build teams');
   // An empty list means every rater is switched off: nothing to build from until one is back on.
-  const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Please select at least one rater.');
+  const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Turn on at least one rater to build teams.');
+  const options = fold('Options', 'options');
+  const paintOptions = () => {
+    options.state.textContent = [raterIds ? `Ratings from ${raterIds.length} rater${raterIds.length === 1 ? '' : 's'}` : null,
+      mixTeammates && 'Mix up teammates', spreadWomen && 'Spread women', adjustResults && 'Adjust for results'].filter(Boolean).join(' · ') || 'All switches off';
+  };
   // Organizers can only read their own rating rows, so the server says who has rated.
   const raterList = me.role === 'super' ? undefined
     : await callFn('build-teams', { listRaters: true }).then(({ raters }) => ({ ratings: raters.map(r => ({ rater_id: r.id })), profiles: raters })).catch(() => null);
@@ -669,17 +714,47 @@ async function teamsPage() {
     raterIds = ids;
     ownTeams.refresh();
     const none = ids?.length === 0;
-    btn.disabled = none; needRater.hidden = !none;
+    btn.disabled = none || !playing.length; needRater.hidden = !none;
+    if (none) options.open = true;
     if (!none) newPlayers.refresh();
+    paintOptions();
   }, raterList);
+  const switched = (set) => v => { set(v); ownTeams.refresh(); paintOptions(); };
+  options.body.append(
+    raterPick ?? '', needRater,
+    h('div', { class: 'switches' },
+      switchRow('Mix up teammates', mixTeammates, switched(v => { mixTeammates = v; }), 'Avoids putting the same people together as on the last game days, choosing only between equally even splits.'),
+      switchRow('Spread women evenly', spreadWomen, switched(v => { spreadWomen = v; }), 'Each team gets about the same number of women. Off, gender is ignored.'),
+      switchRow('Adjust for results', adjustResults, switched(v => { adjustResults = v; }), `Moves each player up or down by how their teams have done against their ratings, after ${ADJUST_MIN_GAMES} games with scores.`)));
+  paintOptions();
+
+  // The date, in words and as a picker. Saving and the shared image use it.
+  const dayWords = h('h3', { class: 'day' });
   const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
-  date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); };
-  const btn = h('button', { class: 'ball big' }, 'Build teams');
+  const saved = h('p', { class: 'small saved-line', hidden: true });
+  // Already saved for that day? Said here so whoever picks up the phone sees it. Quiet when Scores isn't set up.
+  const paintDay = async () => {
+    dayWords.textContent = gameDate ? dayTitle(gameDate) : 'Pick a date';
+    if (!gameDate) { saved.hidden = true; return; }
+    const day = gameDate;
+    const [row] = await q(sb.from('sessions').select('id').eq('played_on', day)).catch(() => []);
+    if (day !== gameDate) return;
+    saved.hidden = !row;
+    saved.replaceChildren('✓ Teams are saved for ', h('b', {}, dayTitle(day)), '. ', h('a', { href: '#scores' }, 'Enter scores'));
+  };
+  date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); paintDay(); };
+  const onSaved = () => { if (!out.isConnected) return document.removeEventListener('lineupsaved', onSaved); paintDay(); };
+  document.addEventListener('lineupsaved', onSaved);
+  paintDay();
+
+  const sizes = h('span', { class: 'muted small' });
+  const paintSizes = () => { sizes.textContent = playing.length ? `Teams of ${teamSizes(playing.length, numTeams)}` : ''; };
+  paintSizes();
   const sendCombos = () => combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind }));
   // Built options on screen. Once you swap someone in an option it's checked like Your own teams (same numbers, problems,
   // suggestions, locks); the earlier version is kept for Undo. The raters and setters it was built with stay.
   // Per option i: checked[i] = the last check's response, undos[i] = earlier [option, check] pairs, locks[i] = locked ids.
-  let built = null, builtWith = null, view = null, pool = null;
+  let built = null, builtWith = null, view = null, pool = null, open = 0;
   let checked = [], undos = [], locks = [];
   const ids = i => built.options[i].teams.map(t => t.players.map(p => p.id));
   const check = async (i, teams) => {
@@ -693,7 +768,7 @@ async function teamsPage() {
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
   const draw = () => out.replaceChildren(...showTeams(built, {
-    view, onSwap: edit, pool,
+    view, onSwap: edit, pool, open, onOpen: i => { open = i; },
     onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
     onDraft: i => saveDraft(ids(i), builtWith, `Option ${i + 1}${checked[i] ? ' (swapped)' : ''}`).then(ok => ok && document.dispatchEvent(new Event('drafts'))),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
@@ -705,34 +780,42 @@ async function teamsPage() {
     }),
   }));
   btn.onclick = async () => {
-    btn.disabled = true; btn.textContent = 'Building…';
+    if (checked.some(Boolean) && !confirm('Build new teams? The swaps you made on the options below will be lost.')) return;
+    btn.disabled = true; btn.textContent = 'Building…'; out.classList.add('busy');
     try {
       builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
       [built, pool] = await Promise.all([callFn('build-teams', { numTeams, ...builtWith }), ownTeams.roster().catch(() => null)]);
       checked = []; undos = []; locks = []; view = null;
+      // Open the most even option first.
+      const gap = o => { const t = o.teams.map(x => x.weighted); return Math.max(...t) - Math.min(...t); };
+      open = built.options.reduce((best, o, i) => gap(o) < gap(built.options[best]) ? i : best, 0);
       draw(); out.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    catch (e) { out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+    catch (e) { out.replaceChildren(h('p', { class: 'warn' }, `Couldn't build teams: ${e.message}`)); }
+    out.classList.remove('busy');
     btn.disabled = raterIds?.length === 0; btn.textContent = 'Build teams';
   };
+  const nobody = !playing.length && h('div', { class: 'card empty-list' },
+    h('p', { style: 'margin:0' }, h('b', {}, 'Nobody is on the playing list yet.'), ' Paste the WhatsApp list or tick who\'s playing on Players, then come back to build.'),
+    h('a', { class: 'button', href: '#players' }, 'Go to Players'));
   return h('div', {},
-    pageHead('Teams', 'Set combos, then build balanced lineups.', h('span', { class: 'stat' }, String(playing.length), h('small', {}, 'playing'))),
-    comboCard(playing, combos),
+    pageHead('Teams', 'Build balanced teams from the playing list.'),
+    nobody,
+    h('div', { class: 'card build' },
+      h('div', { class: 'build-head' },
+        h('div', {}, dayWords,
+          h('p', { class: 'muted small', style: 'margin:2px 0 0' }, h('b', { class: 'count' }, String(playing.length)), ' playing · ', h('a', { href: '#players' }, 'Change list'))),
+        h('label', { class: 'field date-field' }, h('span', {}, 'Date'), date)),
+      saved,
+      h('div', { class: 'build-row' },
+        h('div', { class: 'field' }, h('span', {}, 'Teams'),
+          h('div', { class: 'row', style: 'gap:10px' }, seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; paintSizes(); }, 'Number of teams'), sizes)),
+        h('span', { class: 'grow' }), btn)),
+    comboCard(playing, combos, toggle('Use combos in this build', true, v => { useCombos = v; })),
     settersCard(playing),
+    options,
     newPlayers,
     ownTeams,
-    h('div', { class: 'card build-bar' },
-      raterPick, needRater,
-      h('div', { class: 'field' }, h('span', {}, 'Teams'), seg([2, 3, 4, 5, 6].map(n => [n, String(n)]), numTeams, v => { numTeams = v; }, 'Number of teams')),
-      h('label', { class: 'field' }, h('span', {}, 'Date'), date),
-      toggle('Use combos', true, v => { useCombos = v; }),
-      h('span', { title: 'Avoid putting the same people together as on the last game days. Only picks between splits that are about as balanced.' },
-        toggle('Mix up teammates', mixTeammates, v => { mixTeammates = v; ownTeams.refresh(); })),
-      h('span', { title: 'Split women (gender F) as evenly as possible: team counts at most 1 apart. Off, gender is ignored.' },
-        toggle('Spread women evenly', spreadWomen, v => { spreadWomen = v; ownTeams.refresh(); })),
-      h('span', { title: `Shift each player by how their teams have done against their ratings (needs ${ADJUST_MIN_GAMES} games with scores). Saved predictions stay ratings-only.` },
-        toggle('Adjust for results', adjustResults, v => { adjustResults = v; ownTeams.refresh(); })),
-      h('span', { class: 'grow' }), btn),
     out,
     drafts);
 }
@@ -841,7 +924,7 @@ function suggestionsPanel(res, { onApply, onUndo }) {
   return h('div', { class: 'suggestions' },
     h('div', { class: 'card-head' },
       h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
-        basis && h('b', {}, basis, '. '), 'Smallest changes that balance your teams better. Tap 🔓 next to a player to keep them where they are.')),
+        basis && h('b', {}, basis, '. '), 'The smallest changes that make your teams more even. Tap the lock next to a player to keep them where they are.')),
       onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo')),
     res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
     res.suggestions?.length
@@ -855,7 +938,7 @@ function suggestionsPanel(res, { onApply, onUndo }) {
           ].filter(Boolean).join(' · ')),
           sg.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${sg.adds.join('; ')}`)),
         h('button', { type: 'button', class: 'sm', onclick: () => onApply(sg) }, 'Apply'))))
-      : h('p', { class: 'muted' }, res.problems?.length ? 'No single or double swap makes these teams better.' : 'These teams look balanced. No swap would make them better.'));
+      : h('p', { class: 'muted' }, res.problems?.length ? 'Swapping one or two players doesn\'t fix this. Try a different option or build again.' : 'These teams are even. No swap would make them better.'));
 }
 
 let gameDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local time
@@ -919,15 +1002,49 @@ function setterBadge(p, onSetter) {
     title: `${p.setting === 'M' ? 'Main setter' : 'Backup setter'}: ${p.allGame ? 'sets all game (tap: rotates)' : 'rotates (tap: sets all game)'}`, onclick: () => onSetter(p.id) }, text);
 }
 
+const LOCK_PATH = { on: 'M7 11V8a5 5 0 0 1 10 0v3', off: 'M7 11V8a5 5 0 0 1 9.6-2' };
+const lockIcon = on => {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = `<rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="${on ? LOCK_PATH.on : LOCK_PATH.off}" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>`;
+  return svg;
+};
+
 // onSwap(i, teams): tap a player, then a player on another team, to swap them; teams = player ids per team after the swap.
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
+// open: which option shows when there are several (a switcher picks); onOpen(i) is told when it changes.
 // onSave(i): saves option i as the game day's teams for the Scores page.
 // onDraft(i): keeps option i as a draft to compare or come back to; onUpdateDraft(i) saves it over the draft it came from.
 // pool: active players ({ id, name, playing }) to replace someone with (tap them, then Replace with); goes through onSwap.
-function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool, extra } = {}) {
+function showTeams(res, { title, locked, onLock, view: viewId = null, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool, extra, open = 0, onOpen } = {}) {
   const detail = me.role === 'super' || me.role === 'organizer';
   const parts = res.warnings.map(w => h('p', { class: 'warn' }, w));
+  const sections = [];
+  const gapOf = opt => { const t = opt.teams.map(x => x.weighted); return Math.max(...t) - Math.min(...t); };
+  // Several options: a row of tabs with each one's gap and repeat teammates; one option shows at a time.
+  if (res.options.length > 1) {
+    const tabs = h('div', { class: 'option-tabs', role: 'tablist', 'aria-label': 'Options' });
+    const show = i => {
+      open = i;
+      [...tabs.children].forEach((b, n) => { b.setAttribute('aria-selected', String(n === i)); b.tabIndex = n === i ? 0 : -1; });
+      sections.forEach((sec, n) => { sec.hidden = n !== i; });
+      onOpen?.(i);
+    };
+    res.options.forEach((opt, i) => tabs.append(h('button', { type: 'button', role: 'tab', id: `opt-tab-${i}`, 'aria-controls': `opt-${i}`,
+      onclick: () => show(i),
+      onkeydown: e => {
+        const to = { ArrowRight: i + 1, ArrowLeft: i - 1 }[e.key];
+        if (to == null) return;
+        const n = (to + res.options.length) % res.options.length;
+        show(n); tabs.children[n].focus();
+      } },
+      h('b', {}, `Option ${i + 1}`),
+      h('span', { class: 'small' }, [detail && `Gap ${fmt(gapOf(opt))}`,
+        res.variety > 0 && (opt.repeats?.length ? `${opt.repeats.length} repeat${opt.repeats.length === 1 ? '' : 's'}` : 'no repeats')].filter(Boolean).join(' · ')))));
+    parts.push(tabs);
+    queueMicrotask(() => show(Math.min(open, res.options.length - 1)));
+  }
   if (res.adjusted != null) parts.push(h('p', { class: 'muted small' }, res.adjusted
     ? `Adjusted for results: ${res.adjusted} player${res.adjusted === 1 ? '\'s' : 's\''} numbers moved by how their teams have done against their ratings.`
     : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`));
@@ -942,6 +1059,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const grid = h('div', { class: 'team-grid' });
     const guessNote = h('p', { class: 'muted small', hidden: true });
     const lk = typeof locked === 'function' ? locked(i) : locked;
+    const busy = () => { grid.classList.add('busy'); grid.setAttribute('aria-busy', 'true'); gapLine.textContent = 'Checking the new teams…'; };
     // On a team but not on the playing list (only known once a playing list is set).
     const playingIds = pool?.some(p => p.playing) ? new Set(pool.filter(p => p.playing).map(p => p.id)) : null;
     const off = new Set(playingIds ? opt.teams.flatMap(t => t.players.filter(p => p.id != null && !playingIds.has(p.id)).map(p => p.id)) : []);
@@ -952,7 +1070,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       if (picked[0] === k) { picked = [k, id]; return paint(); }
       const [a, b] = [picked[1], id];
       picked = null;
-      grid.classList.add('busy');
+      busy();
       onSwap(i, opt.teams.map(t => t.players.map(p => p.id === a ? b : p.id === b ? a : p.id)));
     };
     const canSwap = onSwap && opt.teams.every(t => t.players.every(p => p.id != null));
@@ -979,7 +1097,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
         const to = Number(sel.value), from = picked[1];
         if (!to) return;
         picked = null;
-        grid.classList.add('busy');
+        busy();
         onSwap(i, opt.teams.map(t => t.players.map(p => p.id === from ? to : p.id)));
       };
       return h('div', { class: 'row replace-row' }, h('span', { class: 'small' }, h('b', {}, `Replace ${pickedName()} with`)), sel);
@@ -987,9 +1105,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const hintBox = k => {
       const who = pickedName();
       if (!hints) return h('div', { class: 'swap-hints' }, replaceRow());
-      if (!hints.length) return h('div', { class: 'swap-hints' }, replaceRow(), h('p', { class: 'muted small' }, `${who} is locked or kept with a combo partner, so no swaps to suggest.`));
+      if (!hints.length) return h('div', { class: 'swap-hints' }, replaceRow(), h('p', { class: 'muted small' }, `${who} is locked or paired by a combo, so there's no swap to suggest.`));
       return h('div', { class: 'swap-hints' }, replaceRow(),
-        h('p', { class: 'small' }, h('b', {}, `Best swaps for ${who}`), hints.some(x => x.better) ? '' : h('span', { class: 'muted' }, ' · none make the teams better')),
+        h('p', { class: 'small' }, h('b', {}, `Best swaps for ${who}`), hints.some(x => x.better) ? '' : h('span', { class: 'muted' }, ' · the teams are already as even as a swap can make them')),
         h('ol', {}, hints.map(x => h('li', {},
           h('div', { class: 'grow' },
             h('div', {}, h('b', {}, x.name), h('span', { class: 'muted' }, ` (Team ${x.team})`)),
@@ -1015,7 +1133,8 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
           setterBadge(p, onSetter),
           onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(lk.has(p.id)),
-            title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lk.has(p.id) ? '🔒' : '🔓')))),
+            title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`,
+            'aria-label': lk.has(p.id) ? `Unlock ${p.name}` : `Lock ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lockIcon(lk.has(p.id)))))),
         picked?.[0] === k && hintBox(k),
         detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', {}, h('small', {}, s === 'setting' ? 'Set' : SHORT[s]), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
@@ -1028,21 +1147,28 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       return b;
     })) : null;
     paint();
-    parts.push(h('section', { class: 'option' },
+    const skillsBtn = detail && h('button', { type: 'button', class: 'ghost sm skills-btn', 'aria-pressed': String(showSkills), onclick: () => {
+      showSkills = !showSkills;
+      document.documentElement.classList.toggle('hide-skills', !showSkills);
+      document.querySelectorAll('.skills-btn').forEach(b => { b.setAttribute('aria-pressed', String(showSkills)); b.textContent = showSkills ? 'Hide skill numbers' : 'Show skill numbers'; });
+    } }, showSkills ? 'Hide skill numbers' : 'Show skill numbers');
+    const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, title ?? `Option ${i + 1}`), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
         h('div', { class: 'actions' },
           onUpdateDraft && h('button', { class: 'ghost sm', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
           onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
           h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
           shareButton(opt.teams, i),
-          onSave && h('button', { class: 'sm', onclick: () => onSave(i) }, 'Save for scores'))),
+          onSave && saveButton(() => onSave(i)))),
       detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
       canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
-      grid, detail && guessNote,
-      typeof extra === 'function' ? extra(i) : i === 0 && extra));
+      grid, detail && h('div', { class: 'row option-foot' }, guessNote, h('span', { class: 'grow' }), skillsBtn),
+      typeof extra === 'function' ? extra(i) : i === 0 && extra);
+    sections.push(section);
+    parts.push(section);
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
-  if (detail) parts.push(h('p', { class: 'muted small' }, `Skill numbers are team sums. Total weights them: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${SHORT[s]} ×${fmt(w)}`).join(', ')}.`,
+  if (detail) parts.push(h('p', { class: 'muted small weights' }, `Each skill number adds up the team's players. A team's total counts some skills more: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${LABEL[s]} ×${fmt(w)}`).join(', ')}.`,
     res.options.some(o => o.teams.some(t => t.players.some(p => p.allGame))) && ` Setters who set all game add their Setting ×${fmt(SETTING_WEIGHT)}, with their receiving at ${ALL_GAME.receiving * 100}% and hitting at ${ALL_GAME.hitting * 100}%.`));
   return parts;
 }
@@ -1148,7 +1274,7 @@ async function raterPicker(onchange, preload) {
   const raters = profiles.filter(p => has.has(p.id));
   if (raters.length < 2) return null;
   const on = new Set(raters.map(r => r.id));
-  const reset = h('button', { type: 'button', class: 'ghost sm', disabled: true }, 'Select all');
+  const reset = h('button', { type: 'button', class: 'ghost sm', hidden: true }, 'Select all');
   const clear = h('button', { type: 'button', class: 'ghost sm' }, 'Deselect all');
   const chips = raters.map(r => {
     const name = (r.display_name ?? '?').split(/[\s.@]/)[0];
@@ -1163,8 +1289,8 @@ async function raterPicker(onchange, preload) {
   const paint = () => {
     for (const [id, b] of chips) b.setAttribute('aria-pressed', String(on.has(id)));
     const all = on.size === raters.length;
-    reset.disabled = all;
-    clear.disabled = !on.size;
+    reset.hidden = all;
+    clear.hidden = !on.size;
     onchange(all ? null : [...on]);
   };
   reset.onclick = () => { raters.forEach(r => on.add(r.id)); paint(); };
@@ -1190,6 +1316,7 @@ async function saveLineup(teams, { raters, allGame, source }) {
       await q(sb.from('sessions').update(row).eq('id', existing.id));
     } else await q(sb.from('sessions').insert(row));
     toast(`Saved for ${dayTitle(day)}. Enter scores on Scores.`);
+    document.dispatchEvent(new Event('lineupsaved'));
   } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? 'Scores need the database upgrade (supabase/scores.sql)' : e.message); }
 }
 
