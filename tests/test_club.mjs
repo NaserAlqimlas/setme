@@ -19,6 +19,9 @@ ok('stopped coming', att.get(2).missing && att.get(2).streak === 0 && att.get(2)
 ok('new regular', !att.get(3).missing && att.get(3).streak === 2 && att.get(3).rate === 1 && att.get(3).of === 2, att.get(3));
 ok('once', att.get(4).total === 1 && att.get(4).rate === 1 / 7 && !att.get(4).missing, att.get(4));
 // Someone who only played a game (a late arrival moved off the saved teams) still came.
+// Rounds: someone only on an earlier round's team still came.
+const earlier = attendance([{ id: 9, played_on: '2026-10-01', teams: [[1]], earlier: [[[1, 7]]] }], [], '2026-10-01');
+if (!earlier.has(7)) { fail++; console.log('FAIL earlier round counts as came'); }
 const late = attendance([{ id: 9, played_on: '2026-10-01', teams: [[1]] }], [{ session_id: 9, players_a: [1], players_b: [5] }], '2026-10-01');
 ok('late arrival counts', late.get(5)?.total === 1);
 

@@ -1756,8 +1756,10 @@ let scoresEditNext = false;
 // (the session's own teams); earlier ones come from rounds (rows: that table, null before rounds.sql).
 function roundsOf(ses, rows) {
   const kept = (rows ?? []).filter(r => r.session_id === ses.id).sort((a, b) => a.n - b.n);
-  return [...kept.map(r => ({ ...r, current: false })), { n: kept.length + 1, teams: ses.teams, raters: ses.raters, all_game: ses.all_game, current: true }];
+  return [...kept.map(r => ({ ...r, current: false })), { n: kept.length + 1, teams: ses.teams, raters: ses.raters, all_game: ses.all_game, source: ses.source, current: true }];
 }
+// Sessions with their earlier rounds' teams attached (earlier), so attendance counts everyone who was on a team.
+const withEarlier = (sessions, rows) => sessions.map(s => ({ ...s, earlier: roundsOf(s, rows).filter(r => !r.current).map(r => r.teams) }));
 const roundOf = g => g.round ?? 1;
 // (session id, team number from 1, round) -> that team's name in that round, from who is on it (late changes
 // included). No round = the round playing now.
@@ -1781,8 +1783,8 @@ async function scoresPage() {
   const tname = sessionTeamNamer(sessions, players, rounds);
   const body = h('div');
   const tabs = seg([['games', 'Games'], ['insights', 'Insights'], ['attendance', 'Attendance'], ['season', 'Season']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
-  const views = { games: () => gamesView(sessions, players, pname, tname, rounds), insights: () => insightsView(sessions, pname, tname),
-    attendance: () => attendanceView(sessions, players, pname), season: () => seasonView(sessions, pname, tname) };
+  const views = { games: () => gamesView(sessions, players, pname, tname, rounds), insights: () => insightsView(sessions, pname, tname, rounds),
+    attendance: () => attendanceView(withEarlier(sessions, rounds), players, pname), season: () => seasonView(withEarlier(sessions, rounds), pname, tname) };
   const draw = async () => {
     body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
     try { body.replaceChildren(...await views[scoresTab]()); }
@@ -2295,7 +2297,7 @@ const pct = v => v == null ? '—' : `${Math.round(v * 100)}%`;
 const pts = v => v == null ? '—' : (Math.round(v * 10) / 10).toFixed(1);
 const plusPts = v => v == null ? '—' : `${v > 0 ? '+' : ''}${pts(v)}`;
 
-async function insightsView(sessions, pname, tname) {
+async function insightsView(sessions, pname, tname, roundRows) {
   const games = await q(sb.from('games').select('*').order('created_at'));
   const day = new Map(sessions.map(s => [s.id, s.played_on]));
   const a = analyze(games);
@@ -2322,12 +2324,17 @@ async function insightsView(sessions, pname, tname) {
     label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `${tname(r.g.session_id, r.g.team_a, roundOf(r.g))} v ${tname(r.g.session_id, r.g.team_b, roundOf(r.g))}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
 
   // Per game day.
-  const bySes = sessions.map(s => ({ s, rows: a.rows.filter(r => r.g.session_id === s.id) })).filter(x => x.rows.length);
+  // A day with several rounds gets a row per round (each round has its own teams, built its own way).
+  const bySes = sessions.flatMap(s => {
+    const rows = a.rows.filter(r => r.g.session_id === s.id), rs = roundsOf(s, roundRows);
+    if (rs.length < 2) return [{ s, rows, source: s.source }];
+    return rs.map(r => ({ s, round: r.n, rows: rows.filter(x => roundOf(x.g) === r.n), source: r.source }));
+  }).filter(x => x.rows.length);
   const days = h('div', { class: 'card' }, h('h3', {}, 'By game day'), stacked(h('table', {},
     h('thead', {}, h('tr', {}, h('th', {}, 'Day'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Average margin'), h('th', { class: 'num' }, 'Close'), h('th', { class: 'num' }, 'Rated gap'))),
-    h('tbody', {}, bySes.map(({ s, rows }) => {
+    h('tbody', {}, bySes.map(({ s, rows, round, source }) => {
       const m = rows.map(r => Math.abs(r.m));
-      return h('tr', {}, h('td', {}, dayTitle(s.played_on), s.source && h('span', { class: 'muted small' }, ` · ${{ built: 'built', edited: 'built, then swapped', own: 'own teams' }[s.source] ?? s.source}`)),
+      return h('tr', {}, h('td', {}, dayTitle(s.played_on), round && h('span', {}, ` · round ${round}`), source && h('span', { class: 'muted small' }, ` · ${{ built: 'built', edited: 'built, then swapped', own: 'own teams' }[source] ?? source}`)),
         h('td', { class: 'num' }, String(rows.length)),
         h('td', { class: 'num' }, pts(m.reduce((x, y) => x + y, 0) / m.length)),
         h('td', { class: 'num' }, pct(m.filter(v => v <= CLOSE).length / m.length)),
@@ -3518,7 +3525,11 @@ async function profilePage(id) {
     const games = days.flatMap(d => d.games);
     const r = record(games, id);
     // Organizers can read every game day, so they also get how often and runs; players see their own days.
-    const all = organizer ? await q(sb.from('sessions').select('id,played_on,teams')).catch(() => null) : null;
+    const [allSes, allRounds] = organizer ? await Promise.all([
+      q(sb.from('sessions').select('id,played_on,teams')).catch(() => null),
+      q(sb.from('rounds').select('session_id,n,teams')).catch(() => null),
+    ]) : [null, null];
+    const all = allSes && withEarlier(allSes, allRounds);
     const allGames = organizer && all ? await q(sb.from('games').select('session_id,players_a,players_b')).catch(() => []) : [];
     const att = all ? attendance(all, allGames, today()).get(id) : null;
     const tile = (v, label, sub) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, label), sub && h('span', { class: 'muted small' }, sub));

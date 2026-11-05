@@ -1,11 +1,12 @@
 // Attendance and season recaps from saved game days. Pure functions, shared by the Scores page, profiles and tests.
-// A session: { id, played_on: 'YYYY-MM-DD', teams: [[player id, ...], ...] }. A game: as in scores.mjs.
+// A session: { id, played_on: 'YYYY-MM-DD', teams: [[player id, ...], ...], earlier?: [teams, ...] }, earlier = the
+// teams of rounds played before the current one that day (rounds.sql). A game: as in scores.mjs.
 import { margin25 } from './scores.mjs';
 
-// Who came to each game day: everyone on a saved team, plus anyone who played a game that day (late arrivals who
-// were moved off again still count).
+// Who came to each game day: everyone on a saved team in any round, plus anyone who played a game that day (late
+// arrivals who were moved off again still count).
 export function attendees(session, games = []) {
-  const ids = new Set((session.teams ?? []).flat());
+  const ids = new Set([...(session.teams ?? []).flat(), ...(session.earlier ?? []).flat(2)]);
   for (const g of games) if (g.session_id === session.id) for (const id of [...(g.players_a ?? []), ...(g.players_b ?? [])]) ids.add(id);
   return ids;
 }
