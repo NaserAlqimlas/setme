@@ -347,6 +347,11 @@ function ratingGuide(onToggle) {
   };
 }
 
+// The sticky header's height, for things that stick just under it (Rate's progress bar).
+{
+  const top = document.querySelector('.top');
+  if (top) new ResizeObserver(() => document.documentElement.style.setProperty('--top-h', `${top.offsetHeight}px`)).observe(top);
+}
 // Ratings older than this are worth another look.
 const STALE_DAYS = 120;
 async function ratePage() {
@@ -386,7 +391,8 @@ async function ratePage() {
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, anchorsLeft.length
           ? `New here? Start with the ${anchorsLeft.length} anchor player${anchorsLeft.length === 1 ? '' : 's'} everyone rates; it tells SetMe how you rate compared with the others, and until then your ratings count for less.`
           : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
-      h('ul', { class: 'look-list' }, list.map(({ p, why }) => h('li', { title: why.join('\n') }, h('b', {}, p.name),
+      h('ul', { class: 'look-list' }, list.map(({ p, why }) => h('li', { title: why.join('\n') },
+        h('button', { type: 'button', class: 'look-name', onclick: () => jumpTo(p.id), 'aria-label': `Go to ${p.name}` }, p.name),
         h('span', { class: 'muted small' }, why[0] + (why.length > 1 ? `, and ${why.length - 1} more` : ''))))));
   };
   paintLook();
@@ -395,11 +401,28 @@ async function ratePage() {
   const guide = ratingGuide(open => document.body.classList.toggle('guide-open', open));
   layout.append(guide.panel, guide.fab);
   guide.init();
-  const bar = h('span'), countEl = h('span', { class: 'small muted' });
+  const bar = h('span'), countEl = h('span', { class: 'small' });
+  // Sticky under the header: how far along, and a button to the next player still to rate among those shown.
+  const nextBtn = h('button', { type: 'button', class: 'sm next-unrated' });
   const progress = () => {
     const n = players.filter(done).length;
     bar.style.width = `${players.length ? n / players.length * 100 : 0}%`;
-    countEl.textContent = `${n} of ${players.length} players rated`;
+    countEl.replaceChildren(h('b', {}, `${n} of ${players.length}`), ' rated');
+    const next = shownList().find(p => !done(p));
+    const left = players.length - n;
+    nextBtn.hidden = !left;
+    nextBtn.disabled = !next;
+    nextBtn.textContent = next ? `Next: ${next.name} →` : 'Everyone shown is rated';
+    nextBtn.onclick = next ? () => jumpTo(next.id) : null;
+  };
+  // Scroll to a player's card and put focus on their first skill still to answer (or the card itself if none).
+  const jumpTo = id => {
+    let el = grid.querySelector(`.player-card[data-pid="${id}"]`);
+    if (!el) { search = ''; searchIn.value = ''; draw(); el = grid.querySelector(`.player-card[data-pid="${id}"]`); }
+    if (!el) return toast('That player is hidden by a filter above');
+    el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    const open = [...el.querySelectorAll('.skill-row .seg')].find(sg => !sg.querySelector('[aria-pressed=true], [aria-checked=true]'));
+    (open?.querySelector('button') ?? el).focus({ preventScroll: true });
   };
 
   // rowEl: the skill row tapped, which shows a quiet ✓ once saved (a toast on every tap was too much; errors still toast).
@@ -435,7 +458,7 @@ async function ratePage() {
         h('span', {}, h('small', {}, 'Weighted'), h('b', {}, known ? fmt(weightedTotal(sk)) : 'U')));
     };
     totals.set(p.id, paint); paint();
-    return h('div', { class: 'card player-card' },
+    return h('div', { class: 'card player-card', 'data-pid': p.id, tabindex: -1 },
       h('header', {}, avatar(p.name), h('b', {}, p.name), sets.anchors.has(p.id) && h('span', { class: 'badge backup', title: 'Anchor player: everyone rates them, so SetMe can compare raters' }, 'Anchor'),
         reasons(p).length > 0 && !sets.anchors.has(p.id) && h('span', { class: 'badge', title: reasons(p).join(' · ') }, 'Look again'),
         p.playing && h('span', { class: 'badge on' }, 'Playing'), leftEl),
@@ -447,13 +470,16 @@ async function ratePage() {
       }),
       totalEl);
   };
+  // Still to rate = not every skill answered, same as the progress count. A card stays put after a tap until the list is redrawn.
+  const shownList = () => players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !done(p)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))
+    // Anchors you haven't rated come first, so a new rater starts with them.
+    .sort((a, b) => (sets.anchors.has(b.id) && !done(b)) - (sets.anchors.has(a.id) && !done(a)));
   const draw = () => {
-    // Still to rate = not every skill answered, same as the progress count. A card stays put after a tap until the list is redrawn.
-    const list = players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !done(p)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))
-      // Anchors you haven't rated come first, so a new rater starts with them.
-      .sort((a, b) => (sets.anchors.has(b.id) && !done(b)) - (sets.anchors.has(a.id) && !done(a)));
+    const list = shownList();
     grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, 'No players match.')]));
+    progress();
   };
+  const searchIn = h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } });
   progress(); draw();
 
   // CSV import: preview first, save on confirm. Super can import on behalf of another rater.
@@ -506,13 +532,15 @@ async function ratePage() {
         h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' below average'),
         h('span', {}, h('b', {}, '.5'), ' average/consistent'), h('span', {}, h('b', {}, '.75'), ' excels'),
         h('span', {}, h('b', {}, '1'), ' top of the group'), h('span', {}, h('b', {}, 'U'), " don't know")),
-      h('div', { class: 'progress', style: 'margin:14px 0 6px' }, bar), countEl,
       h('div', { class: 'toolbar', style: 'margin-top:12px' },
-        h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
+        searchIn,
         h('div', { class: 'filter-chips', role: 'group', 'aria-label': 'Show only' },
           filterChip('Playing this session', v => { onlyPlaying = v; draw(); }),
           filterChip(hasUnknown ? 'Still to rate' : 'Not rated yet', v => { onlyUnrated = v; draw(); }),
           filterChip('Worth a look', v => { onlyLook = v; draw(); })))),
+    h('div', { class: 'rate-sticky' },
+      h('div', { class: 'rate-sticky-row' }, countEl, h('span', { class: 'grow' }), nextBtn),
+      h('div', { class: 'progress' }, bar)),
     lookCard,
     layout);
 }

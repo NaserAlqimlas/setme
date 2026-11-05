@@ -141,9 +141,9 @@ body, .top { transition: padding .28s ease; }
   body.guide-open .top { padding-inline: max(16px, calc((100vw - 360px - 1100px) / 2)); }
 }
 @media (max-width: 899px) {
-  .guide-panel { left: 0; right: 0; bottom: 0; max-height: 48vh; border-bottom: 0; border-radius: 16px 16px 0 0;
+  .guide-panel { left: 0; right: 0; bottom: 0; max-height: 36vh; border-bottom: 0; border-radius: 16px 16px 0 0;
     box-shadow: 0 -8px 30px rgba(0, 0, 0, .3); transform: translateY(100%); }
-  body.guide-open main { padding-bottom: 48vh; }
+  body.guide-open main { padding-bottom: 36vh; }
 }
 @media (prefers-reduced-motion: reduce) {
   .guide-panel, .guide-panel.open, body, .top { transition: none; }
@@ -657,3 +657,13 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .skill-row.just-saved .saved-tick { animation: saved-tick 1.6s ease-out; }
 @keyframes saved-tick { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .skill-row.just-saved .saved-tick { animation: none; opacity: 1; } }
+/* Rate: progress and the next player to rate, stuck just under the header. */
+.rate-sticky { position: sticky; top: var(--top-h, 60px); z-index: 8; margin: 0 0 14px; padding: 8px 12px 10px; border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--line); box-shadow: var(--shadow); }
+.rate-sticky-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.rate-sticky .next-unrated { min-height: 40px; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-card { scroll-margin-top: calc(var(--top-h, 60px) + 80px); }
+.player-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.look-name { all: unset; cursor: pointer; font-weight: 700; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; justify-self: start; }
+.look-name:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
