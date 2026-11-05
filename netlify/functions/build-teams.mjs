@@ -18,9 +18,23 @@ import { resultAdjustments } from '../../site/js/scores.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
 
 // Recent game days' teams, newest first, before `day` when given. [] before the scores upgrade.
+// Building a later round on `day` itself: the rounds already played that day come first, so round 2 mixes up
+// round 1's teammates (rounds.sql; skipped before it runs, or while the day has no games yet).
+const cleanTeams = teams => (Array.isArray(teams) ? teams : []).map(t => (Array.isArray(t) ? t : []).filter(Number.isInteger));
 async function recentTeams(day) {
   const rows = await rest(`sessions?select=played_on,teams&order=played_on.desc&limit=${VARIETY.length + 1}${day ? `&played_on=lt.${encodeURIComponent(day)}` : ''}`).catch(() => []);
-  return rows.slice(0, VARIETY.length).map(r => (Array.isArray(r.teams) ? r.teams : []).map(t => (Array.isArray(t) ? t : []).filter(Number.isInteger)));
+  const past = rows.slice(0, VARIETY.length).map(r => cleanTeams(r.teams));
+  if (!day) return past;
+  const [today] = await rest(`sessions?select=id,teams&played_on=eq.${encodeURIComponent(day)}`).catch(() => []);
+  if (!today) return past;
+  const [played, kept] = await Promise.all([
+    rest(`games?select=round&session_id=eq.${today.id}`).catch(() => []),
+    rest(`rounds?select=n,teams&session_id=eq.${today.id}&order=n.desc`).catch(() => []),
+  ]);
+  if (!played.length) return past;
+  const cur = kept.length + 1;
+  const sameDay = [...(played.some(g => (g.round ?? 1) === cur) ? [today.teams] : []), ...kept.map(r => r.teams)];
+  return [...sameDay.map(cleanTeams), ...past].slice(0, VARIETY.length);
 }
 
 // Each movable player's best one-for-one swaps, shown when you tap them on a team card:

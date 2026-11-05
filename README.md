@@ -80,6 +80,8 @@ Match stats: paste and run `supabase/match_stats.sql` (adds `rallies`, `touches`
 
 Club features: paste and run `supabase/club.sql` (player role and account links, anchor players, sign-ups, Show to players, End the day, drafts, the activity log, and tighter rating rules so players can't rate). Safe to run again. Until then the site works as before: the new tabs stay hidden, and Drafts, Anchor, Show to players, End the day, linking and Activity don't appear. Already ran it before End the day was added? Run it again: past game days are marked as ended the first time.
 
+Rounds: paste and run `supabase/rounds.sql` after `scores.sql` and `club.sql` (adds `rounds`, a `round` column on `games`, the `start_round` and `undo_round` functions, and rounds on the Lineup page). Safe to run again. Until then a game day has one round, and saving new teams for a day with games replaces them, as before.
+
 Rating history: paste and run `supabase/rating_history.sql` (safe to run again if you ran an earlier version). It records changes from then on; earlier changes weren't kept.
 
 ## Running it locally

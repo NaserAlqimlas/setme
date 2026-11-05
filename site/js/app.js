@@ -149,6 +149,21 @@ function toast(msg) {
   // Long enough to read: short confirmations go quickly, longer messages (usually errors) stay up to 7 seconds.
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, Math.min(7000, Math.max(2200, msg.length * 70)));
 }
+// Ask with a few named choices in the page (not the browser's confirm). choices: [[value, label, class?], ...];
+// resolves to the picked value, or null for Cancel, Esc or a tap outside.
+function choose(title, text, choices) {
+  return new Promise(resolve => {
+    const done = v => { dlg.close(); dlg.remove(); resolve(v); };
+    const dlg = h('dialog', { class: 'choose', 'aria-labelledby': 'choose-title' },
+      h('h3', { id: 'choose-title' }, title), text && h('p', { class: 'muted' }, text),
+      h('div', { class: 'choose-actions' },
+        choices.map(([v, label, cls]) => h('button', { type: 'button', class: cls ?? '', onclick: () => done(v) }, label)),
+        h('button', { type: 'button', class: 'ghost', onclick: () => done(null) }, 'Cancel')));
+    dlg.addEventListener('cancel', e => { e.preventDefault(); done(null); });
+    dlg.addEventListener('click', e => { if (e.target === dlg) done(null); });
+    document.body.append(dlg); dlg.showModal();
+  });
+}
 async function callFn(name, body) {
   const res = await fetch(`/.netlify/functions/${name}`, {
     method: 'POST',
@@ -818,8 +833,10 @@ async function teamsPage() {
     if (!gameDate) { saved.hidden = true; return; }
     const day = gameDate;
     const [row] = await q(sb.from('sessions').select('id,teams').eq('played_on', day)).catch(() => []);
+    // Which round is playing (rounds.sql; 1 before it runs).
+    const kept = row ? await q(sb.from('rounds').select('n').eq('session_id', row.id)).catch(() => []) : [];
     if (day !== gameDate) return;
-    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null } : null;
+    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null, round: kept.length + 1 } : null;
     markSaved();
   };
   // Which option on screen is the saved one, if any. Re-said whenever options or the saved teams change.
@@ -834,9 +851,10 @@ async function teamsPage() {
     const day = h('b', {}, dayTitle(gameDate));
     const scores = h('a', { href: '#scores' }, 'Enter scores');
     saved.classList.toggle('differs', shown.length > 0 && !match);
-    saved.replaceChildren(...(match ? ['✓ ', match.querySelector('h3')?.textContent ?? 'These teams', ' is saved for ', day, '. ', scores]
-      : shown.length ? ['Teams are already saved for ', day, ', but not the ones below. Saving these replaces them. ', scores]
-      : ['✓ Teams are saved for ', day, '. ', scores]));
+    const round = savedLineup.round > 1 ? savedLineup.round : null;
+    saved.replaceChildren(...(match ? ['✓ ', match.querySelector('h3')?.textContent ?? 'These teams', ' is saved for ', day, round ? ` (round ${round})` : '', '. ', scores]
+      : shown.length ? [round ? `Round ${round} teams are` : 'Teams are', ' already saved for ', day, ', but not the ones below. Saving these replaces them, or starts a new round once games are in. ', scores]
+      : ['✓ ', round ? `Round ${round} teams are` : 'Teams are', ' saved for ', day, '. ', scores]));
   };
   document.addEventListener('savedmarks', paintSaved);
   date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); paintDay(); };
@@ -1100,7 +1118,9 @@ async function sharePng(b, name) {
 
 // Recap image for one game or a game day. Drawn ahead of the tap (iOS drops a share that waits on drawing);
 // call the returned refresh() with new docs when the tags change.
-function recapButton(label, title, subtitle, file, pname) {
+// teamName: (team number, round) -> the team's name on the image. lineups: () -> who was on each team
+// ([{ round, teams: [{ k, ids }] }]), read at each refresh so late changes show.
+function recapButton(label, title, subtitle, file, pname, teamName, lineups = () => []) {
   let blob = null, ready = null, timer = null;
   const btn = h('button', { class: 'sm', disabled: true, onclick: async () => { const b = blob ?? await ready; if (b) sharePng(b, file); } }, label);
   const refresh = docs => {
@@ -1109,7 +1129,7 @@ function recapButton(label, title, subtitle, file, pname) {
       const data = recap(docs);
       btn.disabled = !data.results.length;
       blob = null;
-      ready = recapImage(data, { title, subtitle, name: id => pname.get(id) ?? 'Someone', colors: TEAM_COLORS }).then(b => (blob = b));
+      ready = recapImage(data, { title, subtitle, name: id => pname.get(id) ?? 'Someone', colors: TEAM_COLORS, teamName, lineups: lineups() }).then(b => (blob = b));
     }, 300);
   };
   return { btn, refresh };
@@ -1450,8 +1470,26 @@ async function saveLineup(teams, { raters, allGame, source }) {
     const [existing] = await q(sb.from('sessions').select('id').eq('played_on', day));
     const row = { played_on: day, teams, raters: raters ?? null, all_game: allGame ?? [], source };
     if (existing) {
-      const n = (await q(sb.from('games').select('id').eq('session_id', existing.id))).length;
-      if (!confirm(`Teams are already saved for ${dayTitle(day)}${n ? ` with ${n} game${n > 1 ? 's' : ''}` : ''}. Replace them?${n ? ' Saved games keep the players they had.' : ''}`)) return;
+      // Rounds (rounds.sql): null before the upgrade. The round playing now is one past the last one kept.
+      const kept = await q(sb.from('rounds').select('n').eq('session_id', existing.id)).catch(() => null);
+      const cur = kept ? kept.length + 1 : 1;
+      const games = await q(sb.from('games').select('*').eq('session_id', existing.id));
+      const n = (kept ? games.filter(g => (g.round ?? 1) === cur) : games).length;
+      const roundWord = cur > 1 ? `round ${cur}'s teams` : 'the teams';
+      if (n && kept) {
+        const pick = await choose(`${dayTitle(day)} already has ${n} game${n > 1 ? 's' : ''}${cur > 1 ? ` in round ${cur}` : ''}`,
+          `Start round ${cur + 1} to keep ${cur > 1 ? `round ${cur}` : 'the teams so far'} with ${n > 1 ? 'their' : 'its'} games and standings, and play on with these. Or replace ${roundWord}; saved games keep the players they had.`,
+          [['round', `Start round ${cur + 1}`, 'ball'], ['replace', `Replace ${roundWord}`, 'ghost']]);
+        if (!pick) return;
+        if (pick === 'round') {
+          const r = await q(sb.rpc('start_round', { p_session: existing.id, p_teams: teams, p_raters: raters ?? null, p_all_game: allGame ?? [], p_source: source }));
+          toast(`Round ${r} saved for ${dayTitle(day)}`);
+          return document.dispatchEvent(new Event('lineupsaved'));
+        }
+      } else if (n) {
+        const upgrade = me.role === 'super' ? ' To keep them as round 1 instead, run supabase/rounds.sql.' : '';
+        if (await choose(`${dayTitle(day)} already has ${n} game${n > 1 ? 's' : ''}`, `Replace the teams? Saved games keep the players they had.${upgrade}`, [[true, 'Replace the teams', 'danger']]) !== true) return;
+      } else if (await choose(`Teams are already saved for ${dayTitle(day)}`, `Replace ${roundWord} with these? No games have been entered${cur > 1 ? ' in this round' : ''} yet.`, [[true, 'Replace', 'danger']]) !== true) return;
       await q(sb.from('sessions').update(row).eq('id', existing.id));
     } else await q(sb.from('sessions').insert(row));
     toast(`Saved as the teams for ${dayTitle(day)}`);
@@ -1460,25 +1498,38 @@ async function saveLineup(teams, { raters, allGame, source }) {
 }
 
 let scoresTab = 'games', scoresDay = null;
-// (session id, team number from 1) -> that team's name on that day, from who is on it now (late changes included).
-function sessionTeamNamer(sessions, players) {
+// Set when a new round starts on Scores with the same teams, so the page comes back with Change players open.
+let scoresEditNext = false;
+// A game day's rounds, oldest first: [{ n, teams, raters, all_game, current }]. The last is the round playing now
+// (the session's own teams); earlier ones come from rounds (rows: that table, null before rounds.sql).
+function roundsOf(ses, rows) {
+  const kept = (rows ?? []).filter(r => r.session_id === ses.id).sort((a, b) => a.n - b.n);
+  return [...kept.map(r => ({ ...r, current: false })), { n: kept.length + 1, teams: ses.teams, raters: ses.raters, all_game: ses.all_game, current: true }];
+}
+const roundOf = g => g.round ?? 1;
+// (session id, team number from 1, round) -> that team's name in that round, from who is on it (late changes
+// included). No round = the round playing now.
+function sessionTeamNamer(sessions, players, rounds) {
   const byId = new Map(players.map(p => [p.id, p])), byS = new Map(sessions.map(s => [s.id, s]));
-  return (sid, k) => {
+  return (sid, k, round) => {
     const s = byS.get(sid);
-    const names = s && Array.isArray(s.teams) ? teamNames(s.teams.map(t => (Array.isArray(t) ? t : []).map(id => byId.get(id)).filter(Boolean)), new Set(s.all_game ?? [])) : [];
+    const rs = s ? roundsOf(s, rounds) : [];
+    const r = rs.find(x => x.n === round) ?? rs.at(-1);
+    const names = r && Array.isArray(r.teams) ? teamNames(r.teams.map(t => (Array.isArray(t) ? t : []).map(id => byId.get(id)).filter(Boolean)), new Set(r.all_game ?? [])) : [];
     return names[k - 1] ?? `Team ${k}`;
   };
 }
 async function scoresPage() {
-  const [sessions, players] = await Promise.all([
+  const [sessions, players, rounds] = await Promise.all([
     q(sb.from('sessions').select('*').order('played_on', { ascending: false })),
     q(sb.from('players').select('id,name,setting,active').order('name')),
+    q(sb.from('rounds').select('*')).catch(() => null), // null before rounds.sql
   ]);
   const pname = new Map(players.map(p => [p.id, p.name]));
-  const tname = sessionTeamNamer(sessions, players);
+  const tname = sessionTeamNamer(sessions, players, rounds);
   const body = h('div');
   const tabs = seg([['games', 'Games'], ['insights', 'Insights'], ['attendance', 'Attendance'], ['season', 'Season']], scoresTab, v => { scoresTab = v; draw(); }, 'Scores view');
-  const views = { games: () => gamesView(sessions, players, pname, tname), insights: () => insightsView(sessions, pname, tname),
+  const views = { games: () => gamesView(sessions, players, pname, tname, rounds), insights: () => insightsView(sessions, pname, tname),
     attendance: () => attendanceView(sessions, players, pname), season: () => seasonView(sessions, pname, tname) };
   const draw = async () => {
     body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
@@ -1489,7 +1540,7 @@ async function scoresPage() {
   return h('div', {}, pageHead('Scores', 'Enter each game\'s score. Insights show how well the teams were balanced.', tabs), body);
 }
 
-async function gamesView(sessions, players, pname, tname) {
+async function gamesView(sessions, players, pname, tname, roundRows) {
   if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save for scores'), '.')];
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
@@ -1503,15 +1554,43 @@ async function gamesView(sessions, players, pname, tname) {
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
   daySel.onchange = () => { scoresDay = daySel.value; render(); };
-  const delDay = h('button', { class: 'danger sm', onclick: async () => {
-    if (!confirm(`Delete ${dayTitle(ses.played_on)} and its ${games.length} game${games.length === 1 ? '' : 's'}?`)) return;
+
+  // Delete day: only on the day itself (or a day still to come). Once the date has passed, the day stays.
+  const delDay = ses.played_on >= today() && h('button', { class: 'danger sm', onclick: async () => {
+    const n = games.length;
+    if (await choose(`Delete ${dayTitle(ses.played_on)}?`, `Its teams${n ? `, all ${n} game${n === 1 ? '' : 's'} and their tags` : ''} are deleted too. This can't be undone.`, [[true, 'Delete day', 'danger']]) !== true) return;
     try { await q(sb.from('sessions').delete().eq('id', ses.id)); toast('Deleted'); render(); } catch (e) { toast(e.message); }
   } }, 'Delete day');
 
+  // Rounds: the last is the one playing now (ses.teams); new games go into it. One round before rounds.sql.
+  const rounds = roundsOf(ses, roundRows), cur = rounds.at(-1).n, hasRounds = roundRows != null;
+  const inRound = n => games.filter(g => roundOf(g) === n);
+  const teamsIn = n => n === cur ? ses.teams : rounds.find(r => r.n === n)?.teams ?? [];
   const N = () => ses.teams.length;
-  const teamName = k => tname(ses.id, k);
+  const teamName = (k, n = cur) => tname(ses.id, k, n);
   const teamsBox = h('div'), entry = h('div'), list = h('div', { class: 'card' });
-  let editing = false;
+  let editing = scoresEditNext; scoresEditNext = false;
+  // Swapping while changing players: the player tapped first, as [team index, player id].
+  let picked = null;
+  // Setters who set all game: as saved with the teams; a main setter who arrived later does by default.
+  const allGameFor = ids => { const known = new Set(ses.all_game); return [...known, ...ids.filter(id => !known.has(id) && players.find(p => p.id === id)?.setting === 'M')]; };
+  // While changing players: how even the teams are now, from the same ratings the lineup was built with.
+  const balance = h('p', { class: 'small verdict', 'aria-live': 'polite' });
+  const paintBalance = async () => {
+    const teams = ses.teams;
+    if (!editing || teams.length < 2 || teams.some(t => !t.length)) return balance.replaceChildren();
+    try {
+      const r = await callFn('build-teams', { predict: true, teams, raters: ses.raters, allGame: allGameFor(teams.flat()) });
+      if (teams !== ses.teams) return; // changed again meanwhile
+      const t = r.teams.map(x => x.weighted), gap = Math.max(...t) - Math.min(...t);
+      balance.replaceChildren(h('b', {}, evenness(gap)), h('span', { class: 'muted' }, ` · team totals ${num2(Math.min(...t))} to ${num2(Math.max(...t))}, a gap of ${num2(gap)}`));
+    } catch { balance.replaceChildren(); }
+  };
+  const swap = (i, id) => {
+    if (!picked || picked[0] === i) { picked = picked?.[1] === id ? null : [i, id]; return paintTeams(); }
+    const [j, other] = picked; picked = null;
+    saveTeams(ses.teams.map((t, k) => k === i ? t.map(x => x === id ? other : x) : k === j ? t.map(x => x === other ? id : x) : t));
+  };
 
   // Late changes: remove someone, or add anyone (picking a player on another team moves them). Saved straight away;
   // games already entered keep who they had.
@@ -1519,21 +1598,26 @@ async function gamesView(sessions, players, pname, tname) {
     const before = ses.teams; ses.teams = teams;
     try { await q(sb.from('sessions').update({ teams }).eq('id', ses.id)); toast('Saved. Next games use these players.'); }
     catch (e) { ses.teams = before; toast(e.message); }
-    paintTeams(); paintEntry();
+    paintTeams(); paintEntry(); paintBalance();
   };
-  const record = k => {
-    const mine = games.filter(g => g.team_a === k || g.team_b === k);
+  const record = (k, n = cur) => {
+    const mine = inRound(n).filter(g => g.team_a === k || g.team_b === k);
     const won = mine.filter(g => (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a) > 0).length;
     const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
     return mine.length ? `${won}–${mine.length - won} · ${diff > 0 ? '+' : ''}${diff}` : 'No games yet';
   };
   const paintTeams = () => {
     const active = players.filter(p => p.active);
+    const canRound = hasRounds && !editing && !ses.ended && inRound(cur).length > 0;
     teamsBox.replaceChildren(h('div', { class: 'card-head' },
-      h('div', {}, h('h3', {}, 'Teams'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
-        editing ? 'Remove someone who left, or add a late arrival. Picking someone from another team moves them. Games already saved keep who they had.' : 'Wins–losses and points for minus points against.')),
-      h('button', { class: editing ? 'sm' : 'ghost sm', onclick: () => { editing = !editing; paintTeams(); } }, editing ? 'Done' : 'Change players')),
-    h('div', { class: 'team-grid' }, ses.teams.map((ids, i) => {
+      h('div', {}, h('h3', {}, cur > 1 ? `Round ${cur} teams` : 'Teams'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
+        editing ? `Tap a player, then one on another team, to swap them. Remove someone who left, or add a late arrival. Games already saved keep who they had.` : 'Wins–losses and points for minus points against.')),
+      cur > 1 && !inRound(cur).length && !editing && h('button', { class: 'ghost sm', onclick: backRound }, `Back to round ${cur - 1}`),
+      canRound && h('button', { class: 'ghost sm', onclick: newRound }, `Start round ${cur + 1}`),
+      h('button', { class: editing ? 'sm' : 'ghost sm', onclick: () => { editing = !editing; picked = null; paintTeams(); paintBalance(); } }, editing ? 'Done' : 'Change players')),
+    editing && balance,
+    picked && h('p', { class: 'small swap-hint', role: 'status' }, h('b', {}, `Picked: ${pname.get(picked[1]) ?? 'player'}.`), ' Tap someone on another team to swap, or tap them again to cancel.'),
+    h('div', { class: `team-grid${picked ? ' picking' : ''}` }, ses.teams.map((ids, i) => {
       const k = i + 1;
       const add = editing && h('select', { 'aria-label': `Add a player to ${teamName(k)}` },
         h('option', { value: '' }, '+ Add player'),
@@ -1545,18 +1629,48 @@ async function gamesView(sessions, players, pname, tname) {
         const id = Number(add.value); if (!id) return;
         saveTeams(ses.teams.map((t, j) => j === i ? [...t, id] : t.filter(x => x !== id)));
       };
-      return h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
+      const who = id => editing
+        ? h('button', { type: 'button', class: 'pick', 'aria-pressed': String(picked?.[1] === id), onclick: () => swap(i, id),
+          'aria-label': picked && picked[0] !== i ? `Swap ${pname.get(id)} with ${pname.get(picked[1])}` : `Pick ${pname.get(id)} to swap` },
+          avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player'))
+        : [avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player')];
+      return h('article', { class: `team${picked?.[0] === i ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, teamName(k)), h('span', { class: 'muted small' }, record(k))),
-        h('ul', {}, ids.map(id => h('li', {}, avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player'),
+        h('ul', {}, ids.map(id => h('li', {}, who(id),
           editing && h('button', { type: 'button', class: 'ghost sm', 'aria-label': `Remove ${pname.get(id)}`,
             onclick: () => ids.length > 1 ? saveTeams(ses.teams.map((t, j) => j === i ? t.filter(x => x !== id) : t)) : toast('A team needs at least one player') }, '×')))),
         add);
-    })));
+    })),
+    ...rounds.filter(r => !r.current).reverse().map(r => h('details', { class: 'round-past' },
+      h('summary', {}, h('b', {}, `Round ${r.n}`), h('span', { class: 'muted small' }, ` · ${inRound(r.n).length} game${inRound(r.n).length === 1 ? '' : 's'}`)),
+      h('div', { class: 'team-grid' }, r.teams.map((ids, i) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
+        h('header', {}, h('h4', {}, teamName(i + 1, r.n)), h('span', { class: 'muted small' }, record(i + 1, r.n))),
+        h('ul', {}, ids.map(id => h('li', {}, avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player')))))))))
+    );
+  };
+  // Start the next round from here: keep this round with its games and standings, then either play on with the same
+  // teams (Change players opens to swap a few people) or build new ones on Teams.
+  const newRound = async () => {
+    const pick = await choose(`Start round ${cur + 1}?`, `Round ${cur} is kept with its ${inRound(cur).length} game${inRound(cur).length === 1 ? '' : 's'} and standings. Start round ${cur + 1} with the same teams and swap players here, or build new teams on Teams.`,
+      [['here', 'Same teams, swap here', 'ball'], ['teams', 'Build new teams', 'ghost']]);
+    if (pick === 'teams') { gameDate = ses.played_on; location.hash = '#teams'; return; }
+    if (pick !== 'here') return;
+    try {
+      await q(sb.rpc('start_round', { p_session: ses.id, p_teams: ses.teams, p_raters: ses.raters ?? null, p_all_game: ses.all_game ?? [], p_source: ses.source ?? null }));
+      toast(`Round ${cur + 1} started. Swap players, then tap Done.`);
+      scoresEditNext = true; render();
+    } catch (e) { toast(e.message); }
+  };
+  // Undo a new round before any game is entered in it: the previous round's teams come back.
+  const backRound = async () => {
+    if (await choose(`Go back to round ${cur - 1}?`, `Round ${cur}'s teams are dropped and round ${cur - 1}'s teams are playing again. No games are lost.`, [[true, `Back to round ${cur - 1}`, 'danger']]) !== true) return;
+    try { await q(sb.rpc('undo_round', { p_session: ses.id })); toast(`Back to round ${cur - 1}`); render(); }
+    catch (e) { toast(e.message); }
   };
 
   // New game: which two teams, then the score. Played to 25; a game cut short by time is saved as it stood.
   const paintEntry = () => {
-    const [pa, pb] = nextPairing(N(), games) ?? [1, 2];
+    const [pa, pb] = nextPairing(N(), inRound(cur)) ?? [1, 2];
     const pick = (v, label) => h('select', { 'aria-label': label }, ses.teams.map((_, i) => h('option', { value: i + 1, selected: i + 1 === v }, teamName(i + 1))));
     const ta = pick(pa, 'First team'), tb = pick(pb, 'Second team');
     const num = label => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in', 'aria-label': label, placeholder: '0' });
@@ -1578,16 +1692,14 @@ async function gamesView(sessions, players, pname, tname) {
       if (A === B) return toast('A game can\'t end in a tie');
       btn.disabled = true; btn.textContent = 'Saving…';
       const players_a = ses.teams[a - 1], players_b = ses.teams[b - 1];
-      // Setters who set all game: as saved with the teams; a main setter who arrived later does by default.
-      const known = new Set(ses.all_game);
-      const allGame = [...known, ...[...players_a, ...players_b].filter(id => !known.has(id) && players.find(p => p.id === id)?.setting === 'M')];
+      const allGame = allGameFor([...players_a, ...players_b]);
       let predicted = null;
       try {
         const r = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters: ses.raters, allGame });
         predicted = { a: r.teams[0], b: r.teams[1] };
       } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
       try {
-        const [g] = await q(sb.from('games').insert({ session_id: ses.id, team_a: a, team_b: b, players_a, players_b, score_a: A, score_b: B, predicted }).select());
+        const [g] = await q(sb.from('games').insert({ session_id: ses.id, team_a: a, team_b: b, players_a, players_b, score_a: A, score_b: B, predicted, ...(hasRounds ? { round: cur } : {}) }).select());
         games = [...games, g];
         if (predicted) toast('Game saved');
         paintTeams(); paintEntry(); paintList();
@@ -1603,8 +1715,9 @@ async function gamesView(sessions, players, pname, tname) {
   const paintList = () => {
     list.hidden = !games.length;
     if (!games.length) return list.replaceChildren();
-    const lineup = (ids, k) => ids.join() !== (ses.teams[k - 1] ?? []).join() ? ` (${ids.map(id => firstName(pname.get(id))).join(', ')})` : '';
-    list.replaceChildren(h('h3', {}, 'Games'), h('ol', { class: 'game-list' }, [...games].reverse().map(g => {
+    const lineup = (ids, k, n) => ids.join() !== (teamsIn(n)[k - 1] ?? []).join() ? ` (${ids.map(id => firstName(pname.get(id))).join(', ')})` : '';
+    // Newest round first, each round's games newest first. Game numbers run through the whole day.
+    list.replaceChildren(h('h3', {}, 'Games'), ...[...rounds].reverse().filter(r => inRound(r.n).length).flatMap(r => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${r.n}`), h('ol', { class: 'game-list' }, [...inRound(r.n)].reverse().map(g => {
       const n = games.indexOf(g) + 1;
       const input = (key, label) => {
         const el = h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: g[key], 'aria-label': label });
@@ -1616,27 +1729,27 @@ async function gamesView(sessions, players, pname, tname) {
         };
         return el;
       };
-      const changed = [lineup(g.players_a, g.team_a) && `${teamName(g.team_a)}${lineup(g.players_a, g.team_a)}`, lineup(g.players_b, g.team_b) && `${teamName(g.team_b)}${lineup(g.players_b, g.team_b)}`].filter(Boolean).join(' · ');
+      const changed = [lineup(g.players_a, g.team_a, roundOf(g)) && `${teamName(g.team_a, roundOf(g))}${lineup(g.players_a, g.team_a, roundOf(g))}`, lineup(g.players_b, g.team_b, roundOf(g)) && `${teamName(g.team_b, roundOf(g))}${lineup(g.players_b, g.team_b, roundOf(g))}`].filter(Boolean).join(' · ');
       return h('li', {},
         h('span', { class: 'game-no muted' }, String(n)),
-        h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a)} v ${teamName(g.team_b)}`),
+        h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}`),
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
-        h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a)} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b)} score`)),
+        h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
         h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
           if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
           taggingGame = g.id; render();
         } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
-          if (!confirm(`Delete game ${n} (${teamName(g.team_a)} v ${teamName(g.team_b)}, ${g.score_a}–${g.score_b})?`)) return;
+          if (!confirm(`Delete game ${n} (${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b})?`)) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
           catch (e) { toast(e.message); }
         } }, 'Delete'));
-    })));
+    }))]).filter(Boolean));
   };
   // Once the day is ended the entry box gives way to the final standings: most wins, then point difference.
-  const standings = () => ses.teams.map((_, i) => {
-    const k = i + 1, mine = games.filter(g => g.team_a === k || g.team_b === k);
+  const standings = (n = cur) => teamsIn(n).map((_, i) => {
+    const k = i + 1, mine = inRound(n).filter(g => g.team_a === k || g.team_b === k);
     const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
     const won = mine.filter(g => (g.team_a === k ? g.score_a > g.score_b : g.score_b > g.score_a)).length;
     return { k, won, lost: mine.length - won, diff };
@@ -1651,11 +1764,13 @@ async function gamesView(sessions, players, pname, tname) {
         ? `${games.length} game${games.length === 1 ? '' : 's'} played. You can still fix a score below.`
         : 'No games were entered.')),
       h('button', { class: 'ghost sm', onclick: () => setEnded(false) }, 'Reopen')),
-    games.length > 0 && h('ol', { class: 'standings' }, standings().map(t => h('li', { style: `--tc: ${TEAM_COLORS[(t.k - 1) % TEAM_COLORS.length]}` },
-      h('b', {}, teamName(t.k)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`)))));
-  paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList();
+    ...[...rounds].reverse().filter(r => inRound(r.n).length).flatMap(r => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${r.n}`),
+      h('ol', { class: 'standings' }, standings(r.n).map(t => h('li', { style: `--tc: ${TEAM_COLORS[(t.k - 1) % TEAM_COLORS.length]}` },
+        h('b', {}, teamName(t.k, r.n)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`))))]));
+  paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList(); paintBalance();
   // Day recap: every game's result, plus standouts and team numbers from whatever has been tagged.
-  const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname);
+  const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname, (k, n) => teamName(k, n),
+    () => rounds.filter(r => inRound(r.n).length).map(r => ({ round: r.n, teams: teamsIn(r.n).map((ids, i) => ({ k: i + 1, ids })) })));
   if (games.length) {
     const stored = tags ? await q(sb.from('rallies').select('id,game_id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
     dayRecap.refresh(games.map(g => ({ game: g, rallies: fromRows(stored.filter(r => r.game_id === g.id)) })));
@@ -1731,7 +1846,7 @@ async function tagView(g, n, pname, tname, back) {
     setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
   }
 
-  const name = { a: tname(g.session_id, g.team_a), b: tname(g.session_id, g.team_b) };
+  const name = { a: tname(g.session_id, g.team_a, roundOf(g)), b: tname(g.session_id, g.team_b, roundOf(g)) };
   const color = { a: TEAM_COLORS[(g.team_a - 1) % TEAM_COLORS.length], b: TEAM_COLORS[(g.team_b - 1) % TEAM_COLORS.length] };
   const lineup = { a: g.players_a, b: g.players_b };
   const pn = id => firstName(pname.get(id) ?? '?');
@@ -1886,7 +2001,8 @@ async function tagView(g, n, pname, tname, back) {
         h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
-  const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname);
+  const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
+    () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
   const paint = () => { paintScore(); paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
@@ -1948,7 +2064,7 @@ async function insightsView(sessions, pname, tname) {
       a.k > 0 ? ` (about ${pts(a.k)} points per 1.0 of gap).` : '.', ' Hollow dots stopped early (time up).'),
     chartBox);
   scatterChart(chartBox, a.rows.map(r => ({ x: r.gap, y: r.m, early: !finished(r.g),
-    label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `${tname(r.g.session_id, r.g.team_a)} v ${tname(r.g.session_id, r.g.team_b)}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
+    label: [`${dayTitle(day.get(r.g.session_id) ?? '')}`, `${tname(r.g.session_id, r.g.team_a, roundOf(r.g))} v ${tname(r.g.session_id, r.g.team_b, roundOf(r.g))}: ${r.g.score_a}–${r.g.score_b}`, `Rated gap ${plusPts(r.gap)}`] })), a.k);
 
   // Per game day.
   const bySes = sessions.map(s => ({ s, rows: a.rows.filter(r => r.g.session_id === s.id) })).filter(x => x.rows.length);
@@ -2070,7 +2186,7 @@ async function seasonView(sessions, pname, tname) {
     const rallies = games.length ? await q(sb.from('rallies').select('game_id,id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').in('game_id', games.map(g => g.id))).catch(() => []) : [];
     const docs = games.map(g => ({ game: g, rallies: fromRows(rallies.filter(r => r.game_id === g.id)) })).filter(d => d.rallies.some(r => r.won));
     const rec = seasonRecap(ses, games, docs.length ? tally(docs) : null);
-    if (rec.closest) rec.closest.names = [tname(rec.closest.session_id, rec.closest.team_a), tname(rec.closest.session_id, rec.closest.team_b)];
+    if (rec.closest) rec.closest.names = [tname(rec.closest.session_id, rec.closest.team_a, rec.closest.round), tname(rec.closest.session_id, rec.closest.team_b, rec.closest.round)];
     const names = who => who.map(id => pname.get(id) ?? 'Someone');
     let blob = null;
     const ready = seasonImage(rec, { title: label, name: id => pname.get(id) ?? 'Someone' }).then(b => (blob = b));
@@ -3099,18 +3215,29 @@ async function lineupPage() {
   return h('div', {}, head, days.map((d, i) => {
     const teams = d.teams.map(players => ({ players }));
     const tn = teamNames(d.teams);
+    // Rounds (rounds.sql): earlier rounds' teams, oldest first; the day's own teams are the round playing now.
+    const past = d.rounds ?? [], cur = past.length + 1;
+    const pastNames = new Map(past.map(r => [r.n, teamNames(r.teams)]));
+    const nameIn = (k, n) => ((n ?? 1) === cur ? tn : pastNames.get(n) ?? [])[k - 1] ?? `Team ${k}`;
+    const roundsWithGames = [...new Set(d.games.map(g => g.round ?? 1))].sort((a, b) => b - a);
     let blob = null; const ready = courtImage(teams, { title: dayTitle(d.played_on), colors: TEAM_COLORS, names: tn }).then(b => (blob = b));
     const mineAt = teams.findIndex(t => t.players.some(p => p.id === me.player_id));
     return h('section', { class: 'option' },
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on)),
-        mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on ${tn[mineAt]}.`)),
+      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on), cur > 1 ? h('span', { class: 'muted' }, ` · Round ${cur}`) : ''),
+        mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on ${tn[mineAt]}${cur > 1 ? ` in round ${cur}` : ''}.`)),
         h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k])),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
       d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
-        h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${tn[g.team_a - 1] ?? `Team ${g.team_a}`} v ${tn[g.team_b - 1] ?? `Team ${g.team_b}`}`)),
-          h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))),
+        roundsWithGames.flatMap(n => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${n}`),
+          h('ol', { class: 'game-list' }, d.games.filter(g => (g.round ?? 1) === n).map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${nameIn(g.team_a, n)} v ${nameIn(g.team_b, n)}`)),
+            h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))])),
+      [...past].reverse().map(r => h('details', { class: 'round-past' },
+        h('summary', {}, h('b', {}, `Round ${r.n} teams`)),
+        h('div', { class: 'team-grid' }, r.teams.map((ps, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
+          h('header', {}, h('h4', {}, nameIn(k + 1, r.n))),
+          h('ul', {}, ps.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))))),
       i < days.length - 1 && h('hr', { class: 'sep' }));
   }));
 }

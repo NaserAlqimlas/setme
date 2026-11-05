@@ -100,6 +100,6 @@ export function seasonRecap(sessions, games, tallies = null) {
     days: sessions.length, games: gs.length, players: ids.length,
     first: sessions.map(s => s.played_on).sort()[0] ?? null, last: sessions.map(s => s.played_on).sort().at(-1) ?? null,
     awards,
-    closest: closest && { session_id: closest.session_id, team_a: closest.team_a, team_b: closest.team_b, score_a: closest.score_a, score_b: closest.score_b, played_on: day.get(closest.session_id) },
+    closest: closest && { session_id: closest.session_id, round: closest.round ?? 1, team_a: closest.team_a, team_b: closest.team_b, score_a: closest.score_a, score_b: closest.score_b, played_on: day.get(closest.session_id) },
   };
 }

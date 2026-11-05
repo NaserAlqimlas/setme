@@ -162,26 +162,28 @@ export function statRatings(tallies, players) {
 }
 
 // Recap of one game or a whole game day, for sharing. docs: [{ game, rallies }] (untagged games have no rallies).
-// results: every game as saved on Scores. players: a stat line for everyone who played a tagged game, grouped by
-// team number (their team in the last tagged game they played) and sorted by points.
+// results: every game as saved on Scores, with its round (1 before rounds). players: a stat line for everyone who
+// played a tagged game, grouped by round and team number (their team in the last tagged game they played) and
+// sorted by points.
 export function recap(docs) {
-  const results = docs.map(({ game }) => ({ team_a: game.team_a, team_b: game.team_b, score_a: game.score_a, score_b: game.score_b }));
+  const results = docs.map(({ game }) => ({ team_a: game.team_a, team_b: game.team_b, score_a: game.score_a, score_b: game.score_b, round: game.round ?? 1 }));
   const tagged = docs.filter(d => d.rallies.some(r => r.won));
-  const teamOf = new Map();
+  const teamOf = new Map(), roundOf = new Map();
   for (const { game } of tagged) {
-    for (const p of game.players_a) teamOf.set(p, game.team_a);
-    for (const p of game.players_b) teamOf.set(p, game.team_b);
+    for (const p of game.players_a) { teamOf.set(p, game.team_a); roundOf.set(p, game.round ?? 1); }
+    for (const p of game.players_b) { teamOf.set(p, game.team_b); roundOf.set(p, game.round ?? 1); }
   }
   const t = tally(tagged), sum = o => Object.values(o).reduce((a, b) => a + b, 0);
   const players = [...teamOf].map(([pid, team]) => {
     const c = t.get(pid)?.counts;
-    if (!c) return { pid, team, points: 0, kills: 0, attacks: 0, aces: 0, serves: 0, servesIn: 0, passes: 0, passesGood: 0, blocks: 0, digs: 0, sets: 0 };
-    return { pid, team,
+    const round = roundOf.get(pid);
+    if (!c) return { pid, team, round, points: 0, kills: 0, attacks: 0, aces: 0, serves: 0, servesIn: 0, passes: 0, passesGood: 0, blocks: 0, digs: 0, sets: 0 };
+    return { pid, team, round,
       points: c.attack[3] + c.serve[3] + c.block[3],
       kills: c.attack[3], attacks: sum(c.attack),
       aces: c.serve[3], serves: sum(c.serve), servesIn: sum(c.serve) - c.serve[0],
       passes: sum(c.pass), passesGood: c.pass[2] + c.pass[3],
       blocks: c.block[3], digs: c.dig[1] + c.dig[2], sets: sum(c.set) };
-  }).sort((a, b) => a.team - b.team || b.points - a.points || b.kills - a.kills || a.pid - b.pid);
+  }).sort((a, b) => a.round - b.round || a.team - b.team || b.points - a.points || b.kills - a.kills || a.pid - b.pid);
   return { results, players, tagged: tagged.length };
 }

@@ -51,7 +51,8 @@ netlify/
   functions/admin.mjs
   functions/rate-queue.mjs   ids of players worth a fresh look on Rate (results off, few raters, anchors)
 supabase/schema.sql     tables, triggers, RLS policies (scores.sql: upgrade adding sessions and games;
-                        club.sql: player role, sign-ups, drafts, anchors, activity log)
+                        club.sql: player role, sign-ups, drafts, anchors, activity log;
+                        rounds.sql: rounds within a game day)
 tools/make_seed.py      vb_skill.md -> private/ seed SQL + test fixture
 tests/                  node scripts, no framework
 ```

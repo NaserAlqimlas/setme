@@ -610,3 +610,16 @@ h2, h3, h4 { text-wrap: balance; }
   body:has(.option-actions) #toast { bottom: calc(132px + env(safe-area-inset-bottom)); }
 }
 .option-tabs .tab-verdict { color: var(--fg); font-weight: 600; font-size: .88rem; }
+
+/* ---------- choices (in-page confirm) and rounds ---------- */
+dialog.choose { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--fg); padding: 20px; width: min(92vw, 440px); box-shadow: var(--shadow); }
+dialog.choose::backdrop { background: rgba(11, 16, 32, .45); }
+dialog.choose h3 { margin: 0 0 6px; }
+dialog.choose p { margin: 0 0 16px; }
+.choose-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+@media (max-width: 480px) { .choose-actions { flex-direction: column-reverse; } .choose-actions button { width: 100%; } }
+dialog.choose button.danger { background: var(--danger); color: #fff; border: 0; }
+.round-head { margin: 14px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+details.round-past { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+details.round-past > summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; gap: 4px; }
+details.round-past .team-grid { margin-top: 10px; }
