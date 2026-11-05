@@ -647,3 +647,12 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .unknown-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .unknown-row .chip { padding-right: 12px; }
 .unknown-row select { flex: 1 1 180px; max-width: 280px; }
+/* Players: one compact row per player; Edit opens the rest under it. */
+.grid.roster-list { gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
+.roster-row { padding: 8px 10px 8px 12px; min-width: 0; }
+.roster-row.open { grid-column: 1 / -1; }
+.roster-head { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.roster-name { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; overflow-wrap: anywhere; }
+.roster-head .switch { flex-shrink: 0; }
+.roster-edit { display: grid; gap: 12px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+.roster-edit > .field input { width: 100%; max-width: 360px; font-weight: 600; }

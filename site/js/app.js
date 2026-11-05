@@ -529,23 +529,42 @@ async function playersPage() {
   const count = () => countEl.replaceChildren(String(players.filter(p => p.playing && p.active).length), h('small', {}, 'playing'));
   count();
   let search = '';
-  const grid = h('div', { class: 'grid' });
+  const grid = h('div', { class: 'grid roster-list' });
 
+  // One compact row per player: name, setter badge, Playing. Edit opens the rest (name, gender, setter role, anchor,
+  // profile, delete), one player at a time.
+  let editingId = null;
   const card = p => {
-    const el = h('div', { class: 'card roster-card' });
-    el.append(
-      h('header', {}, avatar(p.name),
-        h('input', { type: 'text', value: p.name, 'aria-label': 'Name', onchange: e => update(p, { name: e.target.value.trim() }) })),
-      h('div', { class: 'fields' },
-        h('div', { class: 'field' }, h('span', {}, 'Gender'), seg([['M', 'M'], ['F', 'F'], ['U', 'U', 'u']], p.gender, v => update(p, { gender: v }), `${p.name} gender`)),
-        h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, v => update(p, { setting: v }), `${p.name} setter role`))),
-      h('div', { class: 'row' },
-        toggle('Playing', p.playing, v => update(p, { playing: v })),
-        // Anchor players: every rater rates them first (only once the club upgrade adds the column).
-        me.role === 'super' && 'anchor' in p && toggle('Anchor', p.anchor, v => update(p, { anchor: v })),
-        h('span', { class: 'grow' }),
-        h('a', { href: `#player/${p.id}`, class: 'name-link small' }, 'Profile'),
-        me.role === 'super' && h('button', { class: 'danger sm', onclick: () => removePlayer(p) }, 'Delete')));
+    const open = editingId === p.id;
+    const el = h('div', { class: `card roster-row${open ? ' open' : ''}` });
+    const setter = p.setting === 'M' ? h('span', { class: 'badge set' }, 'Setter') : p.setting === 'B' ? h('span', { class: 'badge backup' }, 'Backup') : null;
+    const toggleEdit = () => { editingId = open ? null : p.id; draw(); if (!open) grid.querySelector('.roster-row.open input[aria-label="Name"]')?.focus(); };
+    const head = h('div', { class: 'roster-head' },
+      avatar(p.name),
+      h('span', { class: 'roster-name' }, h('b', {}, p.name), setter, p.gender === 'U' && h('span', { class: 'muted small' }, ' · gender not set')),
+      toggle('Playing', p.playing, v => update(p, { playing: v })),
+      h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(open), 'aria-label': `${open ? 'Close' : 'Edit'} ${p.name}`, onclick: toggleEdit }, open ? 'Done' : 'Edit'));
+    if (!open) { el.append(head); return el; }
+    // The name saves on change; a blank name is refused and put back.
+    const nameIn = h('input', { type: 'text', value: p.name, 'aria-label': 'Name', maxlength: 60 });
+    nameIn.onchange = async () => {
+      const v = nameIn.value.trim();
+      if (!v) { nameIn.value = p.name; return toast('A name can\'t be blank'); }
+      if (v === p.name) return;
+      if (await update(p, { name: v }) === false) nameIn.value = p.name; else draw();
+    };
+    el.append(head,
+      h('div', { class: 'roster-edit' },
+        h('label', { class: 'field' }, h('span', {}, 'Name'), nameIn),
+        h('div', { class: 'fields' },
+          h('div', { class: 'field' }, h('span', {}, 'Gender'), seg([['M', 'M'], ['F', 'F'], ['U', 'U', 'u']], p.gender, v => update(p, { gender: v }), `${p.name} gender`)),
+          h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, async v => { await update(p, { setting: v }); draw(); }, `${p.name} setter role`))),
+        h('div', { class: 'row' },
+          // Anchor players: every rater rates them first (only once the club upgrade adds the column).
+          me.role === 'super' && 'anchor' in p && toggle('Anchor', p.anchor, v => update(p, { anchor: v })),
+          h('span', { class: 'grow' }),
+          h('a', { href: `#player/${p.id}`, class: 'name-link small' }, 'Profile'),
+          me.role === 'super' && h('button', { class: 'danger sm', onclick: () => removePlayer(p) }, 'Delete'))));
     return el;
   };
   const removePlayer = async p => {
