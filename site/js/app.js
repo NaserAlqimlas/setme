@@ -738,6 +738,11 @@ function markSaved() {
   document.querySelectorAll('[data-key]').forEach(el => el.classList.toggle('is-saved', el.dataset.key === key));
   document.dispatchEvent(new Event('savedmarks'));
 }
+// Where keyboard and screen-reader focus goes once teams are drawn again after a swap, Apply, Undo or lock
+// (a selector inside the option on screen); without it focus would drop to the top of the page.
+let pendingFocus = null;
+const focusAfterDraw = sel => { pendingFocus = sel; };
+const FOCUS_CHANGE = '.change-line', FOCUS_VERDICT = '.verdict';
 // Said right after a swap, next to the teams: who moved, how the gap changed, and Undo.
 function changeLine(before, after, onUndo) {
   if (!before || !after) return null;
@@ -747,7 +752,7 @@ function changeLine(before, after, onUndo) {
   const [g0, g1] = [gap(before), gap(after)];
   const worse = g1 > g0 + 0.005;
   const detail = me.role === 'super' || me.role === 'organizer';
-  return h('div', { class: `change-line${worse ? ' worse' : ''}`, role: 'status' },
+  return h('div', { class: `change-line${worse ? ' worse' : ''}`, role: 'status', tabindex: -1 },
     h('p', { class: 'small' }, h('b', {}, moved.length ? `Moved ${moved.join(', ')}.` : 'Swapped.'), ' ',
       detail ? `Gap ${num2(g0)} → ${num2(g1)}, ${worse ? 'less even' : g1 < g0 - 0.005 ? 'more even' : 'about the same'}.` : worse ? 'Less even than before.' : ''),
     onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo'));
@@ -936,11 +941,11 @@ async function teamsPage() {
     locked: i => checked[i] && (locks[i] ??= new Set()),
     onLock: (id, i) => { locks[i].has(id) ? locks[i].delete(id) : locks[i].add(id); recheck(i); },
     extra: i => checked[i] && suggestionsPanel(checked[i], {
-      onApply: sg => edit(i, sg.teams),
+      onApply: sg => { focusAfterDraw(FOCUS_CHANGE); edit(i, sg.teams); },
       onUndo: undos[i]?.length > 0 && (() => undo(i)),
     }),
   })); };
-  const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; draw(); };
+  const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; focusAfterDraw(FOCUS_VERDICT); draw(); };
   ownTeams.builtEdited = () => undos.some(u => u?.length);
   btn.onclick = async () => {
     if (out.dataset.shows === 'built' && ownTeams.builtEdited() && !await ask('Build new teams?', 'The swaps you made on the options below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
@@ -1072,7 +1077,7 @@ function ownTeamsCard(out, getOptions) {
       setterPlan.set(id, !setsAllGame(p)); setterPlanChanged();
     };
     const onSwap = (_, teams) => { history.push(current); changedFrom = lastOpt; current = teams; run().catch(e => { current = history.pop(); changedFrom = null; toast(e.message); run().catch(() => {}); }); };
-    const undo = history.length > 0 && (() => { current = history.pop(); changedFrom = null; run().catch(e => toast(e.message)); });
+    const undo = history.length > 0 && (() => { current = history.pop(); changedFrom = null; focusAfterDraw(FOCUS_VERDICT); run().catch(e => toast(e.message)); });
     const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
     const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, teamsTitle ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
     const onUpdateDraft = draftId != null && (async () => {
@@ -1085,7 +1090,7 @@ function ownTeamsCard(out, getOptions) {
     lastOpt = res.options[0];
     out.dataset.shows = 'own';
     out.replaceChildren(...showTeams(res, { title: teamsTitle ?? 'Your teams', locked, onLock: toggleLock, view: viewRater, onView, onSetter, onSwap, onSave, onDraft, onUpdateDraft, pool: await roster(), notice, extra: suggestionsPanel(res, {
-      onApply: sg => { history.push(current); changedFrom = lastOpt; current = sg.teams; run().catch(e => toast(e.message)); },
+      onApply: sg => { history.push(current); changedFrom = lastOpt; current = sg.teams; focusAfterDraw(FOCUS_CHANGE); run().catch(e => toast(e.message)); },
       onUndo: undo,
     }) }));
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1334,7 +1339,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     let view = views.find(v => v.id === viewId) ?? views[0];
     const withSet = opt.teams.some(t => t.players.some(p => p.allGame));
     // One short line under the tabs; the full story folds into Details.
-    const gapLine = h('p', { class: 'verdict' });
+    const gapLine = h('p', { class: 'verdict', tabindex: -1 });
     const gapStory = h('p', { class: 'muted small' });
     const grid = h('div', { class: 'team-grid', 'data-n': opt.teams.length });
     const guessNote = h('p', { class: 'muted small', hidden: true });
@@ -1345,18 +1350,25 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const off = new Set(playingIds ? opt.teams.flatMap(t => t.players.filter(p => p.id != null && !playingIds.has(p.id)).map(p => p.id)) : []);
     // Swapping: the player tapped first, as [team index, player id].
     let picked = null;
+    // Picking redraws the cards: focus goes back to the player just tapped.
+    const refocus = id => grid.querySelector(`.pick[data-pid="${id}"]`)?.focus();
     const pick = (k, id) => {
-      if (!picked || picked[1] === id) { picked = picked ? null : [k, id]; return paint(); }
-      if (picked[0] === k) { picked = [k, id]; return paint(); }
+      if (!picked || picked[1] === id) { picked = picked ? null : [k, id]; paint(); return refocus(id); }
+      if (picked[0] === k) { picked = [k, id]; paint(); return refocus(id); }
       const [a, b] = [picked[1], id];
       picked = null;
       busy();
+      focusAfterDraw(FOCUS_CHANGE);
       onSwap(i, opt.teams.map(t => t.players.map(p => p.id === a ? b : p.id === b ? a : p.id)));
     };
     const canSwap = onSwap && opt.teams.every(t => t.players.every(p => p.id != null));
     const name = (k, p) => !canSwap ? [avatar(p.name, 28), h('span', { class: 'pname' }, p.name)]
-      : [h('button', { type: 'button', class: 'pick', 'aria-pressed': String(picked?.[1] === p.id),
-        title: picked && picked[0] !== k ? `Swap with ${opt.teams[picked[0]].players.find(x => x.id === picked[1])?.name}` : `Swap ${p.name} with someone`,
+      : [h('button', { type: 'button', class: 'pick', 'data-pid': p.id, 'aria-pressed': String(picked?.[1] === p.id),
+        title: picked && picked[0] !== k ? `Swap with ${pickedName()}` : `Swap ${p.name} with someone`,
+        // Said out loud: what a tap does now, and the suggestion rank when there is one.
+        'aria-label': picked?.[1] === p.id ? `${p.name}, picked. Tap again to cancel`
+          : picked && picked[0] !== k ? `Swap ${p.name} with ${pickedName()}${hints?.findIndex(x => x.id === p.id) >= 0 ? `, suggested swap ${hints.findIndex(x => x.id === p.id) + 1}` : ''}`
+          : `${p.name}: pick to swap`,
         onclick: () => pick(k, p.id) }, avatar(p.name, 28), h('span', { class: 'pname' }, p.name))];
     // Best swaps for the tapped player (from the server, judged like Suggestions): listed under their team, marked on the others.
     let hints = null;
@@ -1378,6 +1390,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
         if (!to) return;
         picked = null;
         busy();
+        focusAfterDraw(FOCUS_CHANGE);
         onSwap(i, opt.teams.map(t => t.players.map(p => p.id === from ? to : p.id)));
       };
       return h('div', { class: 'row replace-row' }, h('span', { class: 'small' }, h('b', {}, `Replace ${pickedName()} with`)), sel);
@@ -1400,8 +1413,13 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
             x.adds.length > 0 && h('div', { class: 'small warn-text' }, `But: ${x.adds.join('; ')}`)),
           h('button', { type: 'button', class: x.better ? 'sm' : 'ghost sm', onclick: () => pick(x.team - 1, x.id) }, x.better ? 'Swap' : 'Swap anyway')))));
     };
+    const swapHint = h('p', { class: 'small swap-hint', role: 'status' });
     const paint = () => {
       hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
+      swapHint.classList.toggle('muted', !picked);
+      swapHint.replaceChildren(...(picked
+        ? [h('b', {}, `Picked: ${pickedName()} (${tn[picked[0]]}).`), ` Tap a player on another team to swap${opt.partners ? ' (best swaps are numbered)' : ''}, or tap ${firstName(pickedName())} again to cancel.${onLock && lk ? ` The lock keeps ${firstName(pickedName())} on this team.` : ''}`]
+        : [opt.partners ? 'Tap a player to see their best swaps or replace them.' : 'Tap a player, then one on another team, to swap them.']));
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
       const reps = res.variety > 0 && opt.repeats && (opt.repeats.length ? `${opt.repeats.length} ${opt.repeats.length === 1 ? 'pair' : 'pairs'} again` : 'no pairs again');
       gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' },
@@ -1415,9 +1433,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           hints && rank(p.id),
           off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
           setterBadge(p, onSetter),
-          onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'aria-pressed': String(lk.has(p.id)),
+          onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'data-lock': p.id, 'aria-pressed': String(lk.has(p.id)),
             title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`,
-            'aria-label': lk.has(p.id) ? `Unlock ${p.name}` : `Lock ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lockIcon(lk.has(p.id)))))),
+            'aria-label': lk.has(p.id) ? `Unlock ${p.name}` : `Lock ${p.name} on this team`, onclick: () => { focusAfterDraw(`[data-lock="${p.id}"]`); onLock(p.id, i); } }, lockIcon(lk.has(p.id)))))),
         picked?.[0] === k && hintBox(k),
         detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', { title: s === 'setting' ? 'Setting' : LABEL[s] }, h('small', { 'aria-hidden': 'true' }, s === 'setting' ? 'Set' : SHORT[s]), h('span', { class: 'visually-hidden' }, `${s === 'setting' ? 'Setting' : LABEL[s]} `), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
@@ -1452,7 +1470,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       detail && h('details', { class: 'option-more' }, h('summary', {}, 'Details'),
         gapStory, res.variety > 0 && repeatLine(opt.repeats, res.variety), adjustedNote(),
         chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show numbers from'), chips)),
-      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them.' : 'Tap a player, then one on another team, to swap them.'),
+      canSwap && swapHint,
       typeof notice === 'function' ? notice(i) : notice,
       grid, detail && h('div', { class: 'row option-foot' }, guessNote, h('span', { class: 'grow' }), skillsBtn),
       typeof extra === 'function' ? extra(i) : i === 0 && extra);
@@ -1460,6 +1478,13 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     parts.push(section);
   });
   if (!res.options.length) parts.push(h('p', { class: 'warn' }, 'No lineup found.'));
+  if (pendingFocus) {
+    const sel = pendingFocus; pendingFocus = null;
+    queueMicrotask(() => {
+      const shown = sections.find(sec => !sec.hidden && sec.isConnected) ?? sections.find(sec => sec.isConnected);
+      (shown?.querySelector(sel) ?? shown?.querySelector(FOCUS_VERDICT))?.focus({ preventScroll: true });
+    });
+  }
   if (detail) parts.push(h('p', { class: 'muted small weights' }, `Each skill number adds up the team's players. A team's total counts some skills more: ${SKILLS.map(s => [s, WEIGHTS[s]]).sort((a, b) => b[1] - a[1]).map(([s, w]) => `${LABEL[s]} ×${fmt(w)}`).join(', ')}.`,
     res.options.some(o => o.teams.some(t => t.players.some(p => p.allGame))) && ` Setters who set all game add their Setting ×${fmt(SETTING_WEIGHT)}, with their receiving at ${ALL_GAME.receiving * 100}% and hitting at ${ALL_GAME.hitting * 100}%.`));
   return parts;
@@ -1719,10 +1744,13 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       balance.replaceChildren(h('b', {}, evenness(gap)), h('span', { class: 'muted' }, ` · team totals ${num2(Math.min(...t))} to ${num2(Math.max(...t))}, a gap of ${num2(gap)}. ${GAP_SCALE}`));
     } catch { balance.replaceChildren(); }
   };
-  const swap = (i, id) => {
-    if (!picked || picked[0] === i) { picked = picked?.[1] === id ? null : [i, id]; return paintTeams(); }
+  // Cards are drawn again on each tap: focus goes back to the player tapped (after a swap, to where they went).
+  const refocus = id => teamsBox.querySelector(`.pick[data-pid="${id}"]`)?.focus();
+  const swap = async (i, id) => {
+    if (!picked || picked[0] === i) { picked = picked?.[1] === id ? null : [i, id]; paintTeams(); return refocus(id); }
     const [j, other] = picked; picked = null;
-    saveTeams(ses.teams.map((t, k) => k === i ? t.map(x => x === id ? other : x) : k === j ? t.map(x => x === other ? id : x) : t));
+    await saveTeams(ses.teams.map((t, k) => k === i ? t.map(x => x === id ? other : x) : k === j ? t.map(x => x === other ? id : x) : t));
+    refocus(other);
   };
 
   // Late changes: remove someone, or add anyone (picking a player on another team moves them). Saved straight away;
@@ -1763,7 +1791,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
         saveTeams(ses.teams.map((t, j) => j === i ? [...t, id] : t.filter(x => x !== id)));
       };
       const who = id => editing
-        ? h('button', { type: 'button', class: 'pick', 'aria-pressed': String(picked?.[1] === id), onclick: () => swap(i, id),
+        ? h('button', { type: 'button', class: 'pick', 'data-pid': id, 'aria-pressed': String(picked?.[1] === id), onclick: () => swap(i, id),
           'aria-label': picked && picked[0] !== i ? `Swap ${pname.get(id)} with ${pname.get(picked[1])}` : `Pick ${pname.get(id)} to swap` },
           avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player'))
         : [avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player')];

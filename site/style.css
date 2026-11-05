@@ -637,3 +637,8 @@ button:disabled.ghost { opacity: .75; cursor: default; }
   .option-tabs::-webkit-scrollbar { display: none; }
   .option-tabs button { flex: 0 0 auto; min-width: 128px; scroll-snap-align: start; }
 }
+/* Focus moved here after a swap or Undo: show where it landed without a box around plain text. */
+.change-line:focus-visible, .verdict:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 8px; }
+.change-line:focus:not(:focus-visible), .verdict:focus:not(:focus-visible) { outline: none; }
+/* The player picked to swap: a check mark as well as the colour, so it doesn't rely on colour alone. */
+.team li .pick[aria-pressed=true] .pname::after { content: " ✓"; color: var(--tc); font-weight: 700; }
