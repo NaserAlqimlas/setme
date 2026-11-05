@@ -508,3 +508,10 @@ button.filter-chip[aria-pressed=true]::before { content: '✓'; margin-right: 6p
 .guide-fab { box-shadow: 0 6px 20px rgb(15 22 48 / .22); }
 .account .menu-list { left: auto; right: 0; }
 @media (min-width: 641px) { .page-head details.menu .menu-list { left: auto; right: 0; } }
+/* Final standings once a game day is ended. */
+.standings { list-style: none; margin: 4px 0 0; padding: 0; counter-reset: st; }
+.standings li { display: grid; grid-template-columns: 1.6rem minmax(5rem, auto) 1fr auto; gap: 12px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); counter-increment: st; }
+.standings li::before { content: counter(st); font: 700 1.3rem/1 var(--display); color: var(--muted); }
+.standings li:first-child::before { color: var(--ball-fg); background: var(--ball); border-radius: 50%; width: 1.6rem; height: 1.6rem; display: grid; place-items: center; font-size: 1rem; }
+.standings li b { color: var(--tc); font: 700 1.3rem/1 var(--display); }
+@media (max-width: 480px) { .standings li { grid-template-columns: 1.6rem 1fr auto; } .standings li > span:last-child { grid-column: 2 / -1; } }

@@ -1,4 +1,4 @@
--- Upgrade: player accounts, sign-ups, published teams, saved drafts, anchor players and the activity log.
+-- Upgrade: player accounts, sign-ups, published teams, ending a game day, saved drafts, anchor players and the activity log.
 -- Run once in the SQL Editor (safe to run again; also in schema.sql for new projects).
 -- Until it runs, everything else keeps working: the pages that need it say so.
 
@@ -75,11 +75,21 @@ create policy signups_delete on public.signups for delete to authenticated using
 -- ---------- published teams ----------
 -- Organizers choose when a game day's teams (and scores) show on the Lineup page. Off until they turn it on.
 alter table public.sessions add column if not exists published boolean not null default false;
+-- An organizer ends the game day once the last game is played (Scores page). Reopening is allowed.
+-- The first time this runs, game days before today count as ended; running it again changes nothing.
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'sessions' and column_name = 'ended') then
+    alter table public.sessions add column ended boolean not null default false;
+    update public.sessions set ended = true where played_on < current_date;
+  end if;
+end $$;
 
 -- Published game days, newest first: each team's players by name, and the games' scores. Nothing from ratings.
 -- Security definer because players can't read sessions; it only returns what's published.
-create or replace function public.published_lineups(p_limit int default 5)
-returns table (played_on date, teams jsonb, games jsonb)
+-- Dropped first: an earlier version had no "ended" column, and a return type can't be changed in place.
+drop function if exists public.published_lineups(int);
+create function public.published_lineups(p_limit int default 5)
+returns table (played_on date, teams jsonb, games jsonb, ended boolean)
 language sql stable security definer set search_path = public as $$
   select s.played_on,
     (select coalesce(jsonb_agg(
@@ -88,7 +98,8 @@ language sql stable security definer set search_path = public as $$
        order by t.ord), '[]'::jsonb)
      from jsonb_array_elements(s.teams) with ordinality as t(team, ord)),
     coalesce((select jsonb_agg(jsonb_build_object('team_a', g.team_a, 'team_b', g.team_b, 'score_a', g.score_a, 'score_b', g.score_b) order by g.created_at)
-      from public.games g where g.session_id = s.id), '[]'::jsonb)
+      from public.games g where g.session_id = s.id), '[]'::jsonb),
+    s.ended
   from public.sessions s
   where s.published and auth.uid() is not null
   order by s.played_on desc

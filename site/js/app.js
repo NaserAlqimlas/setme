@@ -1225,7 +1225,7 @@ async function gamesView(sessions, players, pname) {
   if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, () => { taggingGame = null; render(); })];
   taggingGame = null;
   const wrap = h('div');
-  const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on))));
+  const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
   daySel.onchange = () => { scoresDay = daySel.value; render(); };
   const delDay = h('button', { class: 'danger sm', onclick: async () => {
     if (!confirm(`Delete ${dayTitle(ses.played_on)} and its ${games.length} game${games.length === 1 ? '' : 's'}?`)) return;
@@ -1358,7 +1358,26 @@ async function gamesView(sessions, players, pname) {
         } }, 'Delete'));
     })));
   };
-  paintTeams(); paintEntry(); paintList();
+  // Once the day is ended the entry box gives way to the final standings: most wins, then point difference.
+  const standings = () => ses.teams.map((_, i) => {
+    const k = i + 1, mine = games.filter(g => g.team_a === k || g.team_b === k);
+    const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
+    const won = mine.filter(g => (g.team_a === k ? g.score_a > g.score_b : g.score_b > g.score_a)).length;
+    return { k, won, lost: mine.length - won, diff };
+  }).sort((a, b) => b.won - a.won || b.diff - a.diff);
+  const setEnded = async v => {
+    try { await q(sb.from('sessions').update({ ended: v }).eq('id', ses.id)); ses.ended = v; toast(v ? 'Game day ended' : 'Game day reopened'); render(); }
+    catch (e) { toast(e.message); }
+  };
+  const paintEnded = () => entry.replaceChildren(
+    h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Game day over'),
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, games.length
+        ? `${games.length} game${games.length === 1 ? '' : 's'} played. You can still fix a score below.`
+        : 'No games were entered.')),
+      h('button', { class: 'ghost sm', onclick: () => setEnded(false) }, 'Reopen')),
+    games.length > 0 && h('ol', { class: 'standings' }, standings().map(t => h('li', { style: `--tc: ${TEAM_COLORS[(t.k - 1) % TEAM_COLORS.length]}` },
+      h('b', {}, teamName(t.k)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`)))));
+  paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList();
   // Day recap: every game's result, plus standouts and team numbers from whatever has been tagged.
   const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname);
   if (games.length) {
@@ -1370,8 +1389,11 @@ async function gamesView(sessions, players, pname) {
     try { await q(sb.from('sessions').update({ published: v }).eq('id', ses.id)); ses.published = v; toast(v ? 'Players can see these teams' : 'Hidden from players'); }
     catch (e) { toast(e.message); return false; }
   }));
+  const endDay = 'ended' in ses && !ses.ended && h('button', { class: 'ghost sm', onclick: () => {
+    if (confirm(`End ${dayTitle(ses.played_on)}? The score entry closes and players see the scores as final. You can reopen it.`)) setEnded(true);
+  } }, 'End the day');
   wrap.append(
-    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), games.length ? dayRecap.btn : null, delDay),
+    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), endDay, games.length ? dayRecap.btn : null, delDay),
     h('div', { class: 'card' }, entry),
     h('div', { class: 'card' }, teamsBox),
     list);
@@ -2808,7 +2830,7 @@ async function lineupPage() {
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`)),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
-      d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, 'Scores'),
+      d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
         h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `Team ${g.team_a} v Team ${g.team_b}`)),
           h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))),
       i < days.length - 1 && h('hr', { class: 'sep' }));
