@@ -246,7 +246,7 @@ export async function teamsPage() {
     ]) : [[], []];
     if (day !== gameDate) return;
     const round = kept.length + 1;
-    savedLineup = row ? { day, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null, round, games: played.filter(g => (g.round ?? 1) === round).length } : null;
+    savedLineup = row ? { day, teams: Array.isArray(row.teams) ? row.teams : null, key: Array.isArray(row.teams) ? lineupKey(row.teams) : null, round, games: played.filter(g => (g.round ?? 1) === round).length } : null;
     markSaved();
   };
   // Which option on screen is the saved one, if any. Re-said whenever options or the saved teams change.
@@ -267,10 +267,10 @@ export async function teamsPage() {
       : ['✓ ', round ? `Round ${round} teams are` : 'Teams are', ' saved for ', day, '. ', scores]));
   };
   document.addEventListener('savedmarks', paintSaved);
-  date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); paintDay(); };
+  date.onchange = () => { gameDate = date.value; document.dispatchEvent(new Event('gamedate')); paintDay().then(() => showSaved()); };
   const onSaved = () => { if (!out.isConnected) return document.removeEventListener('lineupsaved', onSaved); paintDay(); };
   document.addEventListener('lineupsaved', onSaved);
-  paintDay();
+  const dayPainted = paintDay();
 
   const sizes = h('span', { class: 'muted small' });
   const paintSizes = () => { sizes.textContent = playing.length ? `Teams of ${teamSizes(playing.length, numTeams)}` : ''; };
@@ -298,7 +298,12 @@ export async function teamsPage() {
     teamsStore.write({ shows: 'built', own: null, built: { ...state, undos: undos.map(u => u?.slice(-10) ?? null), changes } })
       || teamsStore.write({ shows: 'built', own: null, built: { ...state, undos: [], changes: [] } });
   };
-  ownTeams.onRun = () => { restoredLine.hidden = restoring ? restoredLine.hidden : true; teamsStore.write({ shows: 'own', built: null, own: ownTeams.snapshot() }); };
+  ownTeams.onRun = () => {
+    restoredLine.hidden = restoring ? restoredLine.hidden : true;
+    // The day's saved teams, untouched, come from the database on every visit: nothing to keep on this device.
+    if (ownTeams.fromSaved && !ownTeams.edited()) return teamsStore.write({ shows: null, built: null, own: null });
+    teamsStore.write({ shows: 'own', built: null, own: ownTeams.snapshot() });
+  };
   const draw = () => { out.dataset.shows = 'built'; if (!restoring) restoredLine.hidden = true; keepBuilt(); out.replaceChildren(...showTeams(built, {
     view, onSwap: edit, pool, open, onOpen: i => { open = i; keepBuilt(); },
     edited: i => undos[i]?.length > 0,
@@ -366,6 +371,17 @@ export async function teamsPage() {
       h('button', { type: 'button', class: 'ghost sm', onclick: clearKept }, 'Clear'));
     restoredLine.hidden = false;
   }
+  // Nothing on screen and the day already has teams: show them, ready to swap, save, share or enter scores with.
+  // Also follows the date picker while they're untouched; anything you've changed or built stays put.
+  const showSaved = async () => {
+    const untouched = out.dataset.shows === 'own' && ownTeams.fromSaved && !ownTeams.edited();
+    if (out.dataset.shows && !untouched) return;
+    const lineup = savedLineup?.day === gameDate && savedLineup.teams?.length ? savedLineup : null;
+    if (untouched && ownTeams.fromSaved === lineup?.day) return;
+    if (!lineup) { if (untouched) { ownTeams.reset(); out.dataset.shows = ''; out.replaceChildren(); } return; }
+    await ownTeams.show(lineup.teams, lineup.round > 1 ? `Round ${lineup.round} teams` : 'Saved teams', lineup.day).catch(e => toast(e.message));
+  };
+  dayPainted.then(() => showSaved());
   const nobody = !playing.length && h('div', { class: 'card empty-list' },
     h('p', { style: 'margin:0' }, h('b', {}, 'Nobody is on the playing list yet.'), ' Paste the WhatsApp list or tick who\'s playing on Players, then come back to build.'),
     h('a', { class: 'button', href: '#players' }, 'Go to Players'));
@@ -472,7 +488,7 @@ function ownTeamsCard(out, getOptions) {
   };
   check.onclick = async () => {
     if (!await okToReplace('Check these teams', 'Check teams')) return;
-    teamsTitle = null; draftId = null;
+    teamsTitle = null; draftId = null; card.fromSaved = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
     history = []; locked.clear(); changedFrom = null;
     check.disabled = true; const label = check.textContent; check.textContent = 'Checking…';
@@ -494,10 +510,15 @@ function ownTeamsCard(out, getOptions) {
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
   card.load = async (teams, title, id = null) => {
     if (!await okToReplace(`Open "${title}"`, 'Open draft')) return;
-    current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = id;
+    current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = id; card.fromSaved = null;
     try { await run({ scroll: true }); } catch (e) { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
   document.addEventListener('setterplan', () => card.refresh());
+  // The game day's saved teams, shown when Teams opens with nothing else on screen. fromSaved = that day.
+  card.show = async (teams, title, day) => {
+    current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = null; card.fromSaved = day;
+    await run();
+  };
   card.roster = roster;
   card.edited = () => history.length > 0;
   // Kept on this device between visits (teamsStore): what's pasted and the checked teams with their swaps and locks.
@@ -505,10 +526,10 @@ function ownTeamsCard(out, getOptions) {
   card.restore = async st => {
     box.value = st.text ?? ''; if (box.value) { update(); card.open = true; }
     current = st.current; history = st.history ?? []; locked.clear(); (st.locked ?? []).forEach(id => locked.add(id));
-    viewRater = st.viewRater ?? null; teamsTitle = st.teamsTitle ?? null; draftId = st.draftId ?? null; changedFrom = null;
+    viewRater = st.viewRater ?? null; teamsTitle = st.teamsTitle ?? null; draftId = st.draftId ?? null; changedFrom = null; card.fromSaved = null;
     await run();
   };
-  card.reset = () => { current = null; history = []; locked.clear(); changedFrom = null; teamsTitle = null; draftId = null; };
+  card.reset = () => { current = null; history = []; locked.clear(); changedFrom = null; teamsTitle = null; draftId = null; card.fromSaved = null; };
   return card;
 }
 
