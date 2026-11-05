@@ -150,7 +150,7 @@ function toast(msg) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, Math.min(7000, Math.max(2200, msg.length * 70)));
 }
 // Ask with a few named choices in the page (not the browser's confirm). choices: [[value, label, class?], ...];
-// resolves to the picked value, or null for Cancel, Esc or a tap outside.
+// resolves to the picked value, or null for Cancel, Esc or a tap outside. Focus starts on Cancel, so a stray Enter does nothing.
 function choose(title, text, choices) {
   return new Promise(resolve => {
     const done = v => { dlg.close(); dlg.remove(); resolve(v); };
@@ -158,12 +158,14 @@ function choose(title, text, choices) {
       h('h3', { id: 'choose-title' }, title), text && h('p', { class: 'muted' }, text),
       h('div', { class: 'choose-actions' },
         choices.map(([v, label, cls]) => h('button', { type: 'button', class: cls ?? '', onclick: () => done(v) }, label)),
-        h('button', { type: 'button', class: 'ghost', onclick: () => done(null) }, 'Cancel')));
+        h('button', { type: 'button', class: 'ghost', autofocus: true, onclick: () => done(null) }, 'Cancel')));
     dlg.addEventListener('cancel', e => { e.preventDefault(); done(null); });
     dlg.addEventListener('click', e => { if (e.target === dlg) done(null); });
     document.body.append(dlg); dlg.showModal();
   });
 }
+// Yes/no in the page: resolves true only when the action button (labelled `ok`) is picked.
+const ask = async (title, text, ok, cls = 'danger') => await choose(title, text, [[true, ok, cls]]) === true;
 async function callFn(name, body) {
   const res = await fetch(`/.netlify/functions/${name}`, {
     method: 'POST',
@@ -542,7 +544,7 @@ async function playersPage() {
     return el;
   };
   const removePlayer = async p => {
-    if (!confirm(`Delete ${p.name}? Their ratings are deleted too.`)) return;
+    if (!await ask(`Delete ${p.name}?`, 'Their ratings are deleted too. This can\'t be undone.', 'Delete player')) return;
     try {
       await q(sb.from('players').delete().eq('id', p.id));
       players.splice(players.indexOf(p), 1); draw(); count(); toast(`${p.name} deleted`);
@@ -603,7 +605,7 @@ async function playersPage() {
   box.addEventListener('input', checkPaste);
 
   const clearPlaying = async () => {
-    if (!confirm('Untick everyone from the Playing list?')) return;
+    if (!await ask('Clear the playing list?', 'Everyone is unticked. You can undo it right after.', 'Clear list')) return;
     const before = players.filter(p => p.playing).map(p => p.id);
     try {
       await q(sb.from('players').update({ playing: false }).eq('playing', true));
@@ -931,8 +933,8 @@ async function teamsPage() {
   const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; draw(); };
   ownTeams.builtEdited = () => undos.some(u => u?.length);
   btn.onclick = async () => {
-    if (out.dataset.shows === 'built' && ownTeams.builtEdited() && !confirm('Build new teams? The swaps you made on the options below will be lost. Teams already saved for the day stay saved.')) return;
-    if (out.dataset.shows === 'own' && ownTeams.edited() && !confirm('Build new teams? The swaps you made on your own teams below will be lost. Teams already saved for the day stay saved.')) return;
+    if (out.dataset.shows === 'built' && ownTeams.builtEdited() && !await ask('Build new teams?', 'The swaps you made on the options below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
+    if (out.dataset.shows === 'own' && ownTeams.edited() && !await ask('Build new teams?', 'The swaps you made on your own teams below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
     btn.disabled = true; btn.textContent = 'Building…'; out.classList.add('busy');
     try {
       builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
@@ -1050,13 +1052,13 @@ function ownTeamsCard(out, getOptions) {
     if (scroll) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   // The results area holds either built options or these teams. Ask before replacing work that would be lost.
-  const okToReplace = what => {
-    if (out.dataset.shows === 'built') return confirm(`${what}? The built options below will be replaced${card.builtEdited?.() ? ', and the swaps you made on them will be lost' : ''}. Teams already saved for the day stay saved.`);
-    if (out.dataset.shows === 'own' && history.length) return confirm(`${what}? The swaps you made on the teams below will be lost.`);
+  const okToReplace = async (what, ok) => {
+    if (out.dataset.shows === 'built') return ask(`${what}?`, `The built options below will be replaced${card.builtEdited?.() ? ', and the swaps you made on them will be lost' : ''}. Teams already saved for the day stay saved.`, ok, 'ball');
+    if (out.dataset.shows === 'own' && history.length) return ask(`${what}?`, 'The swaps you made on the teams below will be lost.', ok, 'ball');
     return true;
   };
   check.onclick = async () => {
-    if (!okToReplace('Check these teams')) return;
+    if (!await okToReplace('Check these teams', 'Check teams')) return;
     teamsTitle = null; draftId = null;
     current = parsed.teams.filter(t => t.players.length).map(t => t.players.map(p => p.id));
     history = []; locked.clear(); changedFrom = null;
@@ -1078,7 +1080,7 @@ function ownTeamsCard(out, getOptions) {
   card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
   card.load = async (teams, title, id = null) => {
-    if (!okToReplace(`Open "${title}"`)) return;
+    if (!await okToReplace(`Open "${title}"`, 'Open draft')) return;
     current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = id;
     try { await run({ scroll: true }); } catch (e) { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
@@ -1417,7 +1419,7 @@ function draftsCard(ownTeams) {
         h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
           h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
           h('button', { class: 'ghost sm', 'aria-label': `Delete ${d.name}`, onclick: async () => {
-            if (!confirm(`Delete the draft "${d.name}"?`)) return;
+            if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
             try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
           } }, 'Delete'))));
     };
@@ -1773,7 +1775,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
           taggingGame = g.id; render();
         } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
-          if (!confirm(`Delete game ${n} (${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b})?`)) return;
+          if (!await ask(`Delete game ${n}?`, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b}${tags?.get(g.id) ? `, and its ${tags.get(g.id)} tagged rallies` : ''}. This can't be undone.`, 'Delete game')) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
           catch (e) { toast(e.message); }
         } }, 'Delete'));
@@ -1812,8 +1814,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     try { await q(sb.from('sessions').update({ published: v }).eq('id', ses.id)); ses.published = v; toast(v ? 'Players can see these teams' : 'Hidden from players'); }
     catch (e) { toast(e.message); return false; }
   }));
-  const endDay = 'ended' in ses && !ses.ended && h('button', { class: 'ghost sm', onclick: () => {
-    if (confirm(`End ${dayTitle(ses.played_on)}? The score entry closes and players see the scores as final. You can reopen it.`)) setEnded(true);
+  const endDay = 'ended' in ses && !ses.ended && h('button', { class: 'ghost sm', onclick: async () => {
+    if (await ask(`End ${dayTitle(ses.played_on)}?`, 'The score entry closes and players see the scores as final. You can reopen it.', 'End the day', 'ball')) setEnded(true);
   } }, 'End the day');
   wrap.append(
     h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), endDay, games.length ? dayRecap.btn : null, delDay),
@@ -3035,7 +3037,7 @@ async function usersPage() {
   const linkPlayer = async (p, sel) => {
     const v = sel.value ? Number(sel.value) : null;
     const taken = v && profiles.find(x => x.player_id === v && x.id !== p.id);
-    if (taken && !confirm(`${taken.display_name}'s account is linked to that player. Move the link to ${p.display_name}?`)) { sel.value = p.player_id ?? ''; return; }
+    if (taken && !await ask('Move the link?', `${taken.display_name}'s account is linked to that player. Move the link to ${p.display_name}?`, 'Move link', 'ball')) { sel.value = p.player_id ?? ''; return; }
     try {
       if (taken) { await q(sb.from('profiles').update({ player_id: null }).eq('id', taken.id)); taken.player_id = null; }
       await q(sb.from('profiles').update({ player_id: v }).eq('id', p.id)); p.player_id = v;
@@ -3049,7 +3051,7 @@ async function usersPage() {
     catch (err) { toast(err.message); }
   };
   const remove = async p => {
-    if (!confirm(`Remove ${p.display_name}? Their ratings are deleted too.`)) return;
+    if (!await ask(`Remove ${p.display_name}?`, 'Their account and their ratings are deleted. This can\'t be undone.', 'Remove account')) return;
     try { await callFn('admin', { action: 'remove', id: p.id }); render(); } catch (err) { toast(err.message); }
   };
   // Player picker: active players first; the account's current player stays listed even if inactive.
@@ -3187,14 +3189,14 @@ async function signupPage() {
     const status = at < 0 ? null : at < ev.cap ? h('span', { class: 'badge on' }, 'You\'re in') : h('span', { class: 'badge' }, `Waitlist #${at - ev.cap + 1}`);
     const meBtn = mine && !old && (at < 0
       ? h('button', { class: 'ball', disabled: !ev.open, onclick: () => act(() => q(sb.from('signups').insert({ event_id: ev.id, player_id: mine })), ins.length >= ev.cap ? 'On the waitlist' : 'You\'re in') }, ins.length >= ev.cap ? 'Join the waitlist' : 'I\'m in')
-      : h('button', { class: 'ghost', disabled: !ev.open, onclick: () => confirm('Drop out of this game day?') && act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', mine)), 'Dropped out') }, 'Drop out'));
+      : h('button', { class: 'ghost', disabled: !ev.open, onclick: async () => await ask('Drop out of this game day?', 'If there\'s a waitlist, the next person gets your spot.', 'Drop out') && act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', mine)), 'Dropped out') }, 'Drop out'));
     const add = organizer && h('select', { 'aria-label': 'Add a player' }, h('option', { value: '' }, '+ Add player'),
       players.filter(p => p.active && !list.some(x => x.player_id === p.id)).map(p => h('option', { value: p.id }, p.name)));
     if (add) add.onchange = () => add.value && act(() => q(sb.from('signups').insert({ event_id: ev.id, player_id: Number(add.value) })));
     const capIn = organizer && h('input', { type: 'number', min: 2, max: 200, value: ev.cap, class: 'score-in', 'aria-label': 'Spots' });
     if (capIn) capIn.onchange = () => { const v = Number(capIn.value); if (!Number.isInteger(v) || v < 2 || v > 200) { capIn.value = ev.cap; return toast('Spots: 2 to 200'); } act(() => q(sb.from('events').update({ cap: v }).eq('id', ev.id)), 'Saved'); };
     const toPlaying = async () => {
-      if (!confirm(`Make the ${ins.length} people who are in this session's Playing list? Everyone else is unticked.`)) return;
+      if (!await ask('Set the playing list?', `The ${ins.length} people who are in become the Playing list. Everyone else is unticked.`, 'Set playing list', 'ball')) return;
       act(async () => {
         await q(sb.from('players').update({ playing: false }).eq('playing', true));
         if (ins.length) await q(sb.from('players').update({ playing: true, active: true }).in('id', ins.map(x => x.player_id)));
@@ -3214,7 +3216,7 @@ async function signupPage() {
         h('label', { class: 'row', style: 'gap:6px' }, h('span', { class: 'muted small' }, 'Spots'), capIn),
         add, h('span', { class: 'grow' }),
         h('button', { class: 'sm', disabled: !ins.length, onclick: toPlaying }, 'Set as Playing list'),
-        h('button', { class: 'danger sm', onclick: () => confirm(`Delete ${dayTitle(ev.played_on)} and its ${list.length} sign-ups?`) && act(() => q(sb.from('events').delete().eq('id', ev.id)), 'Deleted') }, 'Delete')));
+        h('button', { class: 'danger sm', onclick: async () => await ask(`Delete ${dayTitle(ev.played_on)}?`, `Its ${list.length} sign-up${list.length === 1 ? '' : 's'} are deleted too. This can't be undone.`, 'Delete') && act(() => q(sb.from('events').delete().eq('id', ev.id)), 'Deleted') }, 'Delete')));
   };
 
   const date = h('input', { type: 'date', value: now, 'aria-label': 'Game day' });
