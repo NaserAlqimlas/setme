@@ -40,6 +40,13 @@ ok('best record', award('record')?.who.join() === '1', award('record'));
 ok('streak', award('streak')?.who.join() === '1' && award('streak').value === 3, award('streak'));
 ok('closest is the deuce game', rec.closest?.score_a === 27, rec.closest);
 ok('no tags, no stat awards', !award('kills'));
+// Awards that don't single anyone out are left out: one game day, so "never misses" is everyone who came.
+const oneDay = seasonRecap(sessions.slice(0, 1), games.filter(x => x.session_id === 1));
+ok('no never-misses after one day', !oneDay.awards.some(a => a.key === 'iron'), oneDay.awards);
+// Everyone tied on wins (each of 6 players won once): no Most wins.
+const tie = seasonRecap([{ id: 5, played_on: '2026-10-01', teams: [[1, 2, 3], [4, 5, 6]] }],
+  [g(5, [1, 2, 3], [4, 5, 6], 25, 20, '1'), g(5, [1, 2, 3], [4, 5, 6], 20, 25, '2')]);
+ok('no award when everyone ties', !tie.awards.some(a => a.key === 'wins'), tie.awards);
 
 // ----- results-adjusted ratings -----
 // Even teams on paper; player 1's team always wins by 6, so 1 plays above their ratings and 2 below.

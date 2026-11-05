@@ -58,6 +58,10 @@ export function record(games, id) {
 // comes from ratings, so it can be shared with the whole group. tallies (optional): stats.mjs tally() of tagged games
 // in the period. Each award: { key, title, who: [player id], value, detail } or null when nobody qualifies.
 export const MIN_GAMES_FOR_RECORD = 6;
+// An award has to single people out: shared by at most a third of the players (at least one), else it's left out.
+// "Never misses" also needs a few game days; after one, everyone who came never missed.
+export const MIN_DAYS_FOR_ATTENDANCE = 3;
+const standout = (t, n) => t && t.who.length <= Math.max(1, Math.floor(n / 3)) ? t : null;
 export function seasonRecap(sessions, games, tallies = null) {
   const sesIds = new Set(sessions.map(s => s.id));
   const gs = games.filter(g => sesIds.has(g.session_id) && g.score_a !== g.score_b)
@@ -71,18 +75,18 @@ export function seasonRecap(sessions, games, tallies = null) {
     return { who: list.filter(x => Math.abs(val(x) - best) < 1e-9), value: best };
   };
   const awards = [];
-  const iron = top(ids, id => att.get(id).total, 1);
+  const iron = sessions.length >= MIN_DAYS_FOR_ATTENDANCE ? standout(top(ids, id => att.get(id).total, 1), ids.length) : null;
   if (iron) awards.push({ key: 'iron', title: 'Never misses', who: iron.who, value: iron.value, detail: `${iron.value} of ${sessions.length} game days` });
   const qualified = ids.filter(id => recs.get(id).games >= MIN_GAMES_FOR_RECORD);
-  const winPct = top(qualified, id => recs.get(id).wins / recs.get(id).games, .01);
+  const winPct = standout(top(qualified, id => recs.get(id).wins / recs.get(id).games, .01), ids.length);
   if (winPct) { const r = recs.get(winPct.who[0]); awards.push({ key: 'record', title: 'Best record', who: winPct.who, value: winPct.value, detail: `${r.wins}–${r.losses}` }); }
-  const streak = top(ids, id => recs.get(id).best, 2);
+  const streak = standout(top(ids, id => recs.get(id).best, 2), ids.length);
   if (streak) awards.push({ key: 'streak', title: 'Longest win streak', who: streak.who, value: streak.value, detail: `${streak.value} wins in a row` });
-  const most = top(ids, id => recs.get(id).wins, 1);
+  const most = standout(top(ids, id => recs.get(id).wins, 1), ids.length);
   if (most) awards.push({ key: 'wins', title: 'Most wins', who: most.who, value: most.value, detail: `${most.value} wins` });
   if (tallies) {
     const stat = (key, title, get, unit) => {
-      const t = top([...tallies.keys()], id => get(tallies.get(id).counts), 1);
+      const t = standout(top([...tallies.keys()], id => get(tallies.get(id).counts), 1), ids.length);
       if (t) awards.push({ key, title, who: t.who, value: t.value, detail: `${t.value} ${unit}` });
     };
     stat('kills', 'Most kills', c => c.attack[3], 'kills');
