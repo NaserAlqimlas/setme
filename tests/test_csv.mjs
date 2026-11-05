@@ -35,5 +35,11 @@ const exp = ratingsExport([{ id: 0, name: 'Reem', setting: 'M' }, { id: 26, name
 check(exp.split('\r\n')[1] === 'Reem,0.75,0.5,M,U,1,0,0.25,U' && exp.includes('"Ali, Jr",,,N,'), 'export layout');
 const back = readRatingsCsv(exp, [...players, { id: 26, name: 'Ali, Jr' }]);
 check(back.errors.length === 0 && back.rows.length === 1 && back.rows[0].values.hitting === .5 && back.rows[0].values.hustle === null && back.blank.length === 2, 'export round-trips');
+// Don't know vs not answered: U is listed as unknown, an empty cell isn't; export writes them back the same way.
+check(back.rows[0].unknown.join() === 'hustle,setting_skill', 'U cells listed as unknown');
+const mixed = new Map([[0, { receiving: .5, hitting: null, hustle: null, serve: null, blocking: null, consistency: null, setting_skill: null, unknown: ['hitting'] }]]);
+const exp2 = ratingsExport([{ id: 0, name: 'Reem', setting: 'M' }], mixed);
+check(exp2.split('\r\n')[1] === 'Reem,0.5,U,M,,,,,', 'export: U only where marked, blank where not answered');
+check(readRatingsCsv(exp2, players).rows[0].unknown.join() === 'hitting', 'mixed round-trips');
 console.log(fail ? `${fail} checks failed` : 'all checks passed');
 process.exit(fail ? 1 : 0);

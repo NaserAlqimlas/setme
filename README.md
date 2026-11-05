@@ -72,6 +72,8 @@ drop table if exists public.combos;  -- combos are no longer saved
 
 Setting rating: paste and run `supabase/setting_skill.sql` (adds the column and logs Setting in rating history). Until then, Setting taps don't save; everything else works.
 
+Don't know vs not answered: paste and run `supabase/rating_unknown.sql` (adds the `unknown` column). Until then, Rate works as before: a saved blank shows as U, and a player counts as rated after the first tap.
+
 Scores: paste and run `supabase/scores.sql` (adds `sessions` and `games`). Until then Save for scores and the Scores page show an error; everything else works.
 
 Match stats: paste and run `supabase/match_stats.sql` (adds `rallies`, `touches`, the `save_game_tags` function, the `player_stats` and `tagged_games` views, and video columns on `games`). Until then the Tag button on Scores says it needs the upgrade; everything else works.

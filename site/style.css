@@ -158,6 +158,9 @@ body, .top { transition: padding .28s ease; }
 .player-card { display: grid; gap: 8px; min-width: 0; }
 .player-card header { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .player-card header b { flex: 1; font-size: 1.02rem; }
+.player-card .answered { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.undo-line { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 16px; }
+.undo-line span { flex: 1; font-weight: 600; }
 .skill-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 8px; }
 .skill-row > span { font-size: .8rem; font-weight: 700; color: var(--muted); }
 .skill-row .seg { width: 100%; min-width: 0; }
