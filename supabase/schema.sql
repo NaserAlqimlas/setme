@@ -591,3 +591,32 @@ alter table public.player_aliases enable row level security;
 drop policy if exists player_aliases_organizers on public.player_aliases;
 create policy player_aliases_organizers on public.player_aliases for all to authenticated
   using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
+
+-- One player's game days and games, for their profile, now with rounds: each game's round, and (on published days,
+-- or for organizers) every round's teams so the profile can name the team they were on in each round:
+-- rounds: [{ n, all_game, teams: [[{ id, name, setting }, ...], ...] }, ...], oldest first, the last being the
+-- round playing now. Same access as before: the player themself, organizers and super. Dropped first because the
+-- return type changes.
+drop function if exists public.player_games(bigint);
+create function public.player_games(p_player bigint)
+returns table (session_id bigint, played_on date, team int, games jsonb, rounds jsonb)
+language sql stable security definer set search_path = public as $$
+  select s.id, s.played_on,
+    -- Their team on a day the organizers haven't published yet stays hidden from the player.
+    case when s.published or public.my_role() in ('organizer', 'super') then
+      (select t.ord::int from jsonb_array_elements(s.teams) with ordinality as t(team, ord) where t.team @> to_jsonb(p_player) limit 1) end,
+    coalesce((select jsonb_agg(jsonb_build_object('session_id', g.session_id, 'team_a', g.team_a, 'team_b', g.team_b, 'players_a', g.players_a,
+        'players_b', g.players_b, 'score_a', g.score_a, 'score_b', g.score_b, 'created_at', g.created_at, 'round', g.round) order by g.created_at)
+      from public.games g where g.session_id = s.id and p_player = any(g.players_a || g.players_b)), '[]'::jsonb),
+    case when s.published or public.my_role() in ('organizer', 'super') then
+      coalesce((select jsonb_agg(jsonb_build_object('n', r.n, 'all_game', r.all_game, 'teams', public.lineup_names(r.teams)) order by r.n)
+        from public.rounds r where r.session_id = s.id), '[]'::jsonb)
+      || jsonb_build_array(jsonb_build_object('n', (select count(*) + 1 from public.rounds r where r.session_id = s.id),
+        'all_game', s.all_game, 'teams', public.lineup_names(s.teams))) end
+  from public.sessions s
+  where (public.my_role() in ('organizer', 'super') or p_player = public.my_player())
+    and (exists (select 1 from jsonb_array_elements(s.teams) t where t @> to_jsonb(p_player))
+      or exists (select 1 from public.games g where g.session_id = s.id and p_player = any(g.players_a || g.players_b))
+      or exists (select 1 from public.rounds r, jsonb_array_elements(r.teams) t where r.session_id = s.id and t @> to_jsonb(p_player)))
+  order by s.played_on
+$$;

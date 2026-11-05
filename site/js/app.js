@@ -3533,8 +3533,25 @@ async function profilePage(id) {
     if (recent.length) parts.push(h('div', { class: 'card' }, h('h3', {}, 'Recent game days'),
       h('ol', { class: 'game-list' }, recent.map(d => {
         const res = record(d.games, id);
-        return h('li', {}, h('div', { class: 'grow' }, h('b', {}, dayTitle(d.played_on)), d.team && h('span', { class: 'muted small' }, `, Team ${d.team}`),
-          h('div', { class: 'muted small' }, d.games.map(g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return `${us > them ? 'W' : 'L'} ${us}–${them}`; }).join(' · ') || 'No games entered')),
+        const score = g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return `${us > them ? 'W' : 'L'} ${us}–${them}`; };
+        // Rounds (rounds.sql): each round's teams, so the team they were on is named per round. Without them (older
+        // SQL, or a day not published yet) it's the team number as before.
+        const rounds = Array.isArray(d.rounds) ? d.rounds : null;
+        const many = rounds?.length > 1;
+        const teamIn = r => {
+          const k = r.teams.findIndex(t => t.some(p => p.id === id));
+          if (k >= 0) return teamNames(r.teams, new Set(r.all_game ?? []))[k];
+          const g = d.games.find(x => (x.round ?? 1) === r.n);
+          return g ? teamNames(r.teams, new Set(r.all_game ?? []))[(g.players_a.includes(id) ? g.team_a : g.team_b) - 1] ?? null : null;
+        };
+        const where = rounds
+          ? rounds.map(r => [r, teamIn(r)]).filter(([, name]) => name).map(([r, name]) => many ? `${name} (round ${r.n})` : name).join(', ')
+          : d.team ? `Team ${d.team}` : '';
+        const results = many
+          ? rounds.map(r => [r.n, d.games.filter(g => (g.round ?? 1) === r.n)]).filter(([, gs]) => gs.length).map(([n, gs]) => `Round ${n}: ${gs.map(score).join(' · ')}`).join(' — ')
+          : d.games.map(score).join(' · ');
+        return h('li', {}, h('div', { class: 'grow' }, h('b', {}, dayTitle(d.played_on)), where && h('span', { class: 'muted small' }, ` · ${where}`),
+          h('div', { class: 'muted small' }, results || 'No games entered')),
           res.games > 0 && h('span', { class: 'game-score' }, `${res.wins}–${res.losses}`));
       }))));
   }
