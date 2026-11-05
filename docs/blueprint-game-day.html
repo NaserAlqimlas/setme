@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SetMe game day blueprint</title>
+<style>
+:root {
+  --bg: #fafafc; --surface: #ffffff; --fg: #18182b; --fg-muted: #65657a;
+  --border: #d8d8e4; --accent: #4338ca;
+  --sans: "Hanken Grotesk", Inter, system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s7: 32px; --s8: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #18182b; --surface: #1f1f36; --fg: #f0f0f8; --fg-muted: #8888a8;
+    --border: #2a2a44; --accent: #7c6ff0;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #18182b; --surface: #1f1f36; --fg: #f0f0f8; --fg-muted: #8888a8;
+  --border: #2a2a44; --accent: #7c6ff0;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--sans); background: var(--bg); color: var(--fg);
+  padding: var(--s7); line-height: 1.5; margin: 0;
+}
+.visual-diagram {
+  margin: 0; padding: var(--s5);
+  background: var(--surface); border-radius: 8px;
+  border: 1px solid var(--border); overflow-x: auto;
+}
+.visual-label {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  color: var(--fg-muted); letter-spacing: 0.06em;
+  margin-bottom: var(--s4); text-transform: uppercase;
+}
+.blueprint-lane { padding: var(--s2) 0; }
+.blueprint-lane-label { margin-bottom: var(--s2); }
+.blueprint-lane-title {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+.blueprint-lane-sub { font-size: 10px; color: var(--fg-muted); margin-left: var(--s2); }
+.blueprint-lane-nodes { display: flex; align-items: center; }
+.blueprint-node {
+  flex: 1; padding: var(--s2);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; text-align: center; min-width: 0;
+}
+.blueprint-node-step { font-family: var(--mono); font-size: 9px; color: var(--accent); font-weight: 600; }
+.blueprint-node-label { font-size: 11px; font-weight: 500; color: var(--fg); }
+.blueprint-node-end { border-color: var(--accent); }
+.blueprint-connector {
+  width: 12px; min-width: 12px; height: 1px;
+  background: var(--border); flex-shrink: 0;
+}
+.blueprint-line-of-interaction,
+.blueprint-line-of-visibility,
+.blueprint-line-of-support {
+  border-top: 1px dashed var(--border);
+  padding: 4px 0; text-align: right;
+}
+.blueprint-line-of-interaction span,
+.blueprint-line-of-visibility span,
+.blueprint-line-of-support span {
+  font-size: 9px; font-family: var(--mono);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-muted); opacity: 0.5;
+}
+.blueprint-lane-services { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.blueprint-service {
+  padding: var(--s2) var(--s3);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; flex: 1; min-width: 80px;
+}
+.blueprint-service-name { font-size: 11px; font-weight: 600; color: var(--fg); }
+.blueprint-service-detail { font-size: 10px; color: var(--fg-muted); margin-top: 1px; }
+.blueprint-service-infra { background: transparent; border-style: dashed; }
+.blueprint-lane-backstage { opacity: 0.85; }
+.blueprint-lane-support { opacity: 0.6; }
+
+/* Readability on top of the diagram tokens: 12px minimum, tiers kept by border style rather than fading text */
+.blueprint-node-label, .blueprint-service-name { font-size: 12px; }
+.blueprint-service-detail, .blueprint-lane-sub, .blueprint-node-step, .blueprint-lane-title, .visual-label { font-size: 12px; }
+.blueprint-line-of-interaction span, .blueprint-line-of-visibility span, .blueprint-line-of-support span { font-size: 12px; opacity: 1; }
+.blueprint-lane-backstage, .blueprint-lane-support { opacity: 1; }
+.blueprint-lane-support .blueprint-service-name { color: var(--fg-muted); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .blueprint-node-step { color: #8a80f3; } }
+:root[data-theme="dark"] .blueprint-node-step { color: #8a80f3; }
+
+/* Document around the diagram */
+main { max-width: 1180px; margin: 0 auto; }
+h1 { font-size: 1.7rem; line-height: 1.2; margin: 0 0 var(--s5); }
+h2 { font-size: 1.15rem; margin: var(--s8) 0 var(--s3); }
+h3 { font-size: 0.95rem; margin: var(--s6) 0 var(--s2); }
+p, li { max-width: 78ch; }
+.blueprint-lane-nodes .blueprint-node { min-width: 96px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: var(--s2) 0; }
+th, td { text-align: left; vertical-align: top; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); }
+th { color: var(--fg-muted); font-weight: 600; font-size: 0.8rem; }
+td:first-child { font-weight: 600; width: 22%; }
+.wide { overflow-x: auto; }
+code { font-family: var(--mono); font-size: 0.85em; }
+.key { font-size: 0.85rem; color: var(--fg-muted); margin-top: var(--s3); }
+@media (max-width: 640px) { body { padding: var(--s4); } }
+</style>
+</head>
+<body>
+<main>
+<h1>SetMe game day</h1>
+
+<h2>System overview</h2>
+<p>A game day turns a WhatsApp conversation into four balanced teams of six, a run of games to 25, and results players can see. The organizer drives it on a phone at the hall. Players take part through WhatsApp and, once their account is linked, through Sign up, Lineup and Me. Behind it sit a Supabase database with row-level security, two Netlify functions that read ratings players and organizers can't, and SQL upgrades the super runs by hand.</p>
+<p>Out of scope: rating (Rate, rate-queue), invites and account creation, match-stat tagging, season recap.</p>
+
+<h2>Service blueprint</h2>
+<div class="visual-diagram">
+  <div class="visual-label">Service Blueprint: SetMe game day</div>
+
+  <div class="blueprint-lane">
+    <div class="blueprint-lane-label">
+      <span class="blueprint-lane-title">Frontstage</span>
+      <span class="blueprint-lane-sub">Players: phones, WhatsApp first</span>
+    </div>
+    <div class="blueprint-lane-nodes">
+      <div class="blueprint-node"><div class="blueprint-node-step">1</div><div class="blueprint-node-label">Write their name in the WhatsApp list</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">2</div><div class="blueprint-node-label">Tap I'm in or Join the waitlist on Sign up</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">3</div><div class="blueprint-node-label">Drop out; the first on the waitlist moves up</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">4</div><div class="blueprint-node-label">See their team on Lineup or as an image in WhatsApp</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">5</div><div class="blueprint-node-label">Play; check Scores so far</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node blueprint-node-end"><div class="blueprint-node-step">6</div><div class="blueprint-node-label">See Final scores and their record on Me</div></div>
+    </div>
+  </div>
+
+  <div class="blueprint-line-of-interaction"><span>Line of interaction</span></div>
+
+  <div class="blueprint-lane">
+    <div class="blueprint-lane-label">
+      <span class="blueprint-lane-title">Frontstage</span>
+      <span class="blueprint-lane-sub">Organizers, often several: phone at the hall, laptop beforehand</span>
+    </div>
+    <div class="blueprint-lane-nodes">
+      <div class="blueprint-node"><div class="blueprint-node-step">1</div><div class="blueprint-node-label">Open sign-ups: date, spots, note</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">2</div><div class="blueprint-node-label">Set as Playing list, or paste the WhatsApp list on Players</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">3</div><div class="blueprint-node-label">Fix late changes with Playing switches on Players</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">4</div><div class="blueprint-node-label">Teams: check date, setters, combos; Build teams</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">5</div><div class="blueprint-node-label">Swap or lock; Save for scores; Share image</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">6</div><div class="blueprint-node-label">Scores: turn on Show to players</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node"><div class="blueprint-node-step">7</div><div class="blueprint-node-label">Save each game's score</div></div>
+      <div class="blueprint-connector"></div>
+      <div class="blueprint-node blueprint-node-end"><div class="blueprint-node-step">8</div><div class="blueprint-node-label">End the day</div></div>
+    </div>
+  </div>
+
+  <div class="blueprint-line-of-visibility"><span>Line of visibility</span></div>
+
+  <div class="blueprint-lane blueprint-lane-backstage">
+    <div class="blueprint-lane-label"><span class="blueprint-lane-title">Backstage</span></div>
+    <div class="blueprint-lane-nodes blueprint-lane-services">
+      <div class="blueprint-service"><div class="blueprint-service-name">events, signups</div><div class="blueprint-service-detail">One event per date; waitlist is sign-up order past the cap; players add or remove only their linked player, while open</div></div>
+      <div class="blueprint-service"><div class="blueprint-service-name">players.playing</div><div class="blueprint-service-detail">One yes/no per player, for no particular date; overwritten by each paste or Set as Playing list</div></div>
+      <div class="blueprint-service"><div class="blueprint-service-name">build-teams function</div><div class="blueprint-service-detail">Reads all ratings with the service key, combines them, avoids recent teammates, returns options and swap hints; predicts each saved game</div></div>
+      <div class="blueprint-service"><div class="blueprint-service-name">sessions</div><div class="blueprint-service-detail">One per date: teams, raters, setters, published, ended; Save for scores replaces it after a confirm</div></div>
+      <div class="blueprint-service"><div class="blueprint-service-name">games</div><div class="blueprint-service-detail">Score, both lineups as played, and the prediction</div></div>
+      <div class="blueprint-service"><div class="blueprint-service-name">published_lineups, player_games</div><div class="blueprint-service-detail">Return names, teams and scores only; published days to players, own days on Me</div></div>
+    </div>
+  </div>
+
+  <div class="blueprint-line-of-support"><span>Line of support</span></div>
+
+  <div class="blueprint-lane blueprint-lane-support">
+    <div class="blueprint-lane-label"><span class="blueprint-lane-title">Support</span></div>
+    <div class="blueprint-lane-nodes blueprint-lane-services">
+      <div class="blueprint-service blueprint-service-infra"><div class="blueprint-service-name">Supabase Postgres, row-level security, auth</div></div>
+      <div class="blueprint-service blueprint-service-infra"><div class="blueprint-service-name">Netlify hosting and functions</div></div>
+      <div class="blueprint-service blueprint-service-infra"><div class="blueprint-service-name">SQL upgrades run by the super</div></div>
+      <div class="blueprint-service blueprint-service-infra"><div class="blueprint-service-name">Account linking by the super</div></div>
+      <div class="blueprint-service blueprint-service-infra"><div class="blueprint-service-name">WhatsApp group, not connected</div></div>
+    </div>
+  </div>
+</div>
+<p class="key">Step numbers order each actor's own actions; the two frontstage lanes run side by side, not step for step. Solid boxes are parts of SetMe; dashed boxes are what SetMe depends on.</p>
+
+<h3>Pain points</h3>
+<ul>
+  <li>The playing list has two sources that overwrite each other.</li>
+  <li>The playing list carries over from last week.</li>
+  <li>The game date is entered three times and checked once.</li>
+  <li>Unlinked members can only sign up through WhatsApp.</li>
+  <li>Players see nothing until Show to players is turned on.</li>
+  <li>Every step needs a connection in the hall.</li>
+</ul>
+
+<h2>Ecosystem &amp; dependencies</h2>
+<div class="wide"><table>
+  <thead><tr><th>Actor</th><th>Does</th><th>Through</th><th>Can't</th></tr></thead>
+  <tbody>
+    <tr><td>Super</td><td>Links accounts to players, runs SQL upgrades, sees every rating</td><td>Users page, Supabase SQL editor, desktop</td><td>Delegate linking or upgrades: no other role has the access</td></tr>
+    <tr><td>Organizer</td><td>Opens sign-ups, sets the playing list, builds, saves, publishes, scores, ends the day</td><td>Sign up, Players, Teams, Scores on a phone</td><td>See individual ratings</td></tr>
+    <tr><td>Player with a linked account</td><td>Signs up or drops out while sign-ups are open, sees published days and their own record</td><td>Sign up, Lineup, Me</td><td>Rate, see ratings, team totals, unpublished teams, or other players' profiles</td></tr>
+    <tr><td>Member without a linked account</td><td>Writes their name in WhatsApp</td><td>WhatsApp only</td><td>Sign up in SetMe; an organizer can add them</td></tr>
+  </tbody>
+</table></div>
+
+<div class="wide"><table>
+  <thead><tr><th>Step</th><th>Depends on</th><th>Joined by</th></tr></thead>
+  <tbody>
+    <tr><td>Set as Playing list</td><td>An event for the date with sign-ups</td><td>The organizer pressing it; nothing runs on its own</td></tr>
+    <tr><td>Build teams</td><td>players.playing, ratings, the last three sessions before the Teams date</td><td>The Teams date, which defaults to today</td></tr>
+    <tr><td>Save for scores</td><td>The Teams date</td><td>played_on, matched by date string only</td></tr>
+    <tr><td>Lineup</td><td>sessions.published</td><td>Show to players on Scores</td></tr>
+    <tr><td>Save game prediction</td><td>build-teams reachable</td><td>The game saves without a prediction when it isn't</td></tr>
+    <tr><td>Sign up, Lineup, Me, Show to players, End the day</td><td><code>supabase/club.sql</code> run</td><td>The pages hide what needs it until then</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Process architecture</h2>
+<div class="wide"><table>
+  <thead><tr><th>Decision point</th><th>Branches</th><th>Who decides</th></tr></thead>
+  <tbody>
+    <tr><td>Where does the playing list come from?</td><td>Sign-ups (Set as Playing list) or the WhatsApp paste. Whichever runs last wins. See "Two sources overwrite the playing list".</td><td>Organizer</td></tr>
+    <tr><td>Full or not?</td><td>Under the cap: in. At the cap: waitlist in sign-up order. A drop-out moves the first waitlisted player in.</td><td>The database, by order</td></tr>
+    <tr><td>Which option to save?</td><td>One of the built options, after swaps; or teams the organizer pasted; or a saved draft</td><td>Organizer</td></tr>
+    <tr><td>A date already has teams</td><td>Replace after a confirm; saved games keep the players they had</td><td>Organizer</td></tr>
+    <tr><td>A game ran out of time</td><td>Saved as it stood; scaled to a game to 25 in Insights</td><td>Organizer, by entering the score</td></tr>
+    <tr><td>Is the day over?</td><td>End the day, or leave it open. See "Day never ended".</td><td>Organizer</td></tr>
+  </tbody>
+</table></div>
+<p>The sequence that must hold: the playing list before Build teams; the Teams date before Save for scores; Save for scores before any game; Show to players before players can see anything. Sign-ups and the WhatsApp list run in parallel all week. Everything from Build teams on happens in the hall before the first game. Every step is a single live write by one organizer, so the process holds at this group's size; the manual joins (date, publish, end) are where it slips, not volume.</p>
+
+<h2>State &amp; failure analysis</h2>
+<div class="wide"><table>
+  <thead><tr><th>Game day state</th><th>Entered when</th><th>Players see</th></tr></thead>
+  <tbody>
+    <tr><td>Sign-ups open</td><td>An organizer opens sign-ups for a date</td><td>The day on Sign up, who's in, the waitlist</td></tr>
+    <tr><td>Sign-ups closed</td><td>The Open switch is turned off</td><td>The list, no buttons; "message an organizer"</td></tr>
+    <tr><td>Teams saved, hidden</td><td>Save for scores</td><td>Nothing on Lineup; Me shows the day without their team number</td></tr>
+    <tr><td>Published</td><td>Show to players on</td><td>Teams, then Scores so far</td></tr>
+    <tr><td>Ended</td><td>End the day</td><td>Final scores; the organizer sees standings and Reopen</td></tr>
+  </tbody>
+</table></div>
+
+<div class="wide"><table>
+  <thead><tr><th>Failure</th><th>What happens</th><th>Blast radius</th><th>Recovery</th></tr></thead>
+  <tbody>
+    <tr><td>Two sources overwrite the playing list</td><td>A paste after Set as Playing list, or the reverse, replaces the list. Anyone only in the overwritten source drops off without a message.</td><td>Teams are built without them, or with someone who isn't coming</td><td>Teams warns about players on a team but not playing and playing but on no team; the organizer fixes switches on Players and rebuilds</td></tr>
+    <tr><td>Last week's playing list</td><td>players.playing has no date, so next week's build starts from last week's list until someone sets a new one.</td><td>Teams built from the wrong people if the organizer skips step 2</td><td>Clear playing list, then set it again</td></tr>
+    <tr><td>Wrong Teams date</td><td>The date defaults to today. Building the night before saves teams under the wrong day, and variety checks the wrong history.</td><td>Scores land on the wrong game day; the right day has no teams</td><td>Change the date and Save for scores again; delete the wrong day on Scores</td></tr>
+    <tr><td>Unlinked account</td><td>A member can sign in but has no Sign up button for themself.</td><td>They stay a WhatsApp-only member; the organizer re-types them</td><td>The super links the account on Users</td></tr>
+    <tr><td>Not published</td><td>Teams and scores stay hidden from players until an organizer turns on Show to players.</td><td>Players ask in WhatsApp; the shared image covers it</td><td>Turn it on at any time; past days too</td></tr>
+    <tr><td>Day never ended</td><td>Players see Scores so far indefinitely; the score box stays open.</td><td>Cosmetic for players; an organizer may add a game to the wrong day later</td><td>End the day at any time; the first <code>club.sql</code> run ends past days</td></tr>
+    <tr><td>No connection in the hall</td><td>Each save is a live write. A failed save shows the error and leaves the typed score in place.</td><td>The organizer can't save until the connection is back</td><td>Retry; the share image and the WhatsApp list still work</td></tr>
+    <tr><td>build-teams unreachable</td><td>No options can be built. A game still saves, without a prediction.</td><td>No teams that day from SetMe</td><td>Paste your own teams on Teams and check them once it's back; Insights skip games without a prediction</td></tr>
+    <tr><td>club.sql not run</td><td>Sign up, Lineup, Me, Show to players and End the day don't appear.</td><td>Players only get the shared image</td><td>Run <code>club.sql</code>; safe to rerun</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Open questions</h2>
+<ul>
+  <li>Should the playing list belong to a date, so it can't carry over from last week?</li>
+</ul>
+</main>
+</body>
+</html>
