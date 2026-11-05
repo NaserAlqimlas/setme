@@ -402,7 +402,8 @@ async function ratePage() {
     countEl.textContent = `${n} of ${players.length} players rated`;
   };
 
-  const save = async (pid, skill, picked) => {
+  // rowEl: the skill row tapped, which shows a quiet ✓ once saved (a toast on every tap was too much; errors still toast).
+  const save = async (pid, skill, picked, rowEl) => {
     const value = picked === 'U' ? null : picked, prev = byPlayer.get(pid);
     const row = { ...Object.fromEntries(RATED.map(s => [s, null])), ...prev, [skill]: value };
     // U goes on the unknown list; a number takes the skill off it.
@@ -412,7 +413,8 @@ async function ratePage() {
     const cols = RATED.filter(s => s !== 'setting_skill' || skill === s || (byPlayer.get(pid) && s in byPlayer.get(pid)));
     try {
       const saved = await q(sb.from('ratings').upsert({ rater_id: me.id, player_id: pid, ...Object.fromEntries(cols.map(s => [s, row[s]])), ...unknown }).select().single());
-      byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); paintLook(); toast('Saved');
+      byPlayer.set(pid, saved); progress(); totals.get(pid)?.(); paintLook();
+      if (rowEl) { rowEl.classList.remove('just-saved'); void rowEl.offsetWidth; rowEl.classList.add('just-saved'); }
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
   // Totals follow the doc's rule: U if any skill is unknown.
@@ -437,8 +439,12 @@ async function ratePage() {
       h('header', {}, avatar(p.name), h('b', {}, p.name), sets.anchors.has(p.id) && h('span', { class: 'badge backup', title: 'Anchor player: everyone rates them, so SetMe can compare raters' }, 'Anchor'),
         reasons(p).length > 0 && !sets.anchors.has(p.id) && h('span', { class: 'badge', title: reasons(p).join(' · ') }, 'Look again'),
         p.playing && h('span', { class: 'badge on' }, 'Playing'), leftEl),
-      RATED.filter(s => forPlayer(s, p)).map(s => h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) }, h('span', {}, LABEL[s]),
-        seg(RATING_OPTIONS, shown(r, s), v => save(p.id, s, v), `${p.name} ${LABEL[s]}`))),
+      RATED.filter(s => forPlayer(s, p)).map(s => {
+        const row = h('div', { class: `skill-row${s === 'consistency' ? ' trait' : ''}`, onclick: () => guide.focus(s) },
+          h('span', {}, LABEL[s], h('span', { class: 'saved-tick', 'aria-hidden': 'true' }, ' ✓')));
+        row.append(seg(RATING_OPTIONS, shown(r, s), v => save(p.id, s, v, row), `${p.name} ${LABEL[s]}`));
+        return row;
+      }),
       totalEl);
   };
   const draw = () => {
