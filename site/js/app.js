@@ -613,7 +613,7 @@ function settersCard(playing) {
     if (!card.isConnected && card.dataset.drawn) return document.removeEventListener('setterplan', paint);
     card.dataset.drawn = '1';
     const all = setters.filter(setsAllGame).map(p => firstName(p.name));
-    card.state.textContent = all.length ? `${all.join(', ')} set${all.length === 1 ? 's' : ''} all game${all.length < setters.length ? `, ${setters.length - all.length} rotate${setters.length - all.length === 1 ? 's' : ''}` : ''}` : 'Everyone rotates';
+    card.state.textContent = all.length ? `${all.length > 2 ? all.length : all.join(' and ')} set${all.length === 1 ? 's' : ''} all game${all.length < setters.length ? `, ${setters.length - all.length} rotate${setters.length - all.length === 1 ? 's' : ''}` : ''}` : 'Everyone rotates';
     card.body.replaceChildren(
       h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'A setter who sets the whole game counts for their setting; their hitting and passing count for less. Setters who rotate count like everyone else.'),
       h('div', { class: 'new-players' }, setters.map(p => h('div', { class: 'new-player' },
@@ -687,11 +687,16 @@ function changeLine(before, after, onUndo) {
   const detail = me.role === 'super' || me.role === 'organizer';
   return h('div', { class: `change-line${worse ? ' worse' : ''}`, role: 'status' },
     h('p', { class: 'small' }, h('b', {}, moved.length ? `Moved ${moved.join(', ')}.` : 'Swapped.'), ' ',
-      detail ? `Gap ${fmt(g0)} → ${fmt(g1)}, ${worse ? 'less even' : g1 < g0 - 0.005 ? 'more even' : 'about the same'}.` : worse ? 'Less even than before.' : ''),
+      detail ? `Gap ${num2(g0)} → ${num2(g1)}, ${worse ? 'less even' : g1 < g0 - 0.005 ? 'more even' : 'about the same'}.` : worse ? 'Less even than before.' : ''),
     onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo'));
 }
 // Database upgrade messages: the super can run the SQL file; anyone else is told who can.
 const needsSql = (what, file) => me.role === 'super' ? `${what} need the database upgrade (supabase/${file})` : `${what} aren't set up yet. Ask the site owner to finish the upgrade.`;
+
+// Team totals and gaps on Teams: always two decimals with a leading zero, easier to compare at a glance.
+const num2 = v => (Math.round(v * 100) / 100).toFixed(2);
+// How even an option is, from the gap between the strongest and weakest team's total.
+const evenness = gap => gap <= 0.25 ? 'Very even' : gap <= 0.6 ? 'Even' : gap <= 1.2 ? 'A bit uneven' : 'Uneven';
 
 // Teams of about 6: the count the build starts on for this many players.
 const suggestTeams = n => Math.min(6, Math.max(2, Math.round(n / 6) || 4));
@@ -896,7 +901,7 @@ function ownTeamsCard(out, getOptions) {
     const unmatched = teams.flatMap(t => t.unmatched);
     preview.replaceChildren(...(!teams.length ? [] : [
       h('div', { class: 'own-teams' }, teams.map(t => h('div', {},
-        h('p', { class: 'small', style: 'margin:10px 0 6px' }, h('b', {}, t.label), h('span', { class: 'muted' }, ` · ${t.players.length} players`)),
+        h('p', { class: 'small', style: 'margin:10px 0 6px' }, h('b', {}, t.label), h('span', { class: 'muted' }, ` · ${t.players.length} ${t.players.length === 1 ? 'player' : 'players'}${t.unmatched.length ? `, ${t.unmatched.length} not recognized` : ''}`)),
         h('div', { class: 'chips' }, t.players.map(p => h('span', { class: 'chip plain' }, p.name)), t.unmatched.map(n => h('span', { class: 'chip plain off', title: 'Not recognized' }, n)))))),
       unmatched.length > 0 && h('p', { class: 'small muted' }, h('b', {}, `${unmatched.length} not recognized`), ' (greyed out, left out of the check)'),
       dupes.length > 0 && h('p', { class: 'small muted' }, h('b', {}, `Listed twice: ${dupes.join(', ')}`), ' (kept in their first team)'),
@@ -983,15 +988,15 @@ function suggestionsPanel(res, { onApply, onUndo }) {
   return h('div', { class: 'suggestions' },
     h('div', { class: 'card-head' },
       h('div', {}, h('h3', {}, 'Suggestions'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
-        basis && h('b', {}, basis, '. '), 'The smallest changes that make your teams more even. Tap the lock next to a player to keep them where they are.')),
+        basis && h('b', {}, basis, '. '), 'The smallest changes that make your teams more even. To keep a player where they are, tap them, then their lock.')),
       onUndo && h('button', { type: 'button', class: 'ghost sm', onclick: onUndo }, 'Undo')),
     res.problems?.length > 0 && h('ul', { class: 'problems' }, res.problems.map(x => h('li', {}, x))),
     res.suggestions?.length
       ? h('ol', { class: 'suggest-list' }, res.suggestions.map(sg => h('li', {},
         h('div', { class: 'grow' },
-          h('div', {}, sg.swaps.length > 1 ? 'Two swaps: ' : 'Swap ', sg.swaps.flatMap(([a, b], n) => [n ? ', and ' : '', who(a), ' ↔ ', who(b)])),
+          h('div', {}, sg.swaps.length > 1 ? 'Two swaps: ' : 'Swap ', sg.swaps.flatMap(([a, b], n) => [n ? ', and ' : '', who(a), ' with ', who(b)])),
           h('div', { class: 'muted small' }, [
-            detail && sg.gap && `Gap ${fmt(sg.gap[0])} → ${fmt(sg.gap[1])}`,
+            detail && sg.gap && `Gap ${num2(sg.gap[0])} → ${num2(sg.gap[1])}`,
             sg.fixes.length > 0 && `fixes: ${sg.fixes.join('; ')}`,
             !detail && !sg.fixes.length && 'makes teams more even',
           ].filter(Boolean).join(' · ')),
@@ -1069,6 +1074,14 @@ const lockIcon = on => {
   return svg;
 };
 
+// A "More" menu for buttons already made; tapping one closes it.
+function moreMenu(items) {
+  const box = h('details', { class: 'menu more' }, h('summary', { class: 'ghost-btn' }, 'More'),
+    h('div', { class: 'menu-list', role: 'menu' }, items.filter(Boolean)));
+  box.addEventListener('click', e => { if (e.target.closest('.menu-list button')) box.open = false; });
+  return box;
+}
+
 // onSwap(i, teams): tap a player, then a player on another team, to swap them; teams = player ids per team after the swap.
 // locked: a Set of locked ids, or i => that option's Set (none: no locks on it); onLock(id, i).
 // extra: shown under option 1, or i => what to show under option i.
@@ -1100,8 +1113,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
         show(n); tabs.children[n].focus();
       } },
       h('b', {}, `Option ${i + 1}`, edited?.(i) ? h('span', { class: 'tab-mark' }, ' · swapped') : '', h('span', { class: 'tab-mark saved-mark' }, ' · saved')),
-      h('span', { class: 'small' }, [detail && `Gap ${fmt(gapOf(opt))}`,
-        res.variety > 0 && (opt.repeats?.length ? `${opt.repeats.length} repeat${opt.repeats.length === 1 ? '' : 's'}` : 'no repeats')].filter(Boolean).join(' · ')))));
+      detail && h('span', { class: 'tab-verdict' }, evenness(gapOf(opt))),
+      h('span', { class: 'small' }, [detail && `Gap ${num2(gapOf(opt))}`,
+        res.variety > 0 && (opt.repeats?.length ? `${opt.repeats.length} ${opt.repeats.length === 1 ? 'pair' : 'pairs'} again` : 'no pairs again')].filter(Boolean).join(' · ')))));
     parts.push(tabs);
     queueMicrotask(() => show(Math.min(open, res.options.length - 1)));
   }
@@ -1115,11 +1129,11 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
     let view = views.find(v => v.id === viewId) ?? views[0];
     const withSet = opt.teams.some(t => t.players.some(p => p.allGame));
-    const gapLine = h('p', { class: 'muted small', style: 'margin:2px 0 0' });
-    const grid = h('div', { class: 'team-grid' });
+    const gapLine = h('p', { class: 'verdict' });
+    const grid = h('div', { class: 'team-grid', 'data-n': opt.teams.length });
     const guessNote = h('p', { class: 'muted small', hidden: true });
     const lk = typeof locked === 'function' ? locked(i) : locked;
-    const busy = () => { grid.classList.add('busy'); grid.setAttribute('aria-busy', 'true'); gapLine.textContent = 'Checking the new teams…'; };
+    const busy = () => { grid.classList.add('busy'); grid.setAttribute('aria-busy', 'true'); gapLine.replaceChildren(h('b', {}, 'Checking…'), h('span', { class: 'muted small' }, 'Working out the new teams.')); };
     // On a team but not on the playing list (only known once a playing list is set).
     const playingIds = pool?.some(p => p.playing) ? new Set(pool.filter(p => p.playing).map(p => p.id)) : null;
     const off = new Set(playingIds ? opt.teams.flatMap(t => t.players.filter(p => p.id != null && !playingIds.has(p.id)).map(p => p.id)) : []);
@@ -1172,7 +1186,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           h('div', { class: 'grow' },
             h('div', {}, h('b', {}, x.name), h('span', { class: 'muted' }, ` (Team ${x.team})`)),
             h('div', { class: 'muted small' }, [
-              detail && `Gap ${fmt(x.gap[0])} → ${fmt(x.gap[1])}`,
+              detail && `Gap ${num2(x.gap[0])} → ${num2(x.gap[1])}`,
               x.fixes.length > 0 && `fixes: ${x.fixes.join('; ')}`,
               !x.better && 'not better',
               !detail && x.better && !x.fixes.length && 'more even',
@@ -1183,11 +1197,11 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const paint = () => {
       hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
-      gapLine.textContent = `${view.id ? `${view.name.split(/[\s.@]/)[0]}'s ratings: totals` : 'Totals'} ${fmt(lo)} to ${fmt(hi)}, a gap of ${fmt(hi - lo)}`;
+      gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' }, `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team.`));
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
-        h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
-          h('small', {}, 'Total'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
+        h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
+          h('small', {}, 'Total'), num2(totals[k]), view.guessed?.[k] ? '*' : '')),
         h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
           hints && rank(p.id),
           off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
@@ -1196,9 +1210,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
             title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`,
             'aria-label': lk.has(p.id) ? `Unlock ${p.name}` : `Lock ${p.name} on this team`, onclick: () => onLock(p.id, i) }, lockIcon(lk.has(p.id)))))),
         picked?.[0] === k && hintBox(k),
-        detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', {}, h('small', {}, s === 'setting' ? 'Set' : SHORT[s]), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
+        detail && h('div', { class: `stats${withSet ? ' six' : ''}` }, [...SKILLS, ...(withSet ? ['setting'] : [])].map(s => h('div', { title: s === 'setting' ? 'Setting' : LABEL[s] }, h('small', { 'aria-hidden': 'true' }, s === 'setting' ? 'Set' : SHORT[s]), h('span', { class: 'visually-hidden' }, `${s === 'setting' ? 'Setting' : LABEL[s]} `), h('b', {}, fmt(view.sums[k][s] ?? 0))))))));
       guessNote.hidden = !view.guessed?.some(Boolean);
-      guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their stand-in level was used.`;
+      guessNote.textContent = `* Some players on that team aren't rated by ${view.name.split(/[\s.@]/)[0]}, so their level until rated (set on Players) was used.`;
     };
     const chips = views.length > 2 ? h('div', { class: 'rater-chips view-chips', role: 'group', 'aria-label': 'Whose ratings to show' }, views.map(v => {
       const b = h('button', { type: 'button', class: 'rater-chip', 'aria-pressed': String(v === view), title: v.id ? v.name : 'All picked raters combined' },
@@ -1214,13 +1228,16 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     } }, showSkills ? 'Hide skill numbers' : 'Show skill numbers');
     const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null, 'data-key': opt.teams.every(t => t.players.every(p => p.id != null)) ? lineupKey(optionIds(opt)) : null },
       h('div', { class: 'card-head' }, h('div', {}, h('div', { class: 'option-title' }, h('h3', {}, title ?? `Option ${i + 1}`), h('span', { class: 'badge saved-badge' }, '✓ Saved')), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
-        h('div', { class: 'actions' },
-          onUpdateDraft && h('button', { class: 'ghost sm', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
-          onDraft && h('button', { class: 'ghost sm draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
-          h('button', { class: 'ghost sm', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
-          shareButton(opt.teams, i),
-          onSave && saveButton(() => onSave(i)))),
-      detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show ratings from'), chips),
+      ),
+      h('div', { class: 'option-actions' },
+        onSave && saveButton(() => onSave(i)),
+        shareButton(opt.teams, i),
+        moreMenu([
+          onUpdateDraft && h('button', { type: 'button', role: 'menuitem', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
+          onDraft && h('button', { type: 'button', role: 'menuitem', class: 'draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
+          h('button', { type: 'button', role: 'menuitem', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
+        ])),
+      detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show numbers from'), chips),
       canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
       typeof notice === 'function' ? notice(i) : notice,
       grid, detail && h('div', { class: 'row option-foot' }, guessNote, h('span', { class: 'grow' }), skillsBtn),
@@ -1357,7 +1374,7 @@ async function raterPicker(onchange, preload) {
   reset.onclick = () => { raters.forEach(r => on.add(r.id)); paint(); };
   clear.onclick = () => { on.clear(); paint(); };
   return h('div', { class: 'field raters' },
-    h('span', {}, 'Ratings from'),
+    h('span', {}, 'Build from ratings by'),
     h('div', { class: 'rater-chips', role: 'group', 'aria-label': 'Raters to use' }, chips.map(([, b]) => b), reset, clear));
 }
 
@@ -1376,7 +1393,7 @@ async function saveLineup(teams, { raters, allGame, source }) {
       if (!confirm(`Teams are already saved for ${dayTitle(day)}${n ? ` with ${n} game${n > 1 ? 's' : ''}` : ''}. Replace them?${n ? ' Saved games keep the players they had.' : ''}`)) return;
       await q(sb.from('sessions').update(row).eq('id', existing.id));
     } else await q(sb.from('sessions').insert(row));
-    toast(`Saved for ${dayTitle(day)}. Enter scores on Scores.`);
+    toast(`Saved as the teams for ${dayTitle(day)}`);
     document.dispatchEvent(new Event('lineupsaved'));
   } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? needsSql('Scores', 'scores.sql') : `Not saved: ${e.message}`); }
 }

@@ -213,7 +213,7 @@ details.fold + details.fold, .card + details.fold { margin-top: -6px; }
 .teams-out.busy { opacity: .55; pointer-events: none; transition: opacity .2s; }
 /* One built option at a time: tabs carry each one's gap and repeats. */
 .option-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 0; }
-.option-tabs button { display: grid; justify-items: start; gap: 1px; min-height: 52px; padding: 7px 14px; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); text-align: left; min-width: 0; flex: 1 1 100px; max-width: 200px; }
+.option-tabs button { display: grid; justify-items: start; gap: 1px; min-height: 52px; padding: 7px 14px; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); text-align: left; min-width: 0; flex: 1 1 100px; max-width: 230px; }
 .option-tabs button span { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
 .option-tabs button[aria-selected=true] { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
 .option-tabs + .option { margin-top: 14px; }
@@ -368,8 +368,6 @@ tbody tr:hover { background: var(--surface-2); }
   #nav { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
   #who { margin-left: auto; }
   .account .who-text { display: none; }
-  .option .card-head .actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
-  .option .card-head .actions > button[hidden] { display: none; }
   main { padding: 16px 12px 80px; }
   .page-head h2 { font-size: 2.2rem; }
   .card { padding: 14px; border-radius: 12px; }
@@ -576,3 +574,36 @@ p.muted.small, .switch-row p { text-wrap: pretty; }
 .change-line.worse { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
 .change-line.worse button.ghost { color: var(--warn-fg); border-color: currentColor; }
 .build-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+
+/* ---------- Teams layout: actions, grid, rows ---------- */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+h2, h3, h4 { text-wrap: balance; }
+/* How even an option is: the word leads in the display face, the numbers follow. */
+.verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 6px 0 2px; }
+.verdict b { font: 700 1.45rem/1.05 var(--display); letter-spacing: .005em; }
+.verdict .muted { flex: 1 1 260px; }
+/* Save and Share lead; the rest sit under More. */
+.option-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+.option-actions > button, .option-actions > details > summary { min-height: 44px; }
+.option-actions > button:not(.ghost) { padding-inline: 18px; font-size: .92rem; }
+.option-actions .menu-list { left: auto; right: 0; }
+.option-actions .menu-list > button[hidden] { display: none; }
+/* Teams sit in rows that fit their count: 2 or 4 as pairs, 3, 5 or 6 in threes. */
+@media (min-width: 641px) { .team-grid[data-n="2"], .team-grid[data-n="4"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .team-grid[data-n="3"], .team-grid[data-n="5"], .team-grid[data-n="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.team li .pick { min-height: 44px; }
+/* A lock shows when it's on, or on the row being hovered, focused or tapped. */
+.team li .lock[aria-pressed=false] { visibility: hidden; }
+.team li:hover .lock, .team li:focus-within .lock, .team li:has(.pick[aria-pressed=true]) .lock { visibility: visible; }
+@media (max-width: 640px) {
+  /* Save and Share stay in reach at the bottom while the teams scroll. */
+  .option { display: flex; flex-direction: column; }
+  .option > .option-actions { order: 1; position: sticky; bottom: 0; z-index: 5; margin: 10px -12px 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
+  .option > .option-foot, .option > .suggestions { order: 2; }
+  .option-actions > button:first-child { flex: 1 1 100%; min-height: 48px; }
+  .option-actions > button.ghost { flex: 1 1 0; }
+  .option-actions .menu-list { top: auto; bottom: calc(100% + 6px); }
+  body:has(.option-actions) #toast { bottom: calc(132px + env(safe-area-inset-bottom)); }
+}
+.option-tabs .tab-verdict { color: var(--fg); font-weight: 600; font-size: .88rem; }
