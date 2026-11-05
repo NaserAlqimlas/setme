@@ -758,7 +758,10 @@ const needsSql = (what, file) => me.role === 'super' ? `${what} need the databas
 // Team totals and gaps on Teams: always two decimals with a leading zero, easier to compare at a glance.
 const num2 = v => (Math.round(v * 100) / 100).toFixed(2);
 // How even an option is, from the gap between the strongest and weakest team's total.
-const evenness = gap => gap <= 0.25 ? 'Very even' : gap <= 0.6 ? 'Even' : gap <= 1.2 ? 'A bit uneven' : 'Uneven';
+const EVEN = [[0.25, 'Very even'], [0.6, 'Even'], [1.2, 'A bit uneven'], [Infinity, 'Uneven']];
+const evenness = gap => EVEN.find(([max]) => gap <= max)[1];
+// The scale in words, said next to a gap so organizers can judge it without knowing the numbers.
+const GAP_SCALE = 'Under 0.25 is very even, under 0.60 even, over 1.20 uneven.';
 
 // Teams of about 6: the count the build starts on for this many players.
 const suggestTeams = n => Math.min(6, Math.max(2, Math.round(n / 6) || 4));
@@ -1273,6 +1276,19 @@ function moreMenu(items) {
 // extra: shown under option 1, or i => what to show under option i.
 // open: which option shows when there are several (a switcher picks); onOpen(i) is told when it changes.
 // edited(i): option i was swapped since it was built (marked on its tab). notice: shown above the teams, or i => that.
+// Before saving: anything an organizer would want to know first. Uneven teams (A bit uneven or worse), a team with no
+// setter or backup, or someone who isn't on the playing list. Nothing to say: saves straight away.
+async function okToSave(opt, off = new Set()) {
+  const teams = opt.teams.map(t => t.players), names = teamNames(teams);
+  const t = opt.teams.map(x => x.weighted), gap = Math.max(...t) - Math.min(...t);
+  const issues = [
+    gap > 0.6 && `The teams are ${evenness(gap).toLowerCase()}: a gap of ${num2(gap)} (${GAP_SCALE.toLowerCase().replace(/\.$/, '')}).`,
+    ...teams.map((ps, k) => !ps.some(p => p.setting === 'M' || p.setting === 'B') && `${names[k]} has no setter or backup setter.`),
+    off.size > 0 && `${teams.flat().filter(p => off.has(p.id)).map(p => p.name).join(', ')} ${off.size === 1 ? 'isn\'t' : 'aren\'t'} on the playing list.`,
+  ].filter(Boolean);
+  if (!issues.length) return true;
+  return ask('Save these teams anyway?', issues.join(' '), 'Save anyway', 'ball');
+}
 // onSave(i): saves option i as the game day's teams for the Scores page.
 // onDraft(i): keeps option i as a draft to compare or come back to; onUpdateDraft(i) saves it over the draft it came from.
 // pool: active players ({ id, name, playing }) to replace someone with (tap them, then Replace with); goes through onSwap.
@@ -1384,7 +1400,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const paint = () => {
       hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
-      gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' }, `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team.`));
+      gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' }, `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team. ${GAP_SCALE}`));
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k]), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
@@ -1417,7 +1433,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       h('div', { class: 'card-head' }, h('div', {}, h('div', { class: 'option-title' }, h('h3', {}, title ?? `Option ${i + 1}`), h('span', { class: 'badge saved-badge' }, '✓ Saved')), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
       ),
       h('div', { class: 'option-actions' },
-        onSave && saveButton(() => onSave(i)),
+        onSave && saveButton(async () => { if (await okToSave(opt, off)) return onSave(i); }),
         shareButton(opt.teams, i),
         moreMenu([
           onUpdateDraft && h('button', { type: 'button', role: 'menuitem', title: 'Save these teams over the draft you opened', onclick: () => onUpdateDraft(i) }, 'Update draft'),
@@ -1689,7 +1705,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       const r = await callFn('build-teams', { predict: true, teams, raters: ses.raters, allGame: allGameFor(teams.flat()) });
       if (teams !== ses.teams) return; // changed again meanwhile
       const t = r.teams.map(x => x.weighted), gap = Math.max(...t) - Math.min(...t);
-      balance.replaceChildren(h('b', {}, evenness(gap)), h('span', { class: 'muted' }, ` · team totals ${num2(Math.min(...t))} to ${num2(Math.max(...t))}, a gap of ${num2(gap)}`));
+      balance.replaceChildren(h('b', {}, evenness(gap)), h('span', { class: 'muted' }, ` · team totals ${num2(Math.min(...t))} to ${num2(Math.max(...t))}, a gap of ${num2(gap)}. ${GAP_SCALE}`));
     } catch { balance.replaceChildren(); }
   };
   const swap = (i, id) => {
