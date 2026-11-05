@@ -626,3 +626,14 @@ details.round-past .team-grid { margin-top: 10px; }
 /* Save that would replace teams already saved for the day. */
 button.replace { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid color-mix(in srgb, var(--warn-fg) 35%, transparent); }
 button:disabled.ghost { opacity: .75; cursor: default; }
+/* Option details: the full gap story, repeat teammates, whose numbers and the results note, folded. */
+.option-more { margin: 0 0 12px; }
+.option-more > summary { cursor: pointer; display: inline-flex; align-items: center; min-height: 36px; color: var(--muted); font-size: .88rem; font-weight: 600; }
+.option-more[open] > summary { color: var(--fg); }
+.option-more > p { margin: 4px 0 8px; }
+/* Phones: option tabs scroll sideways instead of wrapping onto several lines. */
+@media (max-width: 640px) {
+  .option-tabs { flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; margin-inline: -16px; padding: 2px 16px 4px; }
+  .option-tabs::-webkit-scrollbar { display: none; }
+  .option-tabs button { flex: 0 0 auto; min-width: 128px; scroll-snap-align: start; }
+}

@@ -889,7 +889,7 @@ async function teamsPage() {
     const scores = h('a', { href: '#scores' }, 'Enter scores');
     saved.classList.toggle('differs', shown.length > 0 && !match);
     const round = savedLineup.round > 1 ? savedLineup.round : null;
-    saved.replaceChildren(...(match ? ['✓ ', match.querySelector('h3')?.textContent ?? 'These teams', ' is saved for ', day, round ? ` (round ${round})` : '', '. ', scores]
+    saved.replaceChildren(...(match ? ['✓ ', match.dataset.label ?? 'These teams', ' is saved for ', day, round ? ` (round ${round})` : '', '. ', scores]
       : shown.length ? [round ? `Round ${round} teams are` : 'Teams are', ' already saved for ', day, ', but not the ones below. Saving these replaces them, or starts a new round once games are in. ', scores]
       : ['✓ ', round ? `Round ${round} teams are` : 'Teams are', ' saved for ', day, '. ', scores]));
   };
@@ -1321,9 +1321,10 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     parts.push(tabs);
     queueMicrotask(() => show(Math.min(open, res.options.length - 1)));
   }
-  if (res.adjusted != null) parts.push(h('p', { class: 'muted small' }, res.adjusted
+  // Said in each option's Details rather than above the tabs.
+  const adjustedNote = () => res.adjusted != null && h('p', { class: 'muted small' }, res.adjusted
     ? `Adjusted for results: ${res.adjusted} player${res.adjusted === 1 ? '\'s' : 's\''} numbers moved by how their teams have done against their ratings.`
-    : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`));
+    : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`);
   res.options.forEach((opt, i) => {
     const tn = teamNames(opt.teams.map(t => t.players));
     const text = opt.teams.map((t, k) => `${tn[k]}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
@@ -1332,7 +1333,9 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
     let view = views.find(v => v.id === viewId) ?? views[0];
     const withSet = opt.teams.some(t => t.players.some(p => p.allGame));
+    // One short line under the tabs; the full story folds into Details.
     const gapLine = h('p', { class: 'verdict' });
+    const gapStory = h('p', { class: 'muted small' });
     const grid = h('div', { class: 'team-grid', 'data-n': opt.teams.length });
     const guessNote = h('p', { class: 'muted small', hidden: true });
     const lk = typeof locked === 'function' ? locked(i) : locked;
@@ -1400,7 +1403,10 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const paint = () => {
       hints = picked && opt.partners ? opt.partners[picked[1]] ?? [] : null;
       const totals = view.totals, hi = Math.max(...totals), lo = Math.min(...totals);
-      gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' }, `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team. ${GAP_SCALE}`));
+      const reps = res.variety > 0 && opt.repeats && (opt.repeats.length ? `${opt.repeats.length} ${opt.repeats.length === 1 ? 'pair' : 'pairs'} again` : 'no pairs again');
+      gapLine.replaceChildren(h('b', {}, evenness(hi - lo)), h('span', { class: 'muted small' },
+        [view.id && `${view.name.split(/[\s.@]/)[0]}'s ratings`, `Gap ${num2(hi - lo)}`, reps].filter(Boolean).join(' · ')));
+      gapStory.textContent = `${view.id ? `By ${view.name.split(/[\s.@]/)[0]}'s ratings, team` : 'Team'} totals ${num2(lo)} to ${num2(hi)}: a gap of ${num2(hi - lo)} between the strongest and weakest team. ${GAP_SCALE}`;
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k]), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
@@ -1429,8 +1435,11 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       document.documentElement.classList.toggle('hide-skills', !showSkills);
       document.querySelectorAll('.skills-btn').forEach(b => { b.setAttribute('aria-pressed', String(showSkills)); b.textContent = showSkills ? 'Hide skill numbers' : 'Show skill numbers'; });
     } }, showSkills ? 'Hide skill numbers' : 'Show skill numbers');
-    const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null, 'data-key': opt.teams.every(t => t.players.every(p => p.id != null)) ? lineupKey(optionIds(opt)) : null },
-      h('div', { class: 'card-head' }, h('div', {}, h('div', { class: 'option-title' }, h('h3', {}, title ?? `Option ${i + 1}`), h('span', { class: 'badge saved-badge' }, '✓ Saved')), detail && gapLine, res.variety > 0 && repeatLine(opt.repeats, res.variety)),
+    const section = h('section', { class: 'option', id: res.options.length > 1 ? `opt-${i}` : null, role: res.options.length > 1 ? 'tabpanel' : null, 'aria-labelledby': res.options.length > 1 ? `opt-tab-${i}` : null, 'data-label': title ?? `Option ${i + 1}`, 'data-key': opt.teams.every(t => t.players.every(p => p.id != null)) ? lineupKey(optionIds(opt)) : null },
+      h('div', { class: 'card-head' }, h('div', {},
+        // With tabs the tab already names the option (and says saved); a single option keeps its title.
+        res.options.length === 1 && h('div', { class: 'option-title' }, h('h3', {}, title ?? `Option ${i + 1}`), h('span', { class: 'badge saved-badge' }, '✓ Saved')),
+        detail ? gapLine : res.variety > 0 && repeatLine(opt.repeats, res.variety)),
       ),
       h('div', { class: 'option-actions' },
         onSave && saveButton(async () => { if (await okToSave(opt, off)) return onSave(i); }),
@@ -1440,8 +1449,10 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           onDraft && h('button', { type: 'button', role: 'menuitem', class: 'draft-btn', hidden: !draftsOk, onclick: () => onDraft(i) }, onUpdateDraft ? 'Save as new draft' : 'Save draft'),
           h('button', { type: 'button', role: 'menuitem', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
         ])),
-      detail && chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show numbers from'), chips),
-      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them, or tap a player on another team to swap them.' : 'Tap a player, then a player on another team, to swap them.'),
+      detail && h('details', { class: 'option-more' }, h('summary', {}, 'Details'),
+        gapStory, res.variety > 0 && repeatLine(opt.repeats, res.variety), adjustedNote(),
+        chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show numbers from'), chips)),
+      canSwap && h('p', { class: 'muted small swap-hint' }, opt.partners ? 'Tap a player to see their best swaps or replace them.' : 'Tap a player, then one on another team, to swap them.'),
       typeof notice === 'function' ? notice(i) : notice,
       grid, detail && h('div', { class: 'row option-foot' }, guessNote, h('span', { class: 'grow' }), skillsBtn),
       typeof extra === 'function' ? extra(i) : i === 0 && extra);
