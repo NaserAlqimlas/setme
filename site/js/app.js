@@ -73,13 +73,38 @@ const downloadFile = (text, name, type) => {
   h('a', { href: url, download: name }).click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+// A small dropdown of actions (a native <details>, so it works with keyboard and screen readers).
+function menu(label, items) {
+  const box = h('details', { class: 'menu' }, h('summary', { class: 'ghost-btn' }, label),
+    h('div', { class: 'menu-list', role: 'menu' }, items.map(([text, act]) => h('button', { type: 'button', role: 'menuitem', onclick: () => { box.open = false; act(); } }, text))));
+  return box;
+}
+// The avatar in the header: who you are, and sign out.
+function accountMenu() {
+  const box = h('details', { class: 'menu account' },
+    h('summary', { 'aria-label': `Account: ${me.display_name}` }, avatar(me.display_name || '?', 34), h('span', { class: 'who-text' }, h('b', {}, me.display_name), h('small', {}, me.role))),
+    h('div', { class: 'menu-list', role: 'menu' },
+      h('p', { class: 'small' }, h('b', {}, me.display_name), h('br'), h('span', { class: 'muted' }, `${session.user.email}, ${me.role}`)),
+      me.player_id && h('a', { href: `#player/${me.player_id}`, role: 'menuitem', onclick: () => { box.open = false; } }, 'My profile'),
+      h('button', { type: 'button', role: 'menuitem', onclick: () => sb.auth.signOut() }, 'Sign out')));
+  return box;
+}
+// Close any open menu on an outside click or Escape.
+document.addEventListener('click', e => document.querySelectorAll('details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('details.menu[open]').forEach(d => { d.open = false; d.querySelector('summary').focus(); }); });
+// An on/off filter shown as a chip.
+function filterChip(label, onchange) {
+  const b = h('button', { type: 'button', class: 'filter-chip', 'aria-pressed': 'false' }, label);
+  b.onclick = () => { const v = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(v)); onchange(v); };
+  return b;
+}
 const pageHead = (title, sub, ...right) => h('div', { class: 'page-head' }, h('div', {}, h('h2', {}, title), sub && h('p', {}, sub)), right.length ? h('div', { class: 'row' }, right) : null);
 
 function avatar(name, size) {
   let hash = 0;
   for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) % 360;
   const initials = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-  return h('span', { class: 'avatar', style: `background: hsl(${hash} 55% 45%)${size ? `; width:${size}px; height:${size}px` : ''}`, 'aria-hidden': 'true' }, initials);
+  return h('span', { class: 'avatar', style: `background: hsl(${hash} 50% 38%)${size ? `; width:${size}px; height:${size}px` : ''}`, 'aria-hidden': 'true' }, initials);
 }
 
 // Pick-one buttons. onpick returns false when saving failed, which puts the old choice back.
@@ -165,9 +190,8 @@ async function render() {
   const current = profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
   if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
   if (me.player_id) nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
-  who.append(
-    h('div', { class: 'me' }, avatar(me.display_name || '?', 32), h('div', { class: 'who-text' }, h('b', {}, me.display_name), h('small', {}, me.role))),
-    h('button', { class: 'ghost sm', onclick: () => sb.auth.signOut() }, 'Sign out'));
+  who.append(accountMenu());
+  nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   app.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
   try {
     app.replaceChildren(await current.view());
@@ -284,18 +308,16 @@ function ratingGuide(onToggle) {
     h('p', { class: 'muted small' }, 'Rate each player against this group, not against volleyball players in general. Use U if you haven\'t seen enough to say.'),
     [...items.values()]);
   const fab = h('button', { type: 'button', class: 'guide-fab' }, '📖 Rating guide');
-  const button = h('button', { type: 'button', class: 'ghost sm guide-toggle' });
   const set = v => {
     open = v;
     try { localStorage.setItem('setme.guide', v ? 'open' : 'closed'); } catch { /* not remembered, that's fine */ }
     panel.classList.toggle('open', v); panel.inert = !v; fab.hidden = v;
-    button.textContent = v ? 'Hide rating guide' : 'Show rating guide';
     onToggle(v);
   };
   close.onclick = () => set(false);
-  fab.onclick = button.onclick = () => set(!open);
+  fab.onclick = () => set(!open);
   return {
-    panel, fab, button, init: () => set(open),
+    panel, fab, init: () => set(open),
     focus(skill) {
       if (!open) return;
       for (const [s, el] of items) el.classList.toggle('on', s === skill);
@@ -335,7 +357,8 @@ async function ratePage() {
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, anchorsLeft.length
           ? `New here? Start with the ${anchorsLeft.length} anchor player${anchorsLeft.length === 1 ? '' : 's'} everyone rates; it tells SetMe how you rate compared with the others, and until then your ratings count for less.`
           : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
-      h('div', { class: 'chips' }, list.map(({ p, why }) => h('span', { class: 'chip plain', title: why.join(' · ') }, p.name, h('span', { class: 'muted small' }, ` · ${why[0]}${why.length > 1 ? ` +${why.length - 1}` : ''}`)))));
+      h('ul', { class: 'look-list' }, list.map(({ p, why }) => h('li', { title: why.join('\n') }, h('b', {}, p.name),
+        h('span', { class: 'muted small' }, why[0] + (why.length > 1 ? `, and ${why.length - 1} more` : ''))))));
   };
   paintLook();
   const grid = h('div', { class: 'grid' });
@@ -434,22 +457,20 @@ async function ratePage() {
 
   return h('div', {},
     pageHead('Rate players', 'Only the site owner sees your ratings. Every tap saves.',
-      h('button', { class: 'ghost sm', onclick: downloadTemplate }, 'CSV template'),
-      h('button', { class: 'ghost sm', onclick: () => fileInput.click() }, 'Import CSV'),
-      h('button', { class: 'ghost sm', onclick: exportRatings }, 'Export CSV'), fileInput),
+      menu('Spreadsheet', [['Download a blank template', downloadTemplate], ['Import ratings from a file', () => fileInput.click()], ['Export my ratings', exportRatings]]), fileInput),
     importBox,
     h('div', { class: 'card' },
       h('div', { class: 'legend' },
         h('span', {}, h('b', {}, '0'), ' unwilling or unable'), h('span', {}, h('b', {}, '.25'), ' below average'),
         h('span', {}, h('b', {}, '.5'), ' average/consistent'), h('span', {}, h('b', {}, '.75'), ' excels'),
         h('span', {}, h('b', {}, '1'), ' top of the group'), h('span', {}, h('b', {}, 'U'), " don't know")),
-      h('div', { style: 'margin-top:12px' }, guide.button),
       h('div', { class: 'progress', style: 'margin:14px 0 6px' }, bar), countEl,
-      h('div', { class: 'toolbar', style: 'margin-top:10px' },
+      h('div', { class: 'toolbar', style: 'margin-top:12px' },
         h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
-        toggle("This session's players only", false, v => { onlyPlaying = v; draw(); }),
-        toggle('Not rated yet', false, v => { onlyUnrated = v; draw(); }),
-        toggle('Worth a look', false, v => { onlyLook = v; draw(); }))),
+        h('div', { class: 'filter-chips', role: 'group', 'aria-label': 'Show only' },
+          filterChip('Playing this session', v => { onlyPlaying = v; draw(); }),
+          filterChip('Not rated yet', v => { onlyUnrated = v; draw(); }),
+          filterChip('Worth a look', v => { onlyLook = v; draw(); })))),
     lookCard,
     layout);
 }
@@ -541,18 +562,18 @@ async function playersPage() {
 
   return h('div', {},
     pageHead('Players', 'Who\'s playing this session, and each player\'s setter role.', countEl),
-    h('div', { class: 'card toolbar' },
-      h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
-      h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
+    me.role === 'super' && h('form', { class: 'card add-player', onsubmit: add },
+      h('div', { class: 'row' }, name, h('button', {}, 'Add player')),
+      h('div', { class: 'field' }, h('span', {}, 'Level until rated'), tierPick)),
     h('div', { class: 'card' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Paste from WhatsApp'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Paste the group\'s list to tick everyone who\'s playing.'))),
       box, pasteResult),
     me.role === 'super' && players.length && 'anchor' in players[0] && h('p', { class: 'muted small' }, h('b', {}, 'Anchor'),
       ': a well-known player every rater rates first. Pick 4 to 6 across the range (strong, average, newer), so a new rater\'s lean is known quickly.'),
-    me.role === 'super' && h('form', { class: 'card add-player', onsubmit: add },
-      h('div', { class: 'row' }, name, h('button', {}, 'Add player')),
-      h('div', { class: 'field' }, h('span', {}, 'Level until rated'), tierPick)),
+    h('div', { class: 'card toolbar' },
+      h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
+      h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
     grid,
     h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team.'));
 }
@@ -855,7 +876,7 @@ function shareButton(teams, i) {
   };
   prep();
   document.addEventListener('gamedate', prep);
-  btn = h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, name) }, 'Share image');
+  btn = h('button', { class: 'ghost sm', onclick: async () => sharePng(blob ?? await ready, name) }, 'Share image');
   return btn;
 }
 
@@ -988,7 +1009,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       grid.classList.toggle('picking', !!picked);
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name} (stand-in level used)` : null },
-          h('small', {}, 'TOTAL'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
+          h('small', {}, 'Total'), fmt(totals[k]), view.guessed?.[k] ? '*' : '')),
         h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
           hints && rank(p.id),
           off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
@@ -1204,7 +1225,7 @@ async function gamesView(sessions, players, pname) {
   if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, () => { taggingGame = null; render(); })];
   taggingGame = null;
   const wrap = h('div');
-  const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on))));
+  const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
   daySel.onchange = () => { scoresDay = daySel.value; render(); };
   const delDay = h('button', { class: 'danger sm', onclick: async () => {
     if (!confirm(`Delete ${dayTitle(ses.played_on)} and its ${games.length} game${games.length === 1 ? '' : 's'}?`)) return;
@@ -1337,7 +1358,26 @@ async function gamesView(sessions, players, pname) {
         } }, 'Delete'));
     })));
   };
-  paintTeams(); paintEntry(); paintList();
+  // Once the day is ended the entry box gives way to the final standings: most wins, then point difference.
+  const standings = () => ses.teams.map((_, i) => {
+    const k = i + 1, mine = games.filter(g => g.team_a === k || g.team_b === k);
+    const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
+    const won = mine.filter(g => (g.team_a === k ? g.score_a > g.score_b : g.score_b > g.score_a)).length;
+    return { k, won, lost: mine.length - won, diff };
+  }).sort((a, b) => b.won - a.won || b.diff - a.diff);
+  const setEnded = async v => {
+    try { await q(sb.from('sessions').update({ ended: v }).eq('id', ses.id)); ses.ended = v; toast(v ? 'Game day ended' : 'Game day reopened'); render(); }
+    catch (e) { toast(e.message); }
+  };
+  const paintEnded = () => entry.replaceChildren(
+    h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Game day over'),
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, games.length
+        ? `${games.length} game${games.length === 1 ? '' : 's'} played. You can still fix a score below.`
+        : 'No games were entered.')),
+      h('button', { class: 'ghost sm', onclick: () => setEnded(false) }, 'Reopen')),
+    games.length > 0 && h('ol', { class: 'standings' }, standings().map(t => h('li', { style: `--tc: ${TEAM_COLORS[(t.k - 1) % TEAM_COLORS.length]}` },
+      h('b', {}, teamName(t.k)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`)))));
+  paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList();
   // Day recap: every game's result, plus standouts and team numbers from whatever has been tagged.
   const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname);
   if (games.length) {
@@ -1349,8 +1389,11 @@ async function gamesView(sessions, players, pname) {
     try { await q(sb.from('sessions').update({ published: v }).eq('id', ses.id)); ses.published = v; toast(v ? 'Players can see these teams' : 'Hidden from players'); }
     catch (e) { toast(e.message); return false; }
   }));
+  const endDay = 'ended' in ses && !ses.ended && h('button', { class: 'ghost sm', onclick: () => {
+    if (confirm(`End ${dayTitle(ses.played_on)}? The score entry closes and players see the scores as final. You can reopen it.`)) setEnded(true);
+  } }, 'End the day');
   wrap.append(
-    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), games.length ? dayRecap.btn : null, delDay),
+    h('div', { class: 'card build-bar' }, h('label', { class: 'field' }, h('span', {}, 'Game day'), daySel), publish, h('span', { class: 'grow' }), endDay, games.length ? dayRecap.btn : null, delDay),
     h('div', { class: 'card' }, entry),
     h('div', { class: 'card' }, teamsBox),
     list);
@@ -2735,7 +2778,7 @@ async function signupPage() {
     return h('div', { class: `card${old ? ' dim' : ''}` },
       h('div', { class: 'card-head' },
         h('div', {}, h('h3', {}, dayTitle(ev.played_on)), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
-          `${ins.length} of ${ev.cap} in${wait.length ? ` · ${wait.length} waiting` : ''}${ev.open ? '' : ' · closed'}`, ev.note ? ` · ${ev.note}` : '')),
+          `${ins.length} of ${ev.cap} spots taken${wait.length ? `, ${wait.length} waiting` : ''}.${ev.open ? '' : ' Sign-ups closed.'}`, ev.note && h('br'), ev.note)),
         h('div', { class: 'row' }, status, meBtn)),
       !ev.open && mine && !old && h('p', { class: 'muted small' }, 'Sign-ups are closed. Message an organizer if something changed.'),
       h('div', { class: 'chips' }, ins.length ? ins.map(x => chip(x)) : h('span', { class: 'muted small' }, 'Nobody yet.')),
@@ -2787,7 +2830,7 @@ async function lineupPage() {
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, `Team ${k + 1}`)),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
-      d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, 'Scores'),
+      d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
         h('ol', { class: 'game-list' }, d.games.map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `Team ${g.team_a} v Team ${g.team_b}`)),
           h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))),
       i < days.length - 1 && h('hr', { class: 'sep' }));
@@ -2804,7 +2847,7 @@ async function profilePage(id) {
   const isSuper = me.role === 'super', organizer = isSuper || me.role === 'organizer';
   const head = h('div', { class: 'page-head' }, h('div', { class: 'row' }, avatar(player.name, 56),
     h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
-      player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(' · ') || ' '))));
+      player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(', ') || ' '))));
   const parts = [head];
 
   // Game days and games (player_games works for the player themself, organizers and super).
@@ -2830,7 +2873,7 @@ async function profilePage(id) {
     if (recent.length) parts.push(h('div', { class: 'card' }, h('h3', {}, 'Recent game days'),
       h('ol', { class: 'game-list' }, recent.map(d => {
         const res = record(d.games, id);
-        return h('li', {}, h('div', { class: 'grow' }, h('b', {}, dayTitle(d.played_on)), d.team && h('span', { class: 'muted small' }, ` · Team ${d.team}`),
+        return h('li', {}, h('div', { class: 'grow' }, h('b', {}, dayTitle(d.played_on)), d.team && h('span', { class: 'muted small' }, `, Team ${d.team}`),
           h('div', { class: 'muted small' }, d.games.map(g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return `${us > them ? 'W' : 'L'} ${us}–${them}`; }).join(' · ') || 'No games entered')),
           res.games > 0 && h('span', { class: 'game-score' }, `${res.wins}–${res.losses}`));
       }))));
@@ -2841,7 +2884,7 @@ async function profilePage(id) {
   if (ev?.length) {
     const sg = await q(sb.from('signups').select('event_id,player_id,created_at').in('event_id', ev.map(e => e.id)).order('created_at')).catch(() => []);
     const lines = ev.map(e => { const list = sg.filter(x => x.event_id === e.id); const at = list.findIndex(x => x.player_id === id);
-      return at < 0 ? null : h('li', {}, h('b', {}, dayTitle(e.played_on)), ' · ', at < e.cap ? 'in' : `waitlist #${at - e.cap + 1}`); }).filter(Boolean);
+      return at < 0 ? null : h('li', {}, h('b', {}, dayTitle(e.played_on)), ': ', at < e.cap ? 'you\'re in' : `number ${at - e.cap + 1} on the waitlist`); }).filter(Boolean);
     parts.push(h('div', { class: 'card' }, h('h3', {}, 'Signed up for'), lines.length ? h('ul', {}, lines) : h('p', { class: 'muted' }, 'Nothing coming up.', id === me.player_id ? [' ', h('a', { href: '#signup' }, 'Sign up')] : [])));
   }
 
