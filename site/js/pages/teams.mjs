@@ -596,31 +596,58 @@ export const dayTitle = iso => {
 // Rendered as soon as the teams show (and again when the date changes), so a tap can share straight away;
 // iOS drops the tap if we draw first.
 function shareButton(teams, i) {
-  let blob = null, ready, name, btn;
+  let open, btn;
   const prep = () => {
     if (btn && !btn.isConnected) return document.removeEventListener('gamedate', prep);
-    name = `teams-${gameDate || 'lineup'}${i ? `-${i + 1}` : ''}.png`;
-    blob = null;
-    ready = courtImage(teams, { title: dayTitle(gameDate), colors: TEAM_COLORS, names: teamNames(teams.map(t => t.players)) }).then(b => (blob = b));
+    open = courtShare(teams, { title: dayTitle(gameDate), names: teamNames(teams.map(t => t.players)) }, `teams-${gameDate || 'lineup'}${i ? `-${i + 1}` : ''}.png`);
   };
   prep();
   document.addEventListener('gamedate', prep);
-  btn = h('button', { class: 'ghost sm', onclick: async () => previewPng(blob ?? await ready, name) }, 'Share image');
+  btn = h('button', { class: 'ghost sm', onclick: () => open() }, 'Share image');
   return btn;
+}
+
+// Setter marks on team images: on unless switched off in the preview; remembered on this device.
+let showSetters = true;
+try { showSetters = localStorage.getItem('setme.imageSetters') !== 'off'; } catch { /* storage blocked: show them */ }
+// A team image with and without setter marks, both drawn ahead of the tap (iOS drops a share that waits on
+// drawing). Returns open(): the preview with a Show setters switch. opts: courtImage's (colors default to TEAM_COLORS).
+export function courtShare(teams, opts, name) {
+  const imgs = new Map([true, false].map(s => {
+    const img = { blob: null };
+    img.ready = courtImage(teams, { colors: TEAM_COLORS, ...opts, setters: s }).then(b => (img.blob = b));
+    return [s, img];
+  }));
+  const get = async s => imgs.get(s).blob ?? await imgs.get(s).ready;
+  return async () => previewPng(await get(showSetters), name, { label: 'Show setters', checked: showSetters, get: v => {
+    showSetters = v;
+    try { localStorage.setItem('setme.imageSetters', v ? 'on' : 'off'); } catch { /* not remembered, that's fine */ }
+    return get(v);
+  } });
 }
 
 // Show the image in the page first, with Share (or Copy where there's no share sheet), Save and Close.
 // The Share tap is its own gesture with the image already drawn, so iOS keeps it.
-export function previewPng(b, name) {
+// option: { label, checked, get: checked -> Promise<Blob> } adds a switch that swaps in another version of the image.
+export function previewPng(b, name, option) {
   if (!b) return;
-  const url = URL.createObjectURL(b);
+  let url = URL.createObjectURL(b);
   const canShare = !!navigator.canShare?.({ files: [new File([b], name, { type: 'image/png' })] });
   const close = () => { dlg.close(); dlg.remove(); URL.revokeObjectURL(url); };
+  const img = h('img', { src: url, alt: 'The image as it will be shared' });
+  const save = h('a', { class: 'button ghost', href: url, download: name }, 'Save');
+  const swap = async v => {
+    const next = await option.get(v);
+    if (!next) return false;
+    URL.revokeObjectURL(url);
+    b = next; url = URL.createObjectURL(b); img.src = url; save.href = url;
+  };
   const dlg = h('dialog', { class: 'choose image-preview', 'aria-label': 'Image preview' },
-    h('div', { class: 'preview-frame' }, h('img', { src: url, alt: 'The image as it will be shared' })),
+    h('div', { class: 'preview-frame' }, img),
+    option && h('div', { class: 'preview-option' }, toggle(option.label, option.checked, swap)),
     h('div', { class: 'choose-actions' },
       h('button', { type: 'button', class: 'ball', onclick: async () => { await sharePng(b, name); if (canShare) close(); } }, canShare ? 'Share' : 'Copy image'),
-      h('a', { class: 'button ghost', href: url, download: name }, 'Save'),
+      save,
       h('button', { type: 'button', class: 'ghost', autofocus: true, onclick: close }, 'Close')));
   dlg.addEventListener('cancel', e => { e.preventDefault(); close(); });
   dlg.addEventListener('click', e => { if (e.target === dlg) close(); });

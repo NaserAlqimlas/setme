@@ -1,10 +1,9 @@
 import { ask, avatar, canProfile, fmt, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, teamNames, weightedTotal } from '../teams.mjs';
-import { courtImage } from '../courtimg.mjs';
 import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
 import { metrics, score, tallyFromCounts } from '../stats.mjs';
 import { attendance, record } from '../club.mjs';
-import { dayTitle, setterBadge, previewPng } from './teams.mjs';
+import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed } from './ratings.mjs';
 
@@ -107,12 +106,12 @@ export async function lineupPage() {
     const pastNames = new Map(past.map(r => [r.n, teamNames(r.teams)]));
     const nameIn = (k, n) => ((n ?? 1) === cur ? tn : pastNames.get(n) ?? [])[k - 1] ?? `Team ${k}`;
     const roundsWithGames = [...new Set(d.games.map(g => g.round ?? 1))].sort((a, b) => b - a);
-    let blob = null; const ready = courtImage(teams, { title: dayTitle(d.played_on), colors: TEAM_COLORS, names: tn }).then(b => (blob = b));
+    const share = courtShare(teams, { title: dayTitle(d.played_on), names: tn }, `teams-${d.played_on}.png`);
     const mineAt = teams.findIndex(t => t.players.some(p => p.id === me.player_id));
     return h('section', { class: 'option' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on), cur > 1 ? h('span', { class: 'muted' }, ` · Round ${cur}`) : ''),
         mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on ${tn[mineAt]}${cur > 1 ? ` in round ${cur}` : ''}.`)),
-        h('button', { class: 'sm', onclick: async () => previewPng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
+        h('button', { class: 'sm', onclick: () => share() }, 'Share image')),
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k])),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),

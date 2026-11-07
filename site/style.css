@@ -617,6 +617,7 @@ dialog.choose p { margin: 0 0 16px; }
 dialog.image-preview { width: min(94vw, 560px); padding: 14px; }
 .preview-frame { max-height: 70vh; overflow: auto; border-radius: 10px; background: #14244f; margin-bottom: 12px; }
 .preview-frame img { display: block; width: 100%; height: auto; }
+.preview-option { margin-bottom: 12px; }
 .image-preview a.button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
 dialog.choose button.danger { background: var(--danger); color: #fff; border: 0; }
 .round-head { margin: 14px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
