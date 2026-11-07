@@ -1,7 +1,9 @@
 // Draw a lineup as a PNG: Team 1 v Team 2 (or the teams' names) on court 1, Team 3 v Team 4 on court 2, ...
 // An odd team out goes on a "next up" bench under the courts.
-// Each name carries its serving order (servingOrder in teams.mjs); a team of six stands in its starting rotation
-// (1 back right, 2 front right, 3 front middle, 4 front left, 5 back left, 6 back middle), so the first server is in 1.
+// Setters and backups are marked S. A team of six stands in a rotation (1 back right, 2 front right, 3 front middle,
+// 4 front left, 5 back left, 6 back middle) turned so the main setter (or, with none, a backup) is in 3; the order
+// around the court is the serving order (servingOrder in teams.mjs). Other sizes put them as near front middle as
+// the rows allow.
 import { servingOrder } from './teams.mjs';
 
 const W = 1080, PAD = 60, COURT_W = W - 2 * PAD, COURT_H = 520, INSET = 40;
@@ -14,8 +16,8 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // A coloured name pill centred on (x, y); the font shrinks to fit maxW.
-function pill(ctx, x, y, name, color, mark, maxW, num) {
-  const markW = (mark ? 40 : 0) + (num ? 40 : 0);
+function pill(ctx, x, y, name, color, mark, maxW) {
+  const markW = mark ? 40 : 0;
   let size = 34;
   ctx.font = `600 ${size}px ${BODY}`;
   while (size > 18 && ctx.measureText(name).width + markW + 36 > maxW) ctx.font = `600 ${--size}px ${BODY}`;
@@ -28,16 +30,8 @@ function pill(ctx, x, y, name, color, mark, maxW, num) {
   ctx.restore();
   ctx.lineWidth = 3; ctx.strokeStyle = LINE; ctx.stroke();
   let tx = x - w / 2 + 18;
-  if (num) {
-    ctx.fillStyle = NAVY;
-    ctx.beginPath(); ctx.arc(tx + 15, y, 15, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffffff'; ctx.font = `700 22px ${HEAD}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(String(num), tx + 15, y + 1);
-    tx += 40;
-    ctx.font = `600 ${size}px ${BODY}`;
-  }
   if (mark) {
-    ctx.fillStyle = mark === 'S' ? YELLOW : '#ffffff';
+    ctx.fillStyle = YELLOW;
     ctx.beginPath(); ctx.arc(tx + 15, y, 15, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = NAVY; ctx.font = `700 20px ${HEAD}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(mark, tx + 15, y + 1);
@@ -48,7 +42,8 @@ function pill(ctx, x, y, name, color, mark, maxW, num) {
   ctx.fillText(name, tx, y + 1, w - (tx - (x - w / 2)) - 16);
 }
 
-const markOf = p => (p.setting === 'M' ? 'S' : p.setting === 'B' ? 'B' : null);
+// Main setters and backups both get S.
+const markOf = p => (p.setting === 'M' || p.setting === 'B' ? 'S' : null);
 // Players in serving order (setter first; the lineup's own order otherwise: setter, backups, strongest to weakest).
 const ordered = players => servingOrder([...players].sort((a, b) => 'MBN'.indexOf(a.setting ?? 'N') - 'MBN'.indexOf(b.setting ?? 'N')));
 // Rotation spots for serving order 1–6 as [column (0 back, 1 front), row from the team's right]; see the top.
@@ -57,12 +52,19 @@ const SPOTS = [[0, 0], [1, 0], [1, 1], [1, 2], [0, 2], [0, 1]];
 // One half of the court: two columns (back, front) of up to ceil(n/2) rows. The left team faces right, so its right
 // is the bottom of the image; the right team's right is the top.
 function half(ctx, x0, y0, w, h, players, color, side) {
-  const list = ordered(players), rows = Math.ceil(list.length / 2);
+  const list = ordered(players), n = list.length, rows = Math.ceil(n / 2);
   const colX = side === 'left' ? [x0 + w * 0.28, x0 + w * 0.72] : [x0 + w * 0.72, x0 + w * 0.28];
-  list.forEach((p, i) => {
-    let col = i % 2, row = Math.floor(i / 2);
-    if (list.length === 6) { [col, row] = SPOTS[i]; if (side === 'left') row = 2 - row; }
-    pill(ctx, colX[col], y0 + h * (row + 0.5) / rows, p.name, color, markOf(p), w * 0.42, i + 1);
+  const spot = i => n === 6 ? SPOTS[i] : [i % 2, Math.floor(i / 2)];
+  // Where the main setter goes: 3 (front middle) for six; otherwise the front spot nearest the middle row.
+  const front = [...Array(n).keys()].filter(i => spot(i)[0] === 1);
+  const target = n === 6 ? 2 : front.sort((a, b) => Math.abs(spot(a)[1] - (rows - 1) / 2) - Math.abs(spot(b)[1] - (rows - 1) / 2))[0] ?? 0;
+  // Turn the whole order so the setter lands there; who follows whom (the serving order) stays the same.
+  // With no main setter, ordered() puts a backup first, so the backup takes the spot.
+  const shift = ['M', 'B'].includes(list[0]?.setting) ? target : 0;
+  list.forEach((p, k) => {
+    let [col, row] = spot((k + shift) % n);
+    if (n === 6 && side === 'left') row = 2 - row;
+    pill(ctx, colX[col], y0 + h * (row + 0.5) / rows, p.name, color, markOf(p), w * 0.42);
   });
 }
 
@@ -110,7 +112,7 @@ function bench(ctx, y, team, label, color) {
   ctx.font = `600 30px ${HEAD}`; ctx.fillStyle = '#9fb0e0';
   ctx.fillText('NEXT UP', PAD + lw + 16, y);
   const colW = COURT_W / 3;
-  ordered(team.players).forEach((p, i) => pill(ctx, PAD + colW * (i % 3 + 0.5), y + 60 + Math.floor(i / 3) * 76, p.name, color, markOf(p), colW - 16, i + 1));
+  ordered(team.players).forEach((p, i) => pill(ctx, PAD + colW * (i % 3 + 0.5), y + 60 + Math.floor(i / 3) * 76, p.name, color, markOf(p), colW - 16));
 }
 
 // teams: [{players: [{name, setting}]}] -> Promise<Blob> (image/png)
@@ -141,7 +143,7 @@ export async function courtImage(teams, { title = '', colors, names = teams.map(
   }
   if (odd) bench(ctx, y + 50, odd, names[teams.length - 1], colors[(teams.length - 1) % colors.length]);
   ctx.font = `500 22px ${BODY}`; ctx.fillStyle = '#6f80b8'; ctx.textAlign = 'left';
-  ctx.fillText('1–6 = serving order (a team of six starts in its rotation spots)   S = setter   B = backup', PAD, H - 24);
+  ctx.fillText('S = setter or backup   Setter (or backup if none) starts front middle, position 3', PAD, H - 24);
 
   return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 }
