@@ -122,7 +122,7 @@ export async function courtImage(teams, { title = '', colors, names = teams.map(
   const courts = Math.floor(teams.length / 2), odd = teams.length % 2 ? teams[teams.length - 1] : null;
   const benchH = odd ? 90 + Math.ceil(odd.players.length / 3) * 76 : 0;
   const top = title ? 140 : 20;
-  const H = top + courts * (COURT_H + 110) + benchH + 50;
+  const H = top + courts * (COURT_H + 110) + benchH + 10;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
@@ -142,8 +142,6 @@ export async function courtImage(teams, { title = '', colors, names = teams.map(
     y += COURT_H + 110;
   }
   if (odd) bench(ctx, y + 50, odd, names[teams.length - 1], colors[(teams.length - 1) % colors.length]);
-  ctx.font = `500 22px ${BODY}`; ctx.fillStyle = '#6f80b8'; ctx.textAlign = 'left';
-  ctx.fillText('S = setter or backup   Setter (or backup if none) starts front middle, position 3', PAD, H - 24);
 
   return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 }
