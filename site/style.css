@@ -66,7 +66,7 @@ input:focus, select:focus { border-color: var(--primary); outline: none; box-sha
 button { background: var(--primary); color: var(--primary-fg); border: 0; border-radius: 10px; padding: 9px 16px; min-height: 44px; font-weight: 600; cursor: pointer; transition: transform .05s, filter .15s, background .15s; }
 button:hover { filter: brightness(1.08); }
 button:active { transform: translateY(1px); }
-button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line-strong); }
+button.ghost, a.button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line-strong); }
 button.danger { background: transparent; color: var(--danger); border: 1px solid var(--line-strong); }
 button.ball { background: var(--ball); color: var(--ball-fg); }
 button.big { min-height: 52px; padding: 12px 28px; font-size: 1.05rem; }
@@ -614,6 +614,10 @@ dialog.choose h3 { margin: 0 0 6px; }
 dialog.choose p { margin: 0 0 16px; }
 .choose-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 @media (max-width: 480px) { .choose-actions { flex-direction: column-reverse; } .choose-actions button { width: 100%; } }
+dialog.image-preview { width: min(94vw, 560px); padding: 14px; }
+.preview-frame { max-height: 70vh; overflow: auto; border-radius: 10px; background: #14244f; margin-bottom: 12px; }
+.preview-frame img { display: block; width: 100%; height: auto; }
+.image-preview a.button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
 dialog.choose button.danger { background: var(--danger); color: #fff; border: 0; }
 .round-head { margin: 14px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 details.round-past { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }

@@ -4,7 +4,7 @@ import { courtImage } from '../courtimg.mjs';
 import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
 import { metrics, score, tallyFromCounts } from '../stats.mjs';
 import { attendance, record } from '../club.mjs';
-import { dayTitle, setterBadge, sharePng } from './teams.mjs';
+import { dayTitle, setterBadge, previewPng } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed } from './ratings.mjs';
 
@@ -112,7 +112,7 @@ export async function lineupPage() {
     return h('section', { class: 'option' },
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, dayTitle(d.played_on), cur > 1 ? h('span', { class: 'muted' }, ` · Round ${cur}`) : ''),
         mineAt >= 0 && h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `You're on ${tn[mineAt]}${cur > 1 ? ` in round ${cur}` : ''}.`)),
-        h('button', { class: 'sm', onclick: async () => sharePng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
+        h('button', { class: 'sm', onclick: async () => previewPng(blob ?? await ready, `teams-${d.played_on}.png`) }, 'Share image')),
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k])),
         h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),

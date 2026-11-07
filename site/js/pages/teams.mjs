@@ -605,8 +605,26 @@ function shareButton(teams, i) {
   };
   prep();
   document.addEventListener('gamedate', prep);
-  btn = h('button', { class: 'ghost sm', onclick: async () => sharePng(blob ?? await ready, name) }, 'Share image');
+  btn = h('button', { class: 'ghost sm', onclick: async () => previewPng(blob ?? await ready, name) }, 'Share image');
   return btn;
+}
+
+// Show the image in the page first, with Share (or Copy where there's no share sheet), Save and Close.
+// The Share tap is its own gesture with the image already drawn, so iOS keeps it.
+export function previewPng(b, name) {
+  if (!b) return;
+  const url = URL.createObjectURL(b);
+  const canShare = !!navigator.canShare?.({ files: [new File([b], name, { type: 'image/png' })] });
+  const close = () => { dlg.close(); dlg.remove(); URL.revokeObjectURL(url); };
+  const dlg = h('dialog', { class: 'choose image-preview', 'aria-label': 'Image preview' },
+    h('div', { class: 'preview-frame' }, h('img', { src: url, alt: 'The image as it will be shared' })),
+    h('div', { class: 'choose-actions' },
+      h('button', { type: 'button', class: 'ball', onclick: async () => { await sharePng(b, name); if (canShare) close(); } }, canShare ? 'Share' : 'Copy image'),
+      h('a', { class: 'button ghost', href: url, download: name }, 'Save'),
+      h('button', { type: 'button', class: 'ghost', autofocus: true, onclick: close }, 'Close')));
+  dlg.addEventListener('cancel', e => { e.preventDefault(); close(); });
+  dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
+  document.body.append(dlg); dlg.showModal();
 }
 
 // Share sheet where there is one (phones), else copy to the clipboard, else download.
@@ -626,7 +644,7 @@ export async function sharePng(b, name) {
 // ([{ round, teams: [{ k, ids }] }]), read at each refresh so late changes show.
 export function recapButton(label, title, subtitle, file, pname, teamName, lineups = () => []) {
   let blob = null, ready = null, timer = null;
-  const btn = h('button', { class: 'sm', disabled: true, onclick: async () => { const b = blob ?? await ready; if (b) sharePng(b, file); } }, label);
+  const btn = h('button', { class: 'sm', disabled: true, onclick: async () => { const b = blob ?? await ready; if (b) previewPng(b, file); } }, label);
   const refresh = docs => {
     clearTimeout(timer);
     timer = setTimeout(() => {
