@@ -513,6 +513,8 @@ function ownTeamsCard(out, getOptions) {
     current = teams; history = []; locked.clear(); changedFrom = null; teamsTitle = title; draftId = id; card.fromSaved = null;
     try { await run({ scroll: true }); } catch (e) { out.dataset.shows = ''; out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };
+  // A draft was renamed: the one on screen takes the new name.
+  card.renamed = (id, name) => { if (id === draftId) { teamsTitle = name; card.refresh(); } };
   document.addEventListener('setterplan', () => card.refresh());
   // The game day's saved teams, shown when Teams opens with nothing else on screen. fromSaved = that day.
   card.show = async (teams, title, day) => {
@@ -977,6 +979,11 @@ function draftsCard(ownTeams) {
         cells.gap, cells.off, cells.rep,
         h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
           h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
+          h('button', { class: 'ghost sm', 'aria-label': `Rename ${d.name}`, onclick: async () => {
+            const name = prompt('Rename this draft', d.name)?.trim();
+            if (!name || name === d.name) return;
+            try { await q(sb.from('drafts').update({ name }).eq('id', d.id)); ownTeams.renamed(d.id, name); card.refresh(); } catch (e) { toast(e.message); }
+          } }, 'Rename'),
           h('button', { class: 'ghost sm', 'aria-label': `Delete ${d.name}`, onclick: async () => {
             if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
             try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
