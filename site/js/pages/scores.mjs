@@ -4,7 +4,7 @@ import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairi
 import { ACTIONS, endsRally, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
-import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, sharePng } from './teams.mjs';
+import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
 import { signed, svg } from './ratings.mjs';
 
 // Scores page (organizers): games and rounds, match stats tagging, insights, attendance, season recap.
@@ -723,7 +723,7 @@ async function seasonView(sessions, pname, tname) {
       h('div', { class: 'card' },
         h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, label), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
           `From results${docs.length ? ` and ${docs.length} tagged game${docs.length === 1 ? '' : 's'}` : ''}; nothing here comes from ratings, so it's fine to share. Best record needs ${MIN_GAMES_FOR_RECORD}+ games.`)),
-          h('button', { class: 'sm', disabled: !rec.games, onclick: async () => sharePng(blob ?? await ready, file) }, 'Share image')),
+          h('button', { class: 'sm', disabled: !rec.games, onclick: async () => previewPng(blob ?? await ready, file) }, 'Share image')),
         rec.awards.length || rec.closest ? h('ul', { class: 'awards' },
           rec.awards.map(a => h('li', {}, h('b', {}, a.title), h('span', {}, names(a.who).join(', ')), h('span', { class: 'muted small' }, a.detail))),
           rec.closest && h('li', {}, h('b', {}, 'Closest game'), h('span', {}, `${rec.closest.names.join(' v ')}, ${rec.closest.score_a}–${rec.closest.score_b}`), h('span', { class: 'muted small' }, dayTitle(rec.closest.played_on))))
