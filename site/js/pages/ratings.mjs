@@ -124,6 +124,18 @@ export async function ratingsPage() {
     all && extra);
 }
 
+// A card that folds shut by tapping its title. Open or shut is remembered on this device; open the first time.
+function foldCard(key, title, ...kids) {
+  const store = `setme-fold-${key}`;
+  let open = true;
+  try { open = localStorage.getItem(store) !== 'shut'; } catch { /* storage blocked */ }
+  const body = h('div', { class: 'fold-body' }, ...kids);
+  const card = h('details', { class: 'card fold', open }, h('summary', {}, h('h3', {}, title)), body);
+  card.addEventListener('toggle', () => { try { localStorage.setItem(store, card.open ? 'open' : 'shut'); } catch { /* ignore */ } });
+  card.body = body;
+  return card;
+}
+
 // Super only: who has been rated by how many people, and how much of the group each rater covers. One rater's view
 // of a player swings the combined number; two or more (with leans taken out) settle it.
 function coverageCard(players, ratings, short) {
@@ -135,7 +147,7 @@ function coverageCard(players, ratings, short) {
   const raters = [...new Set(ratings.map(r => r.rater_id))];
   const covers = raters.map(rid => ({ rid, n: players.filter(p => by.get(p.id).has(rid)).length })).sort((a, b) => b.n - a.n);
   const anchors = players.filter(p => p.anchor);
-  return h('div', { class: 'card' }, h('h3', {}, 'Coverage'),
+  return foldCard('coverage', 'Coverage',
     h('p', { class: 'muted small' }, 'How many people have rated each player. Players with one rater or none show up on everyone\'s Rate page under ', h('b', {}, 'Worth a fresh look'), '.'),
     h('div', { class: 'tiles' }, buckets.map(b => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, String(b.count)), h('b', {}, b.label), h('span', { class: 'muted small' }, 'players')))),
     thin.length > 0 && h('div', { class: 'chips', style: 'margin:10px 0' }, thin.map(p => h('span', { class: `chip plain${n(p.id) ? '' : ' off'}` }, p.name, h('span', { class: 'muted small' }, ` · ${n(p.id)}`), p.playing && h('span', { class: 'badge on', style: 'margin-left:6px' }, 'Playing')))),
@@ -147,21 +159,21 @@ function coverageCard(players, ratings, short) {
 // Super only: per-player numbers from tagged games, and SetMe's ratings worked out from them (see statRatings in
 // stats.mjs). SetMe is a rater account of its own, so its ratings are combined, picked and charted like anyone's.
 function matchStatsCard(players, ratings) {
-  const el = h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Loading…'));
+  const el = foldCard('match-stats', 'Match stats', h('p', { class: 'muted' }, 'Loading…'));
   (async () => {
     let rows, tagged;
     try {
       [rows, [{ games: tagged }]] = await Promise.all([q(sb.from('player_stats').select('*')), q(sb.from('tagged_games').select('games'))]);
-    } catch { return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
-    if (!tagged) return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
+    } catch { return el.body.replaceChildren(h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
+    if (!tagged) return el.body.replaceChildren(h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
     const tallies = tallyFromCounts(rows);
     const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`, num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
     // [sort key, header, hover text]. Tap a header to sort by it (numbers high to low first); tap again to flip.
     const COLS = [['name', 'Player'], ['games', 'Games'], ['serves', 'Serves'], ['aceRate', 'Aces', 'Ace %'], ['serveErr', 'Srv err', 'Serve errors'],
-      ['passAvg', 'Pass', 'Pass average (0–3)'], ['attacks', 'Attacks'], ['killRate', 'Kill', 'Kill %'],
+      ['passAvg', 'Pass', 'Pass average (0–3)'], ['setAvg', 'Set', 'Set average (0–3)'], ['attacks', 'Attacks'], ['killRate', 'Kill', 'Kill %'],
       ['attackEff', 'Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['stuffsPerGame', 'Blk/g', 'Stuff blocks per game'], ['digsPerGame', 'Dig/g', 'Digs per game']];
     const list = players.filter(p => tallies.has(p.id)).map(p => ({ p, m: metrics(tallies.get(p.id)) }));
-    const val = (r, k) => k === 'name' ? r.p.name : k === 'passAvg' && !r.m.passes ? null : r.m[k] ?? null;
+    const val = (r, k) => k === 'name' ? r.p.name : (k === 'passAvg' && !r.m.passes) || (k === 'setAvg' && !r.m.sets) ? null : r.m[k] ?? null;
     let sortKey = 'name', desc = false;
     const heads = COLS.map(([k, t, title]) => {
       const th = h('th', { class: k === 'name' ? 'sortable' : 'num sortable', title, tabindex: 0, 'aria-sort': 'none', 'data-label': t });
@@ -185,7 +197,7 @@ function matchStatsCard(players, ratings) {
         th.replaceChildren(COLS[i][1], h('span', { class: 'arrow' }, k === sortKey ? (desc ? ' ↓' : ' ↑') : ''));
       });
       tbody.replaceChildren(...list.map(({ p, m }) => h('tr', {}, h('td', {}, p.name),
-        [m.games, m.serves, pct(m.aceRate), pct(m.serveErr), m.passes ? `${num(m.passAvg)} (${m.passes})` : '–', m.attacks, pct(m.killRate), num(m.attackEff),
+        [m.games, m.serves, pct(m.aceRate), pct(m.serveErr), m.passes ? `${num(m.passAvg)} (${m.passes})` : '–', m.sets ? `${num(m.setAvg)} (${m.sets})` : '–', m.attacks, pct(m.killRate), num(m.attackEff),
           num(m.stuffsPerGame), num(m.digsPerGame)].map(v => h('td', { class: 'num' }, String(v))))));
     };
     draw();
@@ -224,26 +236,47 @@ function matchStatsCard(players, ratings) {
           `${name.get(c.pid)} · ${SHORT[c.s]} ${fmt(c.old)} → ${fmt(c.new)}`))) : h('p', { class: 'muted' }, 'SetMe\'s ratings already match the stats.'),
         h('div', { class: 'row', style: 'margin-top:10px' }, apply));
     };
-    el.replaceChildren(
-      h('h3', {}, 'Match stats'),
-      h('p', { class: 'muted small' }, `From ${tagged} tagged game${tagged === 1 ? '' : 's'}. Only you can see these.`),
+    el.body.replaceChildren(
+      h('p', { class: 'muted small' }, `From ${tagged} tagged game${tagged === 1 ? '' : 's'}. Only you can see these. Tap a heading to sort.`),
       h('div', { class: 'scroll' }, table),
+      statsKey(),
       h('h3', { style: 'margin-top:18px' }, 'SetMe\'s ratings'),
       h('p', { class: 'muted small' }, 'SetMe rates players from these stats as a rater of its own: ',
         Object.entries(SKILL_STATS).map(([s, d]) => `${LABEL[s]} from ${d.label.toLowerCase()}`).join(', '),
         '. Small samples are pulled toward the average, then players are ranked and spread over 0 to 1. Pick SetMe in Ratings from to see or use them.'),
       h('button', { class: 'ghost sm', onclick: preview }, 'Preview changes'), out);
-  })().catch(e => el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'warn' }, e.message)));
+  })().catch(e => el.body.replaceChildren(h('p', { class: 'warn' }, e.message)));
   return el;
+}
+
+// What each Match stats column means, folded under the table.
+function statsKey() {
+  const rows = [
+    ['Games', 'Tagged games they played in.'],
+    ['Serves', 'Serves tagged.'],
+    ['Aces', 'Share of their serves that were aces.'],
+    ['Srv err', 'Share of their serves that were errors (lower is better).'],
+    ['Pass', 'Average pass grade: 0 error, 1 poor, 2 good, 3 perfect. The number in brackets is how many passes it comes from, so 2.38 (8) is an average of 2.38 over 8 passes.'],
+    ['Set', 'Average set grade, the same way: 0 error, 1 poor, 2 good, 3 perfect, with how many sets in brackets.'],
+    ['Attacks', 'Attacks tagged.'],
+    ['Kill', 'Share of their attacks that won the point.'],
+    ['Eff', 'Attack efficiency: kills minus errors and blocked attacks, divided by attacks. From −1 to 1; 0 means as many attacks lost the point as won it.'],
+    ['Blk/g', 'Stuff blocks (block won the point) per game.'],
+    ['Dig/g', 'Digs that kept the ball up per game.'],
+  ];
+  return h('details', { class: 'stats-key' }, h('summary', {}, 'What the columns mean'),
+    h('dl', {}, rows.flatMap(([t, d]) => [h('dt', {}, t), h('dd', {}, d)])),
+    h('p', { class: 'muted small' }, 'Small numbers move a lot: one bad pass out of 8 shifts the average by more than 0.1. SetMe only rates a skill from these once a player has enough: ',
+      Object.values(SKILL_STATS).map(d => `${d.min}+ ${d.label === 'Blocks per game' || d.label === 'Digs per game' ? 'games' : 'attempts'} for ${d.label.toLowerCase()}`).join(', '), '.'));
 }
 
 // Who changed what and when, newest first. Changes one person made to one player within a few minutes show as one entry.
 // Super: filtered to the raters picked above. Anyone else: their own changes only, without rater names.
 // Narrowed to one player when their name is tapped in the table.
 function historyCard(changeLog, players, ratings, allRaters, pname, short, all) {
-  const el = h('div', { class: 'card' }, h('h3', {}, 'Rating history'));
+  const el = foldCard('history', 'Rating history');
   if (!changeLog) {
-    el.append(h('p', { class: 'muted' }, all ? 'Not set up yet: run the rating history SQL from the README in Supabase.' : 'Not available yet.'));
+    el.body.append(h('p', { class: 'muted' }, all ? 'Not set up yet: run the rating history SQL from the README in Supabase.' : 'Not available yet.'));
     return { el, draw() {}, show() {} };
   }
   const known = new Map(players.map(p => [p.id, p]));
@@ -311,11 +344,11 @@ function historyCard(changeLog, players, ratings, allRaters, pname, short, all) 
     more.hidden = groups.length <= limit;
     paintChart();
   };
-  el.append(
+  el.body.append(
     h('p', { class: 'muted small' }, 'How many ratings changed each day, or every player\'s total over time. Pick a player (or tap their name in the table) to chart just their ratings. Recorded from when history was switched on.'),
     h('div', { class: 'toolbar' }, h('div', { class: 'sort' }, h('span', {}, 'Player'), playerBox.el)),
     chartWrap, list, more);
-  const show = id => { player = String(id); playerBox.set(player); limit = 30; paint(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  const show = id => { player = String(id); playerBox.set(player); limit = 30; paint(); el.open = true; el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   return { el, draw(ids) { used = ids; paint(); }, show };
 }
 
@@ -714,8 +747,7 @@ function raterCard(raters, offsets, stats, short) {
       h('td', { class: 'num' }, misses.length ? fmt(avg(misses)) : '—'),
       h('td', { class: 'num muted' }, String(Math.max(0, ...RATED.map(s => st.shared[s])))));
   });
-  return h('div', { class: 'card' },
-    h('h3', {}, 'How each rater rates'),
+  return foldCard('leans', 'How each rater rates',
     h('p', { class: 'muted small' },
       h('b', { class: 'lean-up' }, '+'), ' rates higher than the group on the same players, ', h('b', { class: 'lean-down' }, '−'), ' lower. ',
       'Combined ratings take this out. ', h('b', {}, 'Off by'), ' is how far they typically land from the group after that; ',
@@ -730,8 +762,7 @@ function raterCard(raters, offsets, stats, short) {
 
 // Players whose raters are a point or more apart, with each rater's total and, on tap, what they entered per skill.
 function disagreeCard(disagreements, short) {
-  return h('div', { class: 'card' },
-    h('h3', {}, 'Raters disagree'),
+  return foldCard('disagree', 'Raters disagree',
     h('p', { class: 'muted small' }, 'Totals after each rater\'s lean is taken out, so these are real differences of opinion. Gap of 1 or more.'),
     disagreements.length ? h('div', { class: 'disagree' }, disagreements.map(d => h('div', { class: 'disagree-item' },
       h('div', { class: 'disagree-head' }, h('b', {}, d.name), h('span', { class: 'badge' }, `Gap ${fmt(d.gap)}`)),
