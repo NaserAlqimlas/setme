@@ -551,10 +551,14 @@ async function tagView(g, n, pname, tname, back) {
       h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
       h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
       scoreEl, gameRecap.btn),
-    h('div', { class: 'card' }, videoBox, sourceRow,
-      h('p', { class: 'muted small' }, 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear')),
-    h('div', { class: 'card' }, pad),
-    h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list));
+    // Wide screens: the video stays on the left while the panels scroll on the right.
+    h('div', { class: 'tag-cols' },
+      h('div', { class: 'tag-left' },
+        h('div', { class: 'card' }, videoBox, sourceRow,
+          h('p', { class: 'muted small' }, 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear'))),
+      h('div', { class: 'tag-right' },
+        h('div', { class: 'card' }, pad),
+        h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));
   return wrap;
 }
 

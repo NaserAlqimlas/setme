@@ -461,6 +461,16 @@ tr.dim td { color: var(--muted); }
 .tag-score { display: flex; align-items: center; gap: 10px; font-weight: 600; }
 .tag-score > span { display: inline-flex; align-items: center; gap: 8px; }
 .tag-score b { font-family: 'Barlow Condensed', sans-serif; font-size: 2rem; line-height: 1; color: var(--tc, var(--fg)); font-variant-numeric: tabular-nums; }
+/* Tag screen: wider than the page column on big screens, video left (sticky) and panels right. */
+.tag-cols { display: flex; flex-direction: column; gap: 16px; }
+.tag-left, .tag-right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.tag-left > .card, .tag-right > .card { margin: 0; }
+@media (min-width: 1000px) {
+  .tagger { --tag-w: min(1640px, calc(100vw - 48px)); width: var(--tag-w); margin-left: calc((100% - var(--tag-w)) / 2); }
+  .tag-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(380px, 1fr); align-items: start; }
+  .tag-left { position: sticky; top: calc(var(--top-h, 60px) + 12px); }
+  .tag-left .tag-video video, .tag-left .tag-video .yt iframe { max-height: calc(100vh - var(--top-h, 60px) - 170px); }
+}
 .tag-video video, .tag-video .yt iframe { display: block; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; border: 0; }
 .tag-source { flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .tag-source input[type=url] { flex: 1 1 200px; min-width: 0; }
