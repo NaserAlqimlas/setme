@@ -1,4 +1,4 @@
-import { ask, avatar, canProfile, fmt, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, canProfile, fmt, LABEL, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, teamNames, weightedTotal } from '../teams.mjs';
 import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
 import { metrics, score, tallyFromCounts } from '../stats.mjs';
@@ -6,6 +6,7 @@ import { attendance, record } from '../club.mjs';
 import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed } from './ratings.mjs';
+import { GUIDE, STEPS } from './rate.mjs';
 
 // Club pages: Sign up, Lineup (players and raters) and player profiles.
 
@@ -131,6 +132,61 @@ export async function lineupPage() {
 // ---------- player profile ----------
 // Everything about one player in one place. Organizers and super: anyone; everyone else: the player their account is
 // linked to. Game days and record for all of those; ratings, results against ratings and match stats for the super only.
+// Your own rating, on your own profile only: everyone's ratings of you averaged by the server (my-rating), with
+// each day it moved. Never who rated you or how many did.
+const WORDS = [[0, 'unwilling or unable'], [.25, 'below average'], [.5, 'average'], [.75, 'excels'], [1, 'top of the group']];
+const wordFor = v => WORDS.reduce((a, b) => Math.abs(b[0] - v) < Math.abs(a[0] - v) ? b : a)[1];
+const shortDate = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: y === new Date().getFullYear() ? undefined : 'numeric' }); };
+const moved = (a, b) => { const d = Math.round((b - a) * 100) / 100; return d > 0 ? `up ${fmt(d)}` : d < 0 ? `down ${fmt(-d)}` : 'no change'; };
+async function ownRatingCard(player) {
+  const card = h('div', { class: 'card own-rating' }, h('h3', {}, 'Your rating'));
+  let res;
+  try { res = await callFn('my-rating', {}); }
+  catch { card.append(h('p', { class: 'muted' }, 'Your rating couldn\'t load right now. Try again later.')); return card; }
+  if (!res?.linked) return null;
+  const { current, history } = res;
+  const skills = ['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'].filter(s => forPlayer(s, player));
+  card.append(h('p', { class: 'muted small' }, 'The average of what everyone who rated you gave, from 0 to 1. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.'));
+  if (current.overall == null && !skills.some(s => current.skills[s] != null)) {
+    card.append(h('p', {}, 'Not enough ratings yet.'));
+    return card;
+  }
+  const prev = history.length > 1 ? history[history.length - 2] : null;
+  // append() prints false, so drop the parts that don't apply.
+  card.append(...[
+    current.overall != null && h('div', { class: 'own-overall' }, h('span', { class: 'stat' }, fmt(current.overall)),
+      h('div', {}, h('b', {}, 'Overall'), h('span', { class: 'muted small' }, ` · ${wordFor(current.overall)}`),
+        prev?.overall != null && prev.overall !== current.overall && h('p', { class: 'small muted', style: 'margin:2px 0 0' }, `${moved(prev.overall, current.overall)} since ${prev.date ? shortDate(prev.date) : 'before'}`))),
+    h('ul', { class: 'own-skills' }, skills.map(s => {
+      const v = current.skills[s];
+      // The rating guide for this skill, with the level nearest their average marked.
+      const [what, ...steps] = GUIDE[s];
+      const here = v == null ? -1 : Math.round(v * 4);
+      return h('li', {}, h('details', {},
+        h('summary', {}, h('span', {}, LABEL[s]),
+          v == null ? h('span', { class: 'muted small' }, 'Not enough ratings yet')
+            : [h('span', { class: 'bar', 'aria-hidden': 'true' }, h('span', { style: `width:${v * 100}%` })), h('b', {}, fmt(v))]),
+        h('div', { class: 'own-guide' }, h('p', {}, what),
+          h('dl', {}, steps.flatMap((text, i) => [h('dt', { class: i === here ? 'here' : null }, STEPS[i]),
+            h('dd', { class: i === here ? 'here' : null }, text, i === here && h('span', { class: 'muted small' }, ' · closest to you'))])))));
+    }))].filter(Boolean));
+  // Each day it moved, newest first: overall and the skills that changed.
+  const changes = history.map((p, i) => ({ p, before: history[i - 1] })).filter(x => x.before).reverse();
+  if (changes.length) {
+    const line = ({ p, before }) => {
+      const what = skills.filter(s => p.skills[s] !== before.skills[s] && p.skills[s] != null && before.skills[s] != null)
+        .map(s => `${LABEL[s]} ${moved(before.skills[s], p.skills[s])}`);
+      return h('li', {}, h('b', {}, p.date ? shortDate(p.date) : ''),
+        h('span', {}, p.overall != null && before.overall != null ? `Overall ${fmt(p.overall)} (${moved(before.overall, p.overall)})` : p.overall != null ? `Overall ${fmt(p.overall)}` : 'Skills changed'),
+        what.length > 0 && h('span', { class: 'muted small' }, what.join(' · ')));
+    };
+    const first = changes.slice(0, 5), rest = changes.slice(5);
+    card.append(...[h('h4', {}, 'How it changed'), h('ul', { class: 'own-changes' }, first.map(line)),
+      rest.length > 0 && h('details', {}, h('summary', { class: 'small' }, `${rest.length} earlier change${rest.length === 1 ? '' : 's'}`), h('ul', { class: 'own-changes' }, rest.map(line)))].filter(Boolean));
+  } else card.append(h('p', { class: 'muted small' }, 'No changes yet.'));
+  return card;
+}
+
 export async function profilePage(id) {
   if (!canProfile(id)) return h('div', { class: 'card empty' }, 'You can only see your own profile.');
   const [player] = await q(sb.from('players').select('*').eq('id', id));
@@ -140,6 +196,7 @@ export async function profilePage(id) {
     h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
       player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(', ') || ' '))));
   const parts = [head];
+  if (id === me.player_id) parts.push(await ownRatingCard(player));
 
   // Game days and games (player_games works for the player themself, organizers and super).
   let days = null;

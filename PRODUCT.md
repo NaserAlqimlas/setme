@@ -12,7 +12,7 @@ web
 
 **Raters.** Trusted members who rate each player on six skills, privately, in occasional batches.
 
-**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate and never see ratings.
+**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them.
 
 ## Product Purpose
 
@@ -22,7 +22,7 @@ Success: games decided by a few points rather than blowouts, a small gap between
 
 ## Positioning
 
-Teams are balanced from several raters' private, per-skill ratings, combined with each rater's lean taken out, and steered away from last weeks' teammates. Results feed back as a check on the ratings. Ratings are never shown to the people rated.
+Teams are balanced from several raters' private, per-skill ratings, combined with each rater's lean taken out, and steered away from last weeks' teammates. Results feed back as a check on the ratings. The people rated see only their own average (once at least two people have rated a skill), never who rated them or anyone else's.
 
 ## Operating Context
 
@@ -34,7 +34,7 @@ Teams are balanced from several raters' private, per-skill ratings, combined wit
 ## Capabilities and Constraints
 
 - Pages: Rate, Sign up, Players, Teams, Scores (Games, Insights, Attendance, Season), All ratings / My ratings, Users, Lineup, Me (player profile).
-- Roles: player, rater, organizer, super. Only the super sees individual and combined ratings; the database enforces it.
+- Roles: player, rater, organizer, super. Only the super sees individual and combined ratings; the database enforces it. A player's own averages come from the my-rating function, which returns numbers only.
 - Static ES-module site on Netlify with no build step; Supabase (Postgres with row-level security, auth); Netlify Functions for team building, invites and the rating queue.
 - Database changes ship as SQL files the super runs by hand. They must be safe to run again, and the site must keep working before they run.
 - Accounts are linked to players by hand by the super; some members can't do it themselves.
@@ -54,7 +54,7 @@ Name: SetMe. Existing assets: the ball mark in `site/icon.svg` and the inline sy
 
 ## Product Principles
 
-1. Ratings are private. Players see results (attendance, wins, scores), never a number about their ability.
+1. Ratings are private. Players see results (attendance, wins, scores) and their own average rating, never who rated them, any one rater's numbers, or anyone else's.
 2. WhatsApp comes first. SetMe follows the group's list rather than asking everyone to change habits.
 3. Game day is fast for whoever is holding the phone, and safe to hand between organizers mid-day.
 4. Every upgrade is optional until it's run; the site keeps working as it is.

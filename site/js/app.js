@@ -64,12 +64,18 @@ async function render() {
   } catch {
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
-  const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me));
+  // Players (linked to a player) start on Me, then Lineup, then Sign up, which few use. Everyone else keeps PAGES order.
+  const playerFirst = me.role === 'player' && !!me.player_id;
+  const PLAYER_ORDER = ['lineup', 'signup'];
+  const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me))
+    .sort((a, b) => playerFirst ? PLAYER_ORDER.indexOf(a.id) - PLAYER_ORDER.indexOf(b.id) : 0);
   // #player/12 opens a player's profile (not in the nav, except your own as "Me").
-  const profileId = Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || null;
+  const profileId = Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || (playerFirst && !pages.some(p => '#' + p.id === location.hash) ? me.player_id : null);
   const current = profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
+  const meLink = () => nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
+  if (playerFirst) meLink();
   if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
-  if (me.player_id) nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
+  if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
   nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   app.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));

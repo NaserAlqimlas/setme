@@ -57,3 +57,9 @@
 - Why: Organizers (phone and laptop) and the super do the work; several organizers share a game day.
 - Rejected: Players as the primary audience; a single organizer on a phone.
 - Rests on: Answer during /impeccable init, 2026-11-05.
+
+## 2026-11-08 · Players see their own average rating and how it changed
+- Decided by: the designer
+- Why: Players want to know where they stand and whether they're improving.
+- Rejected: Overall only (too little to act on); month-by-month or last-month-only change (the designer chose every change, grouped by day); no minimum or three raters before showing (the designer chose two).
+- Rests on: Answers on 2026-11-08. Reverses "Players never see ratings" (PRODUCT.md principle 1, 2026-11-05). Raters are told on the Rate page.
