@@ -10,6 +10,9 @@ import { signed, svg } from './ratings.mjs';
 // Scores page (organizers): games and rounds, match stats tagging, insights, attendance, season recap.
 
 // ---------- scores (organizers) ----------
+// Tagging closes this many days after a game day, except for the super (the database enforces it too: tag_window.sql).
+export const TAG_DAYS = 3;
+export const tagClosed = (playedOn, now = today()) => me.role !== 'super' && (Date.parse(now) - Date.parse(playedOn)) / 864e5 > TAG_DAYS;
 
 let scoresTab = 'games', scoresDay = null;
 // Set when a new round starts on Scores with the same teams, so the page comes back with Change players open.
@@ -65,7 +68,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
     .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
   const tagGame = games.find(g => g.id === taggingGame);
-  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); })];
+  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); }, tagClosed(ses.played_on))];
   taggingGame = null;
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
@@ -255,6 +258,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
         h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
+        tagClosed(ses.played_on) ? h('button', { class: 'ghost sm', disabled: !tags?.get(g.id), title: `Tagging closes ${TAG_DAYS} days after the game day${tags?.get(g.id) ? '; the tags can still be viewed' : ''}`,
+          onclick: () => { taggingGame = g.id; render(); } }, tags?.get(g.id) ? `View tags (${tags.get(g.id)})` : 'Tagging closed') :
         h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
           if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
           taggingGame = g.id; render();
@@ -344,7 +349,8 @@ async function youtubeVideo(box, id) {
   return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy() };
 }
 
-async function tagView(g, n, pname, tname, back) {
+// ro (read only): tagging has closed for this game day; the tags, video and recap can be looked at, not changed.
+async function tagView(g, n, pname, tname, back, ro = false) {
   const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
   // What the database has: each rally as last saved (to send only what changed), and the video.
   const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
@@ -353,7 +359,7 @@ async function tagView(g, n, pname, tname, back) {
   let savedVideo = JSON.stringify(videoOf());
   const draftKey = `setme-tags-${g.id}`;
   let draft = null;
-  try { draft = JSON.parse(localStorage.getItem(draftKey)); } catch { /* no draft */ }
+  if (!ro) try { draft = JSON.parse(localStorage.getItem(draftKey)); } catch { /* no draft */ }
   // Changes on this device that never reached the database: apply them on top of what's saved. Rallies someone
   // else added since stay; only rallies this device knew about and deleted are deleted.
   let rallies = stored;
@@ -376,7 +382,7 @@ async function tagView(g, n, pname, tname, back) {
   const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
 
   // ----- saving -----
-  const status = h('span', { class: 'muted small tag-status' }, stored.length ? 'Saved' : '');
+  const status = h('span', { class: 'muted small tag-status' }, ro ? `Read only: tagging closes ${TAG_DAYS} days after the game day` : stored.length ? 'Saved' : '');
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
     await saving;
@@ -401,6 +407,7 @@ async function tagView(g, n, pname, tname, back) {
     await saving;
   };
   const changed = () => {
+    if (ro) return paint();
     dirty = true; status.textContent = 'Unsaved';
     try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
     clearTimeout(saveTimer); saveTimer = setTimeout(save, 1500);
@@ -511,21 +518,22 @@ async function tagView(g, n, pname, tname, back) {
         r.t != null && h('button', { class: 'ghost sm', onclick: () => player?.seek(r.t - 2), disabled: !player, title: 'Watch this rally' }, `▶ ${clock(r.t)}`),
         h('span', { class: 'muted small' }, `${name[r.serve]} served`),
         h('span', { class: 'grow' }),
+        ro ? h('span', { class: `chip plain point ${r.won ?? 'open'}`, style: r.won ? `--tc:${color[r.won]}` : null }, r.won ? `Point ${name[r.won]}` : 'In play') :
         h('button', { class: `chip plain point ${r.won ?? 'open'}`, style: r.won ? `--tc:${color[r.won]}` : null, title: 'Change who won the point',
           onclick: () => { snapshot(); r.won = r.won === 'a' ? 'b' : r.won === 'b' ? (i === rallies.length - 1 ? null : 'a') : 'a'; changed(); } },
           r.won ? `Point ${name[r.won]}` : 'In play'),
-        h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: async () => {
+        !ro && h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: async () => {
           if (!await ask(`Delete rally ${i + 1}?`, `Are you sure you want to delete this rally${r.touches.length ? ` and its ${r.touches.length} touch${r.touches.length === 1 ? '' : 'es'}` : ''}?`, 'Delete rally')) return;
           snapshot(); rallies.splice(i, 1); changed();
         } }, '×')),
       h('div', { class: 'chips' }, r.touches.map((t, j) => h('span', { class: `chip tag-touch ${endsRally(t.a, t.g) ?? ''}`, style: `--tc:${color[side(t.p)] ?? 'var(--muted)'}` },
         h('button', { type: 'button', class: 'touch-btn', onclick: () => t.t != null && player?.seek(t.t - 1) }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
-        h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
+        !ro && h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
     () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
-  const paint = () => { paintScore(); paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
+  const paint = () => { paintScore(); if (!ro) paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
   paint();
@@ -538,6 +546,7 @@ async function tagView(g, n, pname, tname, back) {
     const k = e.key.toLowerCase();
     if (k === ' ') { e.preventDefault(); player?.toggle(); }
     else if (k === 'arrowleft' || k === 'arrowright') { e.preventDefault(); player?.seek(player.now() + (k === 'arrowright' ? 1 : -1) * (e.shiftKey ? 5 : 2)); }
+    else if (ro) return;
     else if (k === 'escape') { sel = null; paintPad(); }
     else if (k === 'u') undo();
     else if (sel && /^[0-3]$/.test(k) && ACTIONS[sel.a].grades.some(x => x[0] === Number(k))) addTouch(sel.p, sel.a, Number(k));
@@ -555,9 +564,10 @@ async function tagView(g, n, pname, tname, back) {
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
         h('div', { class: 'card' }, videoBox, sourceRow,
-          h('p', { class: 'muted small' }, 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear'))),
+          h('p', { class: 'muted small' }, ro ? 'Keys: space play/pause · ← → skip 2 s · tap a rally or touch to watch it'
+            : 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear'))),
       h('div', { class: 'tag-right' },
-        h('div', { class: 'card' }, pad),
+        !ro && h('div', { class: 'card' }, pad),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));
   return wrap;
 }

@@ -69,3 +69,10 @@
 - Why: Players want to see what they did in tagged games, not just the organizers.
 - Rejected: Nothing offered instead; asked for directly.
 - Rests on: Request on 2026-11-08. Their own numbers only (aces, pass average, kills, attack efficiency, blocks, digs, and game by game), through the my-stats function; never anyone else's touches or names.
+
+## 2026-11-08 · Tagging closes 3 days after a game day, except for the super
+- Decided by: the designer
+- Why: Tags should be entered while the game is fresh; late edits change stats players already see.
+- Rejected: Nothing offered instead; asked for directly.
+- After that, organizers can still view a game's tags read-only (View tags).
+- Rests on: TAG_DAYS and tagClosed in site/js/pages/scores.mjs; tag_open and the rallies/touches write policies in supabase/tag_window.sql.

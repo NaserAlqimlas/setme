@@ -212,12 +212,31 @@ create index if not exists touches_player on public.touches (player_id, action);
 
 alter table public.rallies enable row level security;
 alter table public.touches enable row level security;
+-- Tagging window (also supabase/tag_window.sql): organizers edit tags up to 3 days after the game day, super any time.
+create or replace function public.tag_open(p_game bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.my_role() = 'super'
+      or (public.my_role() = 'organizer' and exists (
+            select 1 from public.games g join public.sessions s on s.id = g.session_id
+            where g.id = p_game and s.played_on >= current_date - 3));
+$$;
+
 drop policy if exists rallies_organizers on public.rallies;
-create policy rallies_organizers on public.rallies for all to authenticated
-  using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
+drop policy if exists rallies_read on public.rallies;
+drop policy if exists rallies_write on public.rallies;
+create policy rallies_read on public.rallies for select to authenticated
+  using (public.my_role() in ('organizer', 'super'));
+create policy rallies_write on public.rallies for all to authenticated
+  using (public.tag_open(game_id)) with check (public.tag_open(game_id));
+
 drop policy if exists touches_organizers on public.touches;
-create policy touches_organizers on public.touches for all to authenticated
-  using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
+drop policy if exists touches_read on public.touches;
+drop policy if exists touches_write on public.touches;
+create policy touches_read on public.touches for select to authenticated
+  using (public.my_role() in ('organizer', 'super'));
+create policy touches_write on public.touches for all to authenticated
+  using (exists (select 1 from public.rallies r where r.id = rally_id and public.tag_open(r.game_id)))
+  with check (exists (select 1 from public.rallies r where r.id = rally_id and public.tag_open(r.game_id)));
 
 -- Save a game's tags in one go: the rallies that changed (each with all its touches) and the ids of deleted ones.
 -- Runs as the caller, so the policies above still apply. All or nothing.

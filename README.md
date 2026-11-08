@@ -78,6 +78,8 @@ Scores: paste and run `supabase/scores.sql` (adds `sessions` and `games`). Until
 
 Match stats: paste and run `supabase/match_stats.sql` (adds `rallies`, `touches`, the `save_game_tags` function, the `player_stats` and `tagged_games` views, and video columns on `games`). Until then the Tag button on Scores says it needs the upgrade; everything else works.
 
+Tagging window: paste and run `supabase/tag_window.sql` after `match_stats.sql` (organizers can add or change a game's tags only up to 3 days after its game day; the super any time). Safe to run again. Until then the Tag button still closes after 3 days, but the database doesn't enforce it.
+
 Club features: paste and run `supabase/club.sql` (player role and account links, anchor players, sign-ups, Show to players, End the day, drafts, the activity log, and tighter rating rules so players can't rate). Safe to run again. Until then the site works as before: the new tabs stay hidden, and Drafts, Anchor, Show to players, End the day, linking and Activity don't appear. Already ran it before End the day was added? Run it again: past game days are marked as ended the first time.
 
 Rounds: paste and run `supabase/rounds.sql` after `scores.sql` and `club.sql` (adds `rounds`, a `round` column on `games`, the `start_round` and `undo_round` functions, and rounds on the Lineup page and player profiles). Ran it before profiles showed rounds? Run it again. Safe to run again. Until then a game day has one round, and saving new teams for a day with games replaces them, as before.
