@@ -6,8 +6,9 @@ import { ratingsExport, ratingsTemplate, readRatingsCsv } from '../csv.mjs';
 
 // ---------- rate (everyone) ----------
 // What each skill means, and what each step of the scale looks like for it.
-const STEPS = ['0', '.25', '.5', '.75', '1'];
-const GUIDE = {
+// Also shown on a player's own profile (Your rating), so they know what their numbers mean.
+export const STEPS = ['0', '.25', '.5', '.75', '1'];
+export const GUIDE = {
   receiving: ['Passing serves and digging attacks up to the setter.',
     'Can\'t control the ball; passes go anywhere.',
     'Gets easy serves up, but often off target or out of play.',
@@ -263,7 +264,7 @@ export async function ratePage() {
   const exportRatings = () => downloadCsv(ratingsExport(players, byPlayer), `setme-ratings-${new Date().toISOString().slice(0, 10)}.csv`);
 
   return h('div', {},
-    pageHead('Rate players', 'Only the site owner sees your ratings. Every tap saves.',
+    pageHead('Rate players', 'Players see only their own average, never who rated them. Every tap saves.',
       menu('Spreadsheet', [['Download a blank template', downloadTemplate], ['Import ratings from a file', () => fileInput.click()], ['Export my ratings', exportRatings]]), fileInput),
     importBox,
     h('div', { class: 'card' },

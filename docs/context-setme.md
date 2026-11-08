@@ -8,7 +8,7 @@
 
 **Raters.** Trusted members who rate each player on six skills, privately. Rate in occasional batches of about 26 players, not every game day. See only their own ratings.
 
-**Players.** Most of the group. Several are not technical. On phones only. Say they're coming to a game day, see the published teams and scores, and see their own attendance and record. They never rate and never see ratings.
+**Players.** Most of the group. Several are not technical. On phones only. Say they're coming to a game day, see the published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them.
 
 The group coordinates in WhatsApp, and the WhatsApp list of who's coming takes priority: many members won't sign up in SetMe. Sign up runs alongside it. A game day has about 24 players in 4 teams of 6, with mixed genders and a handful of setters. Games go to 25, or stop when time runs out.
 
@@ -39,7 +39,7 @@ An invite-only web app for one volleyball group: a static site on Netlify with a
 ## Ethical stance
 
 - Ratings are private. A rater sees only their own, and only the super sees individual and combined ratings. The database enforces this, not just the pages.
-- Players never see a number about their ability: no ratings, no team totals, no rank. They see results: attendance, wins and losses, scores.
+- Players see one number about their ability: their own average rating (per skill and overall, once at least two people have rated a skill) and each day it changed. Never who rated them, any one rater's numbers, team totals, rank, or anyone else's. They also see results: attendance, wins and losses, scores.
 - Teams and scores reach players only when an organizer publishes them.
 - No notifications, streaks, leaderboards of individuals by rating, or engagement metrics.
 - Data collected: name, email, gender (used only to spread women evenly), ratings, sign-ups, scores, and optional match-stat tags.

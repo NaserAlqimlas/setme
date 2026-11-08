@@ -67,7 +67,7 @@ export async function usersPage() {
   const setme = p => p.email === 'setme@setme.invalid';
 
   return h('div', {},
-    pageHead('Users', 'Players sign up and see published teams. Raters also rate. Organizers also run Players, Teams and Scores, but never see ratings.'),
+    pageHead('Users', 'Players sign up, see published teams and their own average rating. Raters also rate. Organizers also run Players, Teams and Scores, but never see ratings.'),
     h('form', { class: 'card row', onsubmit: invite }, name, email,
       h('div', { class: 'field' }, h('span', {}, 'As'), seg(roleOptions, inviteRole, v => { inviteRole = v; }, 'Invite as')),
       h('button', {}, 'Create invite link')),
