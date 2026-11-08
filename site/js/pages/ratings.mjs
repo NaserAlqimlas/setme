@@ -156,14 +156,40 @@ function matchStatsCard(players, ratings) {
     if (!tagged) return el.replaceChildren(h('h3', {}, 'Match stats'), h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
     const tallies = tallyFromCounts(rows);
     const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`, num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
-    const COLS = [['Player'], ['Games'], ['Serves'], ['Aces', 'Ace %'], ['Srv err', 'Serve errors'], ['Pass', 'Pass average (0–3)'], ['Attacks'], ['Kill', 'Kill %'],
-      ['Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['Blk/g', 'Stuff blocks per game'], ['Dig/g', 'Digs per game']];
+    // [sort key, header, hover text]. Tap a header to sort by it (numbers high to low first); tap again to flip.
+    const COLS = [['name', 'Player'], ['games', 'Games'], ['serves', 'Serves'], ['aceRate', 'Aces', 'Ace %'], ['serveErr', 'Srv err', 'Serve errors'],
+      ['passAvg', 'Pass', 'Pass average (0–3)'], ['attacks', 'Attacks'], ['killRate', 'Kill', 'Kill %'],
+      ['attackEff', 'Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['stuffsPerGame', 'Blk/g', 'Stuff blocks per game'], ['digsPerGame', 'Dig/g', 'Digs per game']];
     const list = players.filter(p => tallies.has(p.id)).map(p => ({ p, m: metrics(tallies.get(p.id)) }));
-    const table = stacked(h('table', {},
-      h('thead', {}, h('tr', {}, COLS.map(([t, title], i) => h('th', { class: i ? 'num' : null, title }, t)))),
-      h('tbody', {}, list.map(({ p, m }) => h('tr', {}, h('td', {}, p.name),
+    const val = (r, k) => k === 'name' ? r.p.name : k === 'passAvg' && !r.m.passes ? null : r.m[k] ?? null;
+    let sortKey = 'name', desc = false;
+    const heads = COLS.map(([k, t, title]) => {
+      const th = h('th', { class: k === 'name' ? 'sortable' : 'num sortable', title, tabindex: 0, 'aria-sort': 'none', 'data-label': t });
+      const pick = () => { desc = k === sortKey ? !desc : k !== 'name'; sortKey = k; draw(); };
+      th.onclick = pick;
+      th.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+      return th;
+    });
+    const tbody = h('tbody');
+    const draw = () => {
+      // No data (–) always sorts last, whichever way.
+      list.sort((a, b) => {
+        const x = val(a, sortKey), y = val(b, sortKey);
+        if (x == null || y == null) return (x == null) - (y == null) || a.p.name.localeCompare(b.p.name);
+        const c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+        return (desc ? -c : c) || a.p.name.localeCompare(b.p.name);
+      });
+      heads.forEach((th, i) => {
+        const k = COLS[i][0];
+        th.setAttribute('aria-sort', k === sortKey ? (desc ? 'descending' : 'ascending') : 'none');
+        th.replaceChildren(COLS[i][1], h('span', { class: 'arrow' }, k === sortKey ? (desc ? ' ↓' : ' ↑') : ''));
+      });
+      tbody.replaceChildren(...list.map(({ p, m }) => h('tr', {}, h('td', {}, p.name),
         [m.games, m.serves, pct(m.aceRate), pct(m.serveErr), m.passes ? `${num(m.passAvg)} (${m.passes})` : '–', m.attacks, pct(m.killRate), num(m.attackEff),
-          num(m.stuffsPerGame), num(m.digsPerGame)].map(v => h('td', { class: 'num' }, String(v))))))));
+          num(m.stuffsPerGame), num(m.digsPerGame)].map(v => h('td', { class: 'num' }, String(v))))));
+    };
+    draw();
+    const table = stacked(h('table', {}, h('thead', {}, h('tr', {}, heads)), tbody));
 
     // SetMe's ratings: preview the changes, then write them as the SetMe rater.
     const [setme] = await q(sb.from('profiles').select('id').eq('email', 'setme@setme.invalid'));
