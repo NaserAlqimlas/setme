@@ -514,7 +514,10 @@ async function tagView(g, n, pname, tname, back) {
         h('button', { class: `chip plain point ${r.won ?? 'open'}`, style: r.won ? `--tc:${color[r.won]}` : null, title: 'Change who won the point',
           onclick: () => { snapshot(); r.won = r.won === 'a' ? 'b' : r.won === 'b' ? (i === rallies.length - 1 ? null : 'a') : 'a'; changed(); } },
           r.won ? `Point ${name[r.won]}` : 'In play'),
-        h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: () => { snapshot(); rallies.splice(i, 1); changed(); } }, '×')),
+        h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: async () => {
+          if (!await ask(`Delete rally ${i + 1}?`, `Are you sure you want to delete this rally${r.touches.length ? ` and its ${r.touches.length} touch${r.touches.length === 1 ? '' : 'es'}` : ''}?`, 'Delete rally')) return;
+          snapshot(); rallies.splice(i, 1); changed();
+        } }, '×')),
       h('div', { class: 'chips' }, r.touches.map((t, j) => h('span', { class: `chip tag-touch ${endsRally(t.a, t.g) ?? ''}`, style: `--tc:${color[side(t.p)] ?? 'var(--muted)'}` },
         h('button', { type: 'button', class: 'touch-btn', onclick: () => t.t != null && player?.seek(t.t - 1) }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
         h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
