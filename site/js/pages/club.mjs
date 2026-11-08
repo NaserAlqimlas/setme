@@ -1,7 +1,7 @@
 import { ask, avatar, callFn, canProfile, fmt, LABEL, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, teamNames, weightedTotal } from '../teams.mjs';
 import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
-import { metrics, score, tallyFromCounts } from '../stats.mjs';
+import { gameTallies, metrics, score, tallyFromCounts } from '../stats.mjs';
 import { attendance, record } from '../club.mjs';
 import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
@@ -187,6 +187,45 @@ async function ownRatingCard(player) {
   return card;
 }
 
+// Match stats as tiles (Ratings page numbers for one player). m: metrics(tally).
+const num2 = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
+const statTiles = m => h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `${m.serves} serves`], [num2(m.passAvg), 'Pass average', `${m.passes} passes, 0–3`],
+  [pct(m.killRate), 'Kills', `${m.attacks} attacks`], [num2(m.attackEff), 'Attack efficiency', 'kills − errors − blocked'],
+  [num2(m.stuffsPerGame), 'Blocks a game'], [num2(m.digsPerGame), 'Digs a game']].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))));
+// One game in a line: what they did, counted.
+const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+function gameLine(c) {
+  const n = a => Object.values(c[a]).reduce((x, y) => x + y, 0);
+  const passAvg = n('pass') ? Object.entries(c.pass).reduce((s, [g, k]) => s + g * k, 0) / n('pass') : null;
+  return [
+    n('serve') && `${plural(n('serve'), 'serve')}${c.serve[3] ? ` (${plural(c.serve[3], 'ace')})` : ''}${c.serve[0] ? `, ${c.serve[0]} missed` : ''}`,
+    n('pass') && `${plural(n('pass'), 'pass', 'passes')}, average ${num2(passAvg)}`,
+    n('set') && plural(n('set'), 'set'),
+    n('attack') && `${plural(n('attack'), 'attack')}${c.attack[3] ? ` (${plural(c.attack[3], 'kill')})` : ''}${c.attack[0] + c.attack[1] ? `, ${plural(c.attack[0] + c.attack[1], 'error')} or blocked` : ''}`,
+    c.block[3] && plural(c.block[3], 'block'),
+    c.dig[1] + c.dig[2] && plural(c.dig[1] + c.dig[2], 'dig'),
+  ].filter(Boolean).join(' · ') || 'No touches tagged';
+}
+// Your match stats, on your own profile only: what you did in tagged games (my-stats), all of them and game by game.
+// Hidden until a game you played in has been tagged.
+async function ownStatsCard() {
+  let res;
+  try { res = await callFn('my-stats', {}); }
+  catch { return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'), h('p', { class: 'muted' }, 'Your match stats couldn\'t load right now. Try again later.')); }
+  if (!res?.linked || !res.total || !res.games?.length) return null;
+  const m = metrics(tallyFromCounts([res.total]).get(res.total.player_id));
+  const games = gameTallies(res.touches ?? [], res.games);
+  const first = games.slice(0, 5), rest = games.slice(5);
+  const row = g => h('li', {}, h('b', {}, g.played_on ? dayTitle(g.played_on) : 'Game'),
+    g.mine != null && g.theirs != null && h('span', { class: 'muted small' }, ` · ${g.mine > g.theirs ? 'Won' : g.mine < g.theirs ? 'Lost' : 'Tied'} ${g.mine}–${g.theirs}`),
+    h('div', { class: 'small' }, gameLine(g.tally.counts)));
+  return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'),
+    h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these.`),
+    statTiles(m),
+    h('h4', {}, 'Game by game'), h('ul', { class: 'own-games' }, first.map(row)),
+    ...(rest.length ? [h('details', {}, h('summary', { class: 'small' }, `${plural(rest.length, 'earlier game')}`), h('ul', { class: 'own-games' }, rest.map(row)))] : []));
+}
+
 export async function profilePage(id) {
   if (!canProfile(id)) return h('div', { class: 'card empty' }, 'You can only see your own profile.');
   const [player] = await q(sb.from('players').select('*').eq('id', id));
@@ -196,7 +235,7 @@ export async function profilePage(id) {
     h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
       player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(', ') || ' '))));
   const parts = [head];
-  if (id === me.player_id) parts.push(await ownRatingCard(player));
+  if (id === me.player_id) parts.push(await ownRatingCard(player), await ownStatsCard());
 
   // Game days and games (player_games works for the player themself, organizers and super).
   let days = null;
@@ -283,14 +322,12 @@ export async function profilePage(id) {
           adj != null ? ` · Adjust for results adds ${signed(adj)}` : ''),
         h('p', { class: 'small' }, h('a', { href: '#ratings', onclick: () => openHistory(id) }, 'Rating history →'))));
     }
-    const statRow = await q(sb.from('player_stats').select('*').eq('player_id', id)).catch(() => []);
+    // Your own profile already has Your match stats.
+    const statRow = id === me.player_id ? [] : await q(sb.from('player_stats').select('*').eq('player_id', id)).catch(() => []);
     if (statRow.length) {
       const m = metrics(tallyFromCounts(statRow).get(id));
-      const num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
       parts.push(h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted small' }, `From ${m.games} tagged game${m.games === 1 ? '' : 's'}. Only you see these.`),
-        h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `${m.serves} serves`], [num(m.passAvg), 'Pass average', `${m.passes} passes, 0–3`],
-          [pct(m.killRate), 'Kills', `${m.attacks} attacks`], [num(m.attackEff), 'Attack efficiency', 'kills − errors − blocked'],
-          [num(m.stuffsPerGame), 'Blocks a game'], [num(m.digsPerGame), 'Digs a game']].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))))));
+        statTiles(m)));
     }
   }
   return h('div', {}, parts);

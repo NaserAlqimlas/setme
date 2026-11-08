@@ -12,7 +12,7 @@ web
 
 **Raters.** Trusted members who rate each player on six skills, privately, in occasional batches.
 
-**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them.
+**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them, and their own match stats from tagged games (totals and game by game).
 
 ## Product Purpose
 
@@ -54,7 +54,7 @@ Name: SetMe. Existing assets: the ball mark in `site/icon.svg` and the inline sy
 
 ## Product Principles
 
-1. Ratings are private. Players see results (attendance, wins, scores) and their own average rating, never who rated them, any one rater's numbers, or anyone else's.
+1. Ratings are private. Players see results (attendance, wins, scores), their own average rating and their own match stats, never who rated them, any one rater's numbers, or anyone else's.
 2. WhatsApp comes first. SetMe follows the group's list rather than asking everyone to change habits.
 3. Game day is fast for whoever is holding the phone, and safe to hand between organizers mid-day.
 4. Every upgrade is optional until it's run; the site keeps working as it is.

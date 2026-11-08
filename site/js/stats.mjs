@@ -81,6 +81,16 @@ export function tallyFromCounts(rows) {
     counts: Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, r[`${a}_${g}`] ?? 0]))])) }]));
 }
 
+// One player's tally for each game, from their own touches (my-stats). touches: [{ game_id, action, grade }];
+// games: [{ id, ... }] -> [{ ...game, tally }] in the same order, each tally counting that game once.
+export function gameTallies(touches, games) {
+  return games.map(g => {
+    const row = { player_id: 0, games: 1 };
+    for (const t of touches) if (t.game_id === g.id) { const k = `${t.action}_${t.grade}`; row[k] = (row[k] ?? 0) + 1; }
+    return { ...g, tally: tallyFromCounts([row]).get(0) };
+  });
+}
+
 // The same from games in memory, as the views would count them. docs: [{ game, rallies }]. A game counts as played
 // when the player was in its lineup and the game has at least one finished rally.
 export function tally(docs) {

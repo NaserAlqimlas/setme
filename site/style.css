@@ -705,4 +705,7 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .own-rating h4 { margin: 18px 0 6px; }
 .own-changes li { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 0; border-top: 1px solid var(--line); }
 .own-changes li > b { min-width: 4.5rem; }
+.own-games { list-style: none; margin: 0; padding: 0; }
+.own-games li { padding: 8px 0; border-top: 1px solid var(--line); }
+.own-games li > div { margin-top: 2px; }
 .own-changes li > .muted { flex-basis: 100%; }

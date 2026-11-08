@@ -63,3 +63,9 @@
 - Why: Players want to know where they stand and whether they're improving.
 - Rejected: Overall only (too little to act on); month-by-month or last-month-only change (the designer chose every change, grouped by day); no minimum or three raters before showing (the designer chose two).
 - Rests on: Answers on 2026-11-08. Reverses "Players never see ratings" (PRODUCT.md principle 1, 2026-11-05). Raters are told on the Rate page.
+
+## 2026-11-08 · Players see their own match stats
+- Decided by: the designer
+- Why: Players want to see what they did in tagged games, not just the organizers.
+- Rejected: Nothing offered instead; asked for directly.
+- Rests on: Request on 2026-11-08. Their own numbers only (aces, pass average, kills, attack efficiency, blocks, digs, and game by game), through the my-stats function; never anyone else's touches or names.
