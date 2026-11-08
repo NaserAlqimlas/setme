@@ -5,7 +5,7 @@ import { gameTallies, metrics, score, tallyFromCounts } from '../stats.mjs';
 import { attendance, record } from '../club.mjs';
 import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
-import { openHistory, signed } from './ratings.mjs';
+import { openHistory, signed, svg } from './ratings.mjs';
 import { GUIDE, STEPS } from './rate.mjs';
 
 // Club pages: Sign up, Lineup (players and raters) and player profiles.
@@ -137,6 +137,10 @@ export async function lineupPage() {
 const WORDS = [[0, 'unwilling or unable'], [.25, 'below average'], [.5, 'average'], [.75, 'excels'], [1, 'top of the group']];
 const wordFor = v => WORDS.reduce((a, b) => Math.abs(b[0] - v) < Math.abs(a[0] - v) ? b : a)[1];
 const shortDate = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: y === new Date().getFullYear() ? undefined : 'numeric' }); };
+// Total like everywhere else (All ratings, Teams): the five main skills added up, 0 to 5. null while any is hidden.
+// Weighted like the Weighted column: skills counted the way team building counts them (WEIGHTS), also 0 to 5.
+const totalOf = sk => SKILLS.every(s => sk[s] != null) ? Math.round(SKILLS.reduce((a, s) => a + sk[s], 0) * 100) / 100 : null;
+const weightedOf = sk => SKILLS.every(s => sk[s] != null) ? Math.round(weightedTotal(sk) * 100) / 100 : null;
 const moved = (a, b) => { const d = Math.round((b - a) * 100) / 100; return d > 0 ? `up ${fmt(d)}` : d < 0 ? `down ${fmt(-d)}` : 'no change'; };
 async function ownRatingCard(player) {
   const card = h('div', { class: 'card own-rating' }, h('h3', {}, 'Your rating'));
@@ -144,19 +148,22 @@ async function ownRatingCard(player) {
   try { res = await callFn('my-rating', {}); }
   catch { card.append(h('p', { class: 'muted' }, 'Your rating couldn\'t load right now. Try again later.')); return card; }
   if (!res?.linked) return null;
-  const { current, history } = res;
+  const { current: cur, history: hist } = res;
+  const withTotal = p => ({ ...p, overall: totalOf(p.skills), weighted: weightedOf(p.skills) });
+  const current = withTotal(cur), history = hist.map(withTotal);
   const skills = ['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'].filter(s => forPlayer(s, player));
-  card.append(h('p', { class: 'muted small' }, 'The average of what everyone who rated you gave, from 0 to 1. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.'));
+  card.append(h('p', { class: 'muted small' }, 'Each skill is the average of what everyone who rated you gave, from 0 to 1, Total adds up the five main skills (0 to 5), and Weighted counts them the way team building does (also 0 to 5), like everywhere else. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.'));
   if (current.overall == null && !skills.some(s => current.skills[s] != null)) {
     card.append(h('p', {}, 'Not enough ratings yet.'));
     return card;
   }
   const prev = history.length > 1 ? history[history.length - 2] : null;
   // append() prints false, so drop the parts that don't apply.
-  card.append(...[
-    current.overall != null && h('div', { class: 'own-overall' }, h('span', { class: 'stat' }, fmt(current.overall)),
-      h('div', {}, h('b', {}, 'Overall'), h('span', { class: 'muted small' }, ` · ${wordFor(current.overall)}`),
-        prev?.overall != null && prev.overall !== current.overall && h('p', { class: 'small muted', style: 'margin:2px 0 0' }, `${moved(prev.overall, current.overall)} since ${prev.date ? shortDate(prev.date) : 'before'}`))),
+  const now = h('div', { class: 'own-now' }, ...[
+    current.overall != null && h('div', { class: 'own-totals' }, [['overall', 'Total', ` of 5 · ${wordFor(current.overall / SKILLS.length)}`], ['weighted', 'Weighted', ' of 5 · as team building counts it']]
+      .map(([k, label, sub]) => h('div', { class: 'own-overall' }, h('span', { class: 'stat' }, fmt(current[k])),
+        h('div', {}, h('b', {}, label), h('span', { class: 'muted small' }, sub),
+          prev?.[k] != null && prev[k] !== current[k] && h('p', { class: 'small muted', style: 'margin:2px 0 0' }, `${moved(prev[k], current[k])} since ${prev.date ? shortDate(prev.date) : 'before'}`))))),
     h('ul', { class: 'own-skills' }, skills.map(s => {
       const v = current.skills[s];
       // The rating guide for this skill, with the level nearest their average marked.
@@ -170,6 +177,9 @@ async function ownRatingCard(player) {
           h('dl', {}, steps.flatMap((text, i) => [h('dt', { class: i === here ? 'here' : null }, STEPS[i]),
             h('dd', { class: i === here ? 'here' : null }, text, i === here && h('span', { class: 'muted small' }, ' · closest to you'))])))));
     }))].filter(Boolean));
+  // Wide screens: where they stand on the left, the chart beside it.
+  const chart = ownChart(history, skills);
+  card.append(chart ? h('div', { class: 'own-cols' }, now, h('div', { class: 'own-time' }, chart)) : now);
   // Each day it moved, newest first: overall and the skills that changed.
   const changes = history.map((p, i) => ({ p, before: history[i - 1] })).filter(x => x.before).reverse();
   if (changes.length) {
@@ -177,7 +187,7 @@ async function ownRatingCard(player) {
       const what = skills.filter(s => p.skills[s] !== before.skills[s] && p.skills[s] != null && before.skills[s] != null)
         .map(s => `${LABEL[s]} ${moved(before.skills[s], p.skills[s])}`);
       return h('li', {}, h('b', {}, p.date ? shortDate(p.date) : ''),
-        h('span', {}, p.overall != null && before.overall != null ? `Overall ${fmt(p.overall)} (${moved(before.overall, p.overall)})` : p.overall != null ? `Overall ${fmt(p.overall)}` : 'Skills changed'),
+        h('span', {}, p.overall != null && before.overall != null ? `Total ${fmt(p.overall)} (${moved(before.overall, p.overall)}) · weighted ${fmt(p.weighted)} (${moved(before.weighted, p.weighted)})` : p.overall != null ? `Total ${fmt(p.overall)} · weighted ${fmt(p.weighted)}` : 'Skills changed'),
         what.length > 0 && h('span', { class: 'muted small' }, what.join(' · ')));
     };
     const first = changes.slice(0, 5), rest = changes.slice(5);
@@ -185,6 +195,54 @@ async function ownRatingCard(player) {
       rest.length > 0 && h('details', {}, h('summary', { class: 'small' }, `${rest.length} earlier change${rest.length === 1 ? '' : 's'}`), h('ul', { class: 'own-changes' }, rest.map(line)))].filter(Boolean));
   } else card.append(h('p', { class: 'muted small' }, 'No changes yet.'));
   return card;
+}
+
+// Your rating over time: one point per day it changed, 0 to 1, like every other rating. Overall or one skill at a time. null while there
+// aren't two days to compare.
+function ownChart(history, skills) {
+  const pts = history.filter(p => p.date);
+  if (history.length < 2 || !pts.length) return null;
+  // How it stood before the first recorded change sits just before that day.
+  const rows = history.map(p => ({ ...p, t: p.date ? Date.parse(p.date) : Date.parse(pts[0].date) - Math.max(864e5, (Date.parse(pts.at(-1).date) - Date.parse(pts[0].date)) * .08) }));
+  const keys = [['overall', 'Total'], ['weighted', 'Weighted'], ...skills.filter(s => rows.some(r => r.skills[s] != null)).map(s => [s, LABEL[s]])];
+  let key = 'overall';
+  const val = (r, k) => k === 'overall' || k === 'weighted' ? r[k] : r.skills[k];
+  const plot = h('div', { class: 'chart-plot' });
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  const draw = () => {
+    const W = plot.clientWidth; if (!W) return;
+    const H = 200, M = { l: 30, r: 14, t: 10, b: 24 };
+    const t0 = rows[0].t, t1 = Math.max(rows.at(-1).t, t0 + 864e5);
+    const top = key === 'overall' || key === 'weighted' ? SKILLS.length : 1; // Total and Weighted run 0 to 5, a skill 0 to 1
+    const x = t => M.l + (t - t0) / (t1 - t0) * (W - M.l - M.r), y = v => M.t + (1 - v / top) * (H - M.t - M.b);
+    const shown = rows.filter(r => val(r, key) != null);
+    const label = r => r.date ? new Date(r.t).toLocaleDateString([], { day: 'numeric', month: 'short' }) : 'Before';
+    const grid = (top === 1 ? [0, .25, .5, .75, 1] : [0, 1, 2, 3, 4, 5]).map(v => svg('g', {}, svg('line', { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), class: 'grid' }),
+      svg('text', { x: M.l - 6, y: y(v), class: 'axis', 'text-anchor': 'end', 'dominant-baseline': 'middle' }, top === 1 ? fmt(v) : String(v))));
+    const ends = shown.length ? [shown[0], shown.at(-1)] : [];
+    const xAxis = ends.map((r, i) => svg('text', { x: x(r.t), y: H - 6, class: 'axis', 'text-anchor': i ? 'end' : 'start' }, label(r)));
+    const d = shown.map((r, i) => `${i ? 'L' : 'M'}${x(r.t)},${y(val(r, key))}`).join('');
+    const dots = shown.map(r => svg('circle', { cx: x(r.t), cy: y(val(r, key)), r: 4, class: 'dot', fill: 'var(--s1)' }));
+    const el = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${keys.find(k => k[0] === key)[1]} over time: ${shown.map(r => `${label(r)} ${fmt(val(r, key))}`).join(', ')}` },
+      grid, xAxis, svg('path', { d, class: 'line', stroke: 'var(--s1)' }), dots);
+    // Tap or hover: the nearest day's value.
+    el.onpointermove = e => {
+      if (!shown.length) return;
+      const px = e.clientX - el.getBoundingClientRect().left;
+      const r = shown.reduce((a, b) => Math.abs(x(b.t) - px) < Math.abs(x(a.t) - px) ? b : a);
+      tip.replaceChildren(h('div', { class: 'chart-tip-head' }, r.date ? label(r) : 'Before the first change'), h('div', { class: 'chart-tip-row' }, h('b', {}, fmt(val(r, key)))));
+      tip.hidden = false;
+      tip.style.left = `${Math.max(0, Math.min(W - tip.offsetWidth, x(r.t) > W / 2 ? x(r.t) - tip.offsetWidth - 12 : x(r.t) + 12))}px`;
+    };
+    el.onpointerleave = () => { tip.hidden = true; };
+    plot.replaceChildren(el, tip);
+  };
+  const box = h('div', { class: 'own-chart' },
+    h('div', { class: 'own-chart-head' }, h('h4', {}, 'Over time'),
+      keys.length > 1 && h('label', { class: 'sort' }, h('span', {}, 'Show'),
+        h('select', { onchange: e => { key = e.target.value; draw(); } }, keys.map(([k, t]) => h('option', { value: k }, t))))), plot);
+  new ResizeObserver(draw).observe(plot);
+  return box;
 }
 
 // Match stats as tiles (Ratings page numbers for one player). m: metrics(tally).
