@@ -1,4 +1,4 @@
-import { callFn, fmt, forPlayer, h, LABEL, me, pageHead, q, render, sb, seg, SHORT, stacked, toast, today, toggle } from '../ui.mjs';
+import { callFn, fmt, forPlayer, h, LABEL, me, pageHead, q, render, sb, seg, SHORT, stacked, toast, today } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, weightedTotal } from '../teams.mjs';
 import { metrics, MIN_PLAYERS, SKILL_STATS, statRatings, tallyFromCounts } from '../stats.mjs';
 import { raterPicker } from './teams.mjs';
@@ -53,7 +53,7 @@ export async function ratingsPage() {
 
   // Sorting: tap a column header, or use the dropdown (the only way on phones, where headers are hidden).
   const COLS = [['name', 'Player'], ...RATED.map(s => [s, LABEL[s]]), ['total', 'Total'], ['weighted', 'Weighted'], ...(all ? [['raters', 'Raters']] : [])];
-  let sortKey = 'name', desc = false, unratedOnly = false;
+  let sortKey = 'name', desc = false, show = 'all';
   const sortSel = h('select', { 'aria-label': 'Sort by' }, COLS.map(([k, t]) => h('option', { value: k }, t)));
   const dirBtn = h('button', { type: 'button', class: 'ghost sm sort-dir' });
   const heads = new Map(COLS.map(([k, t]) => [k, h('th', { class: k === 'name' ? 'sortable' : 'num sortable', tabindex: 0, 'aria-sort': 'none', 'data-label': RATED.includes(k) ? SHORT[k] : t })]));
@@ -80,7 +80,7 @@ export async function ratingsPage() {
         weighted: unknown ? null : weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))),
         raters: all && !rid ? combined.get(p.id).raters : null };
       return { p, vals, unknown, key };
-    }).filter(r => !unratedOnly || r.unknown);
+    }).filter(r => show === 'all' || (show === 'unrated') === r.unknown);
     // U (unknown) always sorts last, whichever way.
     rows.sort((a, b) => {
       const x = a.key[sortKey], y = b.key[sortKey];
@@ -96,7 +96,7 @@ export async function ratingsPage() {
       th.setAttribute('aria-sort', k === sortKey ? (desc ? 'descending' : 'ascending') : 'none');
       th.replaceChildren(k === 'name' || k === 'total' || k === 'weighted' || k === 'raters' ? label : SHORT[k], h('span', { class: 'arrow' }, k === sortKey ? (desc ? ' ↓' : ' ↑') : ''));
     }
-    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
+    if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, show === 'rated' ? 'Nobody is rated yet.' : all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
     body.replaceChildren(...rows.map(({ p, vals, key }) => {
       const guess = all && !rid && combined.get(p.id).guess;
       return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name),
@@ -116,7 +116,7 @@ export async function ratingsPage() {
     picker && h('div', { class: 'card' }, picker),
     h('div', { class: 'card toolbar' },
       h('label', { class: 'sort' }, h('span', {}, 'Sort by'), sortSel), dirBtn,
-      toggle(all ? 'Unrated only' : 'Not rated yet', false, v => { unratedOnly = v; draw(); })),
+      seg([['all', 'All'], ['rated', 'Rated'], ['unrated', all ? 'Unrated' : 'Not rated yet']], show, v => { show = v; draw(); }, 'Show')),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
     hist.el,
     all && coverageCard(players, ratings, short),
