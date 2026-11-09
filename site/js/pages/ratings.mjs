@@ -171,9 +171,9 @@ function matchStatsCard(players, ratings) {
     // [sort key, header, hover text]. Tap a header to sort by it (numbers high to low first); tap again to flip.
     const COLS = [['name', 'Player'], ['games', 'Games'], ['serves', 'Serves'], ['aceRate', 'Aces', 'Ace %'], ['serveErr', 'Srv err', 'Serve errors'],
       ['passAvg', 'Pass', 'Pass average (0–3)'], ['setAvg', 'Set', 'Set average (0–3)'], ['attacks', 'Attacks'], ['killRate', 'Kill', 'Kill %'],
-      ['attackEff', 'Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['stuffsPerGame', 'Blk/g', 'Stuff blocks per game'], ['digsPerGame', 'Dig/g', 'Digs per game']];
+      ['attackEff', 'Eff', 'Attack efficiency: (kills − errors − blocked) ÷ attacks'], ['stuffsPerGame', 'Blk/g', 'Stuff blocks per game'], ['digsPerGame', 'Dig/g', 'Digs per game'], ['digAvg', 'Dig', 'Dig average (0–3)']];
     const list = players.filter(p => tallies.has(p.id)).map(p => ({ p, m: metrics(tallies.get(p.id)) }));
-    const val = (r, k) => k === 'name' ? r.p.name : (k === 'passAvg' && !r.m.passes) || (k === 'setAvg' && !r.m.sets) ? null : r.m[k] ?? null;
+    const val = (r, k) => k === 'name' ? r.p.name : (k === 'passAvg' && !r.m.passes) || (k === 'setAvg' && !r.m.sets) || (k === 'digAvg' && !r.m.digs) ? null : r.m[k] ?? null;
     let sortKey = 'name', desc = false;
     const heads = COLS.map(([k, t, title]) => {
       const th = h('th', { class: k === 'name' ? 'sortable' : 'num sortable', title, tabindex: 0, 'aria-sort': 'none', 'data-label': t });
@@ -198,7 +198,7 @@ function matchStatsCard(players, ratings) {
       });
       tbody.replaceChildren(...list.map(({ p, m }) => h('tr', {}, h('td', {}, p.name),
         [m.games, m.serves, pct(m.aceRate), pct(m.serveErr), m.passes ? `${num(m.passAvg)} (${m.passes})` : '–', m.sets ? `${num(m.setAvg)} (${m.sets})` : '–', m.attacks, pct(m.killRate), num(m.attackEff),
-          num(m.stuffsPerGame), num(m.digsPerGame)].map(v => h('td', { class: 'num' }, String(v))))));
+          num(m.stuffsPerGame), num(m.digsPerGame), m.digs ? `${num(m.digAvg)} (${m.digs})` : '–'].map(v => h('td', { class: 'num' }, String(v))))));
     };
     draw();
     const table = stacked(h('table', {}, h('thead', {}, h('tr', {}, heads)), tbody));
@@ -262,7 +262,8 @@ function statsKey() {
     ['Kill', 'Share of their attacks that won the point.'],
     ['Eff', 'Attack efficiency: kills minus errors and blocked attacks, divided by attacks. From −1 to 1; 0 means as many attacks lost the point as won it.'],
     ['Blk/g', 'Stuff blocks (block won the point) per game.'],
-    ['Dig/g', 'Digs that kept the ball up per game.'],
+    ['Dig/g', 'Digs that kept the ball up (Up, Good or Perfect) per game.'],
+    ['Dig', 'Average dig grade: 0 miss, 1 up, 2 good, 3 perfect (right to the setter), with how many digs in brackets.'],
   ];
   return h('details', { class: 'stats-key' }, h('summary', {}, 'What the columns mean'),
     h('dl', {}, rows.flatMap(([t, d]) => [h('dt', {}, t), h('dd', {}, d)])),

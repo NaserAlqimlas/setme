@@ -13,7 +13,7 @@ export const ACTIONS = {
   set: { label: 'Set', key: 't', grades: [[0, 'Error', 'lost'], [1, 'Poor'], [2, 'Good'], [3, 'Perfect']] },
   attack: { label: 'Attack', key: 'a', grades: [[0, 'Error', 'lost'], [1, 'Blocked'], [2, 'In play'], [3, 'Kill', 'won']] },
   block: { label: 'Block', key: 'b', grades: [[0, 'Error', 'lost'], [1, 'Touch'], [3, 'Stuff', 'won']] },
-  dig: { label: 'Dig', key: 'd', grades: [[0, 'Miss', 'lost'], [1, 'Up'], [2, 'Good']] },
+  dig: { label: 'Dig', key: 'd', grades: [[0, 'Miss', 'lost'], [1, 'Up'], [2, 'Good'], [3, 'Perfect']] },
 };
 export const gradeLabel = (a, g) => ACTIONS[a]?.grades.find(x => x[0] === g)?.[1] ?? String(g);
 export const endsRally = (a, g) => ACTIONS[a]?.grades.find(x => x[0] === g)?.[2] ?? null;
@@ -75,7 +75,7 @@ export function teamSummary(rallies, game) {
 }
 
 // Per player: games played and how many of each action and grade, from the database view player_stats
-// (one row per player: { player_id, games, serve_0 … dig_2 }).
+// (one row per player: { player_id, games, serve_0 … dig_3 }). A column the view doesn't have yet counts as 0.
 export function tallyFromCounts(rows) {
   return new Map(rows.map(r => [r.player_id, { games: r.games ?? 0,
     counts: Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, r[`${a}_${g}`] ?? 0]))])) }]));
@@ -125,7 +125,8 @@ export function metrics(t) {
     attacks: n('attack'), killRate: rate('attack', 3),
     attackEff: n('attack') ? (c.attack[3] - c.attack[0] - c.attack[1]) / n('attack') : null,
     stuffsPerGame: per(c.block[3]), blockValue: per(c.block[3] + c.block[1] * .5 - c.block[0]),
-    digsPerGame: per(c.dig[1] + c.dig[2]),
+    digs: n('dig'), digAvg: avg('dig'),
+    digsPerGame: per(c.dig[1] + c.dig[2] + c.dig[3]),
   };
 }
 
@@ -193,7 +194,7 @@ export function recap(docs) {
       kills: c.attack[3], attacks: sum(c.attack),
       aces: c.serve[3], serves: sum(c.serve), servesIn: sum(c.serve) - c.serve[0],
       passes: sum(c.pass), passesGood: c.pass[2] + c.pass[3],
-      blocks: c.block[3], digs: c.dig[1] + c.dig[2], sets: sum(c.set) };
+      blocks: c.block[3], digs: c.dig[1] + c.dig[2] + c.dig[3], sets: sum(c.set) };
   }).sort((a, b) => a.round - b.round || a.team - b.team || b.points - a.points || b.kills - a.kills || a.pid - b.pid);
   return { results, players, tagged: tagged.length };
 }

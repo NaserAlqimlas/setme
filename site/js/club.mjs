@@ -92,7 +92,7 @@ export function seasonRecap(sessions, games, tallies = null) {
     stat('kills', 'Most kills', c => c.attack[3], 'kills');
     stat('aces', 'Most aces', c => c.serve[3], 'aces');
     stat('blocks', 'Most stuff blocks', c => c.block[3], 'blocks');
-    stat('digs', 'Most digs', c => c.dig[1] + c.dig[2], 'digs');
+    stat('digs', 'Most digs', c => c.dig[1] + c.dig[2] + c.dig[3], 'digs');
   }
   // Closest finished game (ties broken by the higher score: a 27–25 beats a 25–23).
   const full = gs.filter(g => Math.max(g.score_a, g.score_b) >= 25);

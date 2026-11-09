@@ -249,19 +249,20 @@ function ownChart(history, skills) {
 const num2 = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
 const statTiles = m => h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `${m.serves} serves`], [num2(m.passAvg), 'Pass average', `${m.passes} passes, 0–3`],
   [pct(m.killRate), 'Kills', `${m.attacks} attacks`], [num2(m.attackEff), 'Attack efficiency', 'kills − errors − blocked'],
-  [num2(m.stuffsPerGame), 'Blocks a game'], [num2(m.digsPerGame), 'Digs a game']].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))));
+  [num2(m.stuffsPerGame), 'Blocks a game'], [num2(m.digsPerGame), 'Digs a game'], [num2(m.digAvg), 'Dig average', `${m.digs} digs, 0–3`]].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))));
 // One game in a line: what they did, counted.
 const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 function gameLine(c) {
   const n = a => Object.values(c[a]).reduce((x, y) => x + y, 0);
-  const passAvg = n('pass') ? Object.entries(c.pass).reduce((s, [g, k]) => s + g * k, 0) / n('pass') : null;
+  const avg = a => n(a) ? Object.entries(c[a]).reduce((s, [g, k]) => s + g * k, 0) / n(a) : null;
+  const up = c.dig[1] + c.dig[2] + c.dig[3];
   return [
     n('serve') && `${plural(n('serve'), 'serve')}${c.serve[3] ? ` (${plural(c.serve[3], 'ace')})` : ''}${c.serve[0] ? `, ${c.serve[0]} missed` : ''}`,
-    n('pass') && `${plural(n('pass'), 'pass', 'passes')}, average ${num2(passAvg)}`,
+    n('pass') && `${plural(n('pass'), 'pass', 'passes')}, average ${num2(avg('pass'))}`,
     n('set') && plural(n('set'), 'set'),
     n('attack') && `${plural(n('attack'), 'attack')}${c.attack[3] ? ` (${plural(c.attack[3], 'kill')})` : ''}${c.attack[0] + c.attack[1] ? `, ${plural(c.attack[0] + c.attack[1], 'error')} or blocked` : ''}`,
     c.block[3] && plural(c.block[3], 'block'),
-    c.dig[1] + c.dig[2] && plural(c.dig[1] + c.dig[2], 'dig'),
+    up && `${plural(up, 'dig')}, average ${num2(avg('dig'))}`,
   ].filter(Boolean).join(' · ') || 'No touches tagged';
 }
 // Your match stats, on your own profile only: what you did in tagged games (my-stats), all of them and game by game.
