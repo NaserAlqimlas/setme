@@ -4,6 +4,7 @@
 
 alter table public.games add column if not exists video_kind text check (video_kind in ('file', 'youtube'));
 alter table public.games add column if not exists video_ref text;  -- file name, or YouTube video id
+alter table public.games add column if not exists tags_end double precision;  -- seq of the last rally that counts for the score; later ones were played on after the game ended
 
 -- One per rally. id is made in the browser, so a save that's sent twice doesn't add the rally twice.
 create table if not exists public.rallies (

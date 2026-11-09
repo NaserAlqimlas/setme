@@ -354,7 +354,10 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
   // What the database has: each rally as last saved (to send only what changed), and the video.
   const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
-  const videoOf = () => video ? { video_kind: video.kind, video_ref: video.kind === 'file' ? video.name : video.id } : { video_kind: null, video_ref: null };
+  // Rallies played on after the game really ended count for player stats, not for the score. end = seq of the last rally that counts.
+  const hasEnd = 'tags_end' in g;
+  let end = g.tags_end ?? null;
+  const videoOf = () => ({ ...(video ? { video_kind: video.kind, video_ref: video.kind === 'file' ? video.name : video.id } : { video_kind: null, video_ref: null }), ...(hasEnd ? { tags_end: end } : {}) });
   let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : null;
   let savedVideo = JSON.stringify(videoOf());
   const draftKey = `setme-tags-${g.id}`;
@@ -368,6 +371,7 @@ async function tagView(g, n, pname, tname, back, ro = false) {
     const gone = new Set((draft.known ?? []).filter(id => !mine.has(id)));
     rallies = [...draft.rallies, ...stored.filter(r => !mine.has(r.id) && !gone.has(r.id))].sort((a, b) => a.seq - b.seq);
     video = draft.video ?? video;
+    if (hasEnd && 'end' in draft) end = draft.end;
     setTimeout(() => toast('Restored tags that hadn\'t saved yet'), 300);
   }
 
@@ -409,7 +413,7 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   const changed = () => {
     if (ro) return paint();
     dirty = true; status.textContent = 'Unsaved';
-    try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
+    try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, end, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
     clearTimeout(saveTimer); saveTimer = setTimeout(save, 1500);
     paint();
   };
@@ -450,8 +454,19 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   const pad = h('div', { class: 'tag-pad' });
   const list = h('ol', { class: 'rally-list' });
 
+  const counted = () => end == null ? rallies : rallies.filter(r => r.seq <= end);
+  // Where the tags first reach the saved score, if more rallies were tagged after it: the likely end of the game.
+  const endsAt = () => {
+    const s = { a: 0, b: 0 };
+    for (const [i, r] of rallies.entries()) {
+      if (r.won) s[r.won]++;
+      if (s.a === g.score_a && s.b === g.score_b) return i < rallies.length - 1 ? i : null;
+    }
+    return null;
+  };
+  const setEnd = v => { end = v; changed(); };
   const paintScore = () => {
-    const s = score(rallies);
+    const s = score(counted());
     scoreEl.replaceChildren(
       h('span', { style: `--tc:${color.a}` }, name.a, h('b', {}, String(s.a))), h('span', { class: 'muted' }, '–'),
       h('span', { style: `--tc:${color.b}` }, h('b', {}, String(s.b)), name.b));
@@ -459,8 +474,16 @@ async function tagView(g, n, pname, tname, back, ro = false) {
     const line = k => `${name[k]}: side-out ${ts[k].sideOutRate == null ? '—' : `${Math.round(ts[k].sideOutRate * 100)}%`}, ${ts[k].aces} aces, ${ts[k].kills} kills, ${ts[k].stuffs} blocks, ${ts[k].errors} errors`;
     // Only once the tags cover as many points as the saved score.
     const off = done >= g.score_a + g.score_b && (s.a !== g.score_a || s.b !== g.score_b);
+    const after = end == null ? 0 : rallies.filter(r => r.seq > end).length;
+    const at = off && end == null && hasEnd && !ro ? endsAt() : null;
     summary.replaceChildren(...(done ? [h('div', {}, line('a')), h('div', {}, line('b'))] : []),
-      ...(off ? [h('div', { class: 'warn' }, `Tags give ${s.a}–${s.b}; the saved score is ${g.score_a}–${g.score_b}.`)] : []));
+      ...(off ? [h('div', { class: 'warn' }, `Tags give ${s.a}–${s.b}; the saved score is ${g.score_a}–${g.score_b}.`,
+        at != null ? [` The tags reach ${g.score_a}–${g.score_b} after rally ${at + 1}. `,
+          h('button', { class: 'ghost sm', onclick: () => setEnd(rallies[at].seq) }, `Game ended after rally ${at + 1}`)]
+        : end == null ? ' If points were miscounted during the game, keep the saved score; the tags still count for player stats.' : '')] : []),
+      ...(end != null ? [h('div', {}, `Game ended after rally ${rallies.filter(r => r.seq <= end).length}. `,
+        after ? `${after} ${after === 1 ? 'rally' : 'rallies'} played on after it still count for player stats, not the score. ` : '',
+        !ro && h('button', { class: 'ghost sm', onclick: () => setEnd(null) }, 'Not the end'))] : []));
   };
 
   const paintSource = () => {
@@ -512,7 +535,9 @@ async function tagView(g, n, pname, tname, back, ro = false) {
 
   const paintList = () => {
     const shown = [...rallies.entries()].reverse();
-    list.replaceChildren(...shown.map(([i, r]) => h('li', {},
+    const markable = hasEnd && !ro && end == null && rallies.filter(r => r.won).length > g.score_a + g.score_b;
+    const divider = h('li', { class: 'end-mark muted small' }, 'Game ended here · rallies above were played on after it');
+    list.replaceChildren(...shown.flatMap(([i, r]) => [...(end != null && r.seq === end && i < rallies.length - 1 ? [divider] : []), h('li', { class: end != null && r.seq > end ? 'after-end' : null },
       h('div', { class: 'rally-head' },
         h('span', { class: 'muted small' }, `#${i + 1}`),
         r.t != null && h('button', { class: 'ghost sm', onclick: () => player?.seek(r.t - 2), disabled: !player, title: 'Watch this rally' }, `▶ ${clock(r.t)}`),
@@ -522,13 +547,14 @@ async function tagView(g, n, pname, tname, back, ro = false) {
         h('button', { class: `chip plain point ${r.won ?? 'open'}`, style: r.won ? `--tc:${color[r.won]}` : null, title: 'Change who won the point',
           onclick: () => { snapshot(); r.won = r.won === 'a' ? 'b' : r.won === 'b' ? (i === rallies.length - 1 ? null : 'a') : 'a'; changed(); } },
           r.won ? `Point ${name[r.won]}` : 'In play'),
+        markable && r.won && h('button', { class: 'ghost sm', title: 'The game ended with this rally; later ones were played on after it', onclick: () => setEnd(r.seq) }, 'Ended here'),
         !ro && h('button', { class: 'ghost sm', 'aria-label': `Delete rally ${i + 1}`, onclick: async () => {
           if (!await ask(`Delete rally ${i + 1}?`, `Are you sure you want to delete this rally${r.touches.length ? ` and its ${r.touches.length} touch${r.touches.length === 1 ? '' : 'es'}` : ''}?`, 'Delete rally')) return;
           snapshot(); rallies.splice(i, 1); changed();
         } }, '×')),
       h('div', { class: 'chips' }, r.touches.map((t, j) => h('span', { class: `chip tag-touch ${endsRally(t.a, t.g) ?? ''}`, style: `--tc:${color[side(t.p)] ?? 'var(--muted)'}` },
         h('button', { type: 'button', class: 'touch-btn', onclick: () => t.t != null && player?.seek(t.t - 1) }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
-        !ro && h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))));
+        !ro && h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))]));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
