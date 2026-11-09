@@ -7,6 +7,7 @@ import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed, svg } from './ratings.mjs';
 import { GUIDE, STEPS } from './rate.mjs';
+import { signupStatus } from '../gameday.mjs';
 
 // Club pages: Sign up, Lineup (players and raters) and player profiles.
 
@@ -34,13 +35,13 @@ export async function signupPage() {
   const eventCard = ev => {
     const list = signups.filter(x => x.event_id === ev.id);
     const ins = list.slice(0, ev.cap), wait = list.slice(ev.cap);
-    const at = list.findIndex(x => x.player_id === mine);
+    const st = signupStatus(list, ev.cap, mine);
     const old = ev.played_on < now;
     const chip = (x, n) => h('span', { class: `chip${x.player_id === mine ? ' me' : ''}${organizer ? '' : ' plain'}` },
       n != null && h('span', { class: 'muted small' }, `${n}. `), profileLink(x.player_id, pname.get(x.player_id) ?? 'Removed player'),
       organizer && h('button', { type: 'button', 'aria-label': `Remove ${pname.get(x.player_id)}`, onclick: () => act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', x.player_id))) }, '×'));
-    const status = at < 0 ? null : at < ev.cap ? h('span', { class: 'badge on' }, 'You\'re in') : h('span', { class: 'badge' }, `Waitlist #${at - ev.cap + 1}`);
-    const meBtn = mine && !old && (at < 0
+    const status = st.kind === 'in' ? h('span', { class: 'badge on' }, 'You\'re in') : st.kind === 'waitlist' ? h('span', { class: 'badge' }, `Waitlist #${st.place}`) : null;
+    const meBtn = mine && !old && (st.kind === 'out'
       ? h('button', { class: 'ball', disabled: !ev.open, onclick: () => act(() => q(sb.from('signups').insert({ event_id: ev.id, player_id: mine })), ins.length >= ev.cap ? 'On the waitlist' : 'You\'re in') }, ins.length >= ev.cap ? 'Join the waitlist' : 'I\'m in')
       : h('button', { class: 'ghost', disabled: !ev.open, onclick: async () => await ask('Drop out of this game day?', 'If there\'s a waitlist, the next person gets your spot.', 'Drop out') && act(() => q(sb.from('signups').delete().eq('event_id', ev.id).eq('player_id', mine)), 'Dropped out') }, 'Drop out'));
     const add = organizer && h('select', { 'aria-label': 'Add a player' }, h('option', { value: '' }, '+ Add player'),

@@ -52,13 +52,16 @@ async function boot() {
   render();
 }
 
+// Before the app: an invite or reset link waiting for Continue → signed out → a password to choose → the app.
+// One answer per render, checked in this order (pendingLink, session, mustSetPassword are set above and by auth events).
+const gate = () => pendingLink ? 'link' : !session ? 'login' : mustSetPassword ? 'password' : 'app';
+
 async function render() {
   document.body.classList.remove('guide-open'); // only the Rate page has the guide drawer
   const nav = document.getElementById('nav'), who = document.getElementById('who');
   nav.replaceChildren(); who.replaceChildren();
-  if (pendingLink) return app.replaceChildren(linkPage());
-  if (!session) return app.replaceChildren(loginPage());
-  if (mustSetPassword) return app.replaceChildren(passwordPage());
+  const step = gate();
+  if (step !== 'app') return app.replaceChildren({ link: linkPage, login: loginPage, password: passwordPage }[step]());
   try {
     if (!me) setMe(await q(sb.from('profiles').select('*').eq('id', session.user.id).single()));
   } catch {

@@ -44,6 +44,8 @@ site/
   js/scores.mjs         game margins, rotation, insights and weight fitting for the Scores page
   js/stats.mjs          match stats: tagging helpers, tallies, SetMe's ratings from stats
   js/club.mjs           attendance, a player's record, season awards (results only)
+  js/gameday.mjs        a game day's rules: phase, delete, rounds, tagging window, what Save does, sign-up place,
+                        tag save status (map of every state machine: docs/state-machines.md)
   js/seasonimg.mjs      draws the season recap PNG
 netlify/
   lib/supabase.mjs      server helpers: REST/admin calls with the secret key, caller(req) -> {id, role}

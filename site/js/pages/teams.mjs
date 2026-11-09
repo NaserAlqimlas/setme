@@ -1,3 +1,4 @@
+import { saveIntent } from '../gameday.mjs';
 import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, missing, pageHead, q, sb, seg, setterMark, SHORT, stacked, TEAM_COLORS, TIER_OPTIONS, toast, today, toggle } from '../ui.mjs';
 import { ALL_GAME, SETTING_WEIGHT, SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { parseTeams } from '../paste.mjs';
@@ -160,22 +161,19 @@ function saveButton(onclick) {
     if (saving) return;
     const day = gameDate && dayName(gameDate);
     const saved = savedLineup?.day === gameDate ? savedLineup : null;
-    const here = btn.closest('[data-key]');
-    const isSaved = !!saved && !!here?.dataset.key && here.dataset.key === saved.key;
+    const intent = saveIntent({ gameDate, saved, shownKey: btn.closest('[data-key]')?.dataset.key || null });
     const round = saved?.round > 1 ? ` (round ${saved.round})` : '';
-    btn.disabled = isSaved;
-    btn.classList.toggle('ghost', isSaved);
-    btn.classList.toggle('replace', !!saved && !isSaved);
-    btn.textContent = !gameDate ? 'Save for scores'
-      : isSaved ? 'Saved ✓'
-      : !saved ? `Save as ${day}'s teams`
-      : saved.games ? `Save new teams for ${day}…`
-      : `Replace ${day}'s teams${round}`;
-    btn.title = !gameDate ? ''
-      : isSaved ? `These are the teams saved for ${dayTitle(gameDate)}${round}`
-      : !saved ? `Save for ${dayTitle(gameDate)}, so scores can be entered on Scores`
-      : saved.games ? `${dayTitle(gameDate)} already has ${saved.games} game${saved.games === 1 ? '' : 's'}${round}. You'll pick: start a new round, or replace the teams.`
-      : `Replaces the teams saved for ${dayTitle(gameDate)}${round}. No games entered yet.`;
+    btn.dataset.intent = intent;
+    btn.disabled = intent === 'saved';
+    btn.classList.toggle('ghost', intent === 'saved');
+    btn.classList.toggle('replace', intent === 'replace' || intent === 'new-round');
+    [btn.textContent, btn.title] = {
+      'no-date': ['Save for scores', ''],
+      saved: ['Saved ✓', `These are the teams saved for ${dayTitle(gameDate)}${round}`],
+      new: [`Save as ${day}'s teams`, `Save for ${dayTitle(gameDate)}, so scores can be entered on Scores`],
+      'new-round': [`Save new teams for ${day}…`, `${dayTitle(gameDate)} already has ${saved?.games} game${saved?.games === 1 ? '' : 's'}${round}. You'll pick: start a new round, or replace the teams.`],
+      replace: [`Replace ${day}'s teams${round}`, `Replaces the teams saved for ${dayTitle(gameDate)}${round}. No games entered yet.`],
+    }[intent];
   };
   // Drawn before it's on the page; label again once it is, so it can see which option it belongs to.
   queueMicrotask(label);

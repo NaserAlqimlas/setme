@@ -6,13 +6,12 @@ import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } fr
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
 import { signed, svg } from './ratings.mjs';
+import { dayState, syncNext, TAG_DAYS, tagButton } from '../gameday.mjs';
 
 // Scores page (organizers): games and rounds, match stats tagging, insights, attendance, season recap.
 
 // ---------- scores (organizers) ----------
-// Tagging closes this many days after a game day, except for the super (the database enforces it too: tag_window.sql).
-export const TAG_DAYS = 3;
-export const tagClosed = (playedOn, now = today()) => me.role !== 'super' && (Date.parse(now) - Date.parse(playedOn)) / 864e5 > TAG_DAYS;
+// What a game day allows (delete, scores, rounds, tagging) comes from dayState in gameday.mjs.
 
 let scoresTab = 'games', scoresDay = null;
 // Set when a new round starts on Scores with the same teams, so the page comes back with Change players open.
@@ -67,23 +66,25 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   // Finished rallies tagged per game (null = the match stats SQL hasn't been run).
   const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
     .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
+  // Rounds: the last is the one playing now (ses.teams); new games go into it. One round before rounds.sql.
+  const rounds = roundsOf(ses, roundRows), cur = rounds.at(-1).n, hasRounds = roundRows != null;
+  const inRound = n => games.filter(g => roundOf(g) === n);
+  // The day's rules, recomputed after anything that changes them (a game saved or deleted, the day ended).
+  const day = () => dayState({ playedOn: ses.played_on, ended: !!ses.ended, today: today(), role: me.role, round: cur, gamesInRound: inRound(cur).length, hasRounds });
   const tagGame = games.find(g => g.id === taggingGame);
-  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); }, tagClosed(ses.played_on))];
+  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); }, day().tagging)];
   taggingGame = null;
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
   daySel.onchange = () => { scoresDay = daySel.value; render(); };
 
   // Delete day: only on the day itself (or a day still to come). Once the date has passed, the day stays.
-  const delDay = ses.played_on >= today() && h('button', { class: 'danger sm', onclick: async () => {
+  const delDay = day().canDelete && h('button', { class: 'danger sm', onclick: async () => {
     const n = games.length;
     if (await choose(`Delete ${dayTitle(ses.played_on)}?`, `Its teams${n ? `, all ${n} game${n === 1 ? '' : 's'} and their tags` : ''} are deleted too. This can't be undone.`, [[true, 'Delete day', 'danger']]) !== true) return;
     try { await q(sb.from('sessions').delete().eq('id', ses.id)); toast('Deleted'); render(); } catch (e) { toast(e.message); }
   } }, 'Delete day');
 
-  // Rounds: the last is the one playing now (ses.teams); new games go into it. One round before rounds.sql.
-  const rounds = roundsOf(ses, roundRows), cur = rounds.at(-1).n, hasRounds = roundRows != null;
-  const inRound = n => games.filter(g => roundOf(g) === n);
   const teamsIn = n => n === cur ? ses.teams : rounds.find(r => r.n === n)?.teams ?? [];
   const N = () => ses.teams.length;
   const teamName = (k, n = cur) => tname(ses.id, k, n);
@@ -130,12 +131,13 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   };
   const paintTeams = () => {
     const active = players.filter(p => p.active);
-    const canRound = hasRounds && !editing && !ses.ended && inRound(cur).length > 0;
-    teamsBox.replaceChildren(h('div', { class: 'card-head' },
+    const { canStartRound, canGoBackRound } = day();
+    // replaceChildren prints false and null as text, so the parts that don't apply are dropped.
+    teamsBox.replaceChildren(...[h('div', { class: 'card-head' },
       h('div', {}, h('h3', {}, cur > 1 ? `Round ${cur} teams` : 'Teams'), h('p', { class: 'muted small', style: 'margin:2px 0 0' },
         editing ? `Tap a player, then one on another team, to swap them. Remove someone who left, or add a late arrival. Games already saved keep who they had.` : 'Wins–losses and points for minus points against.')),
-      cur > 1 && !inRound(cur).length && !editing && h('button', { class: 'ghost sm', onclick: backRound }, `Back to round ${cur - 1}`),
-      canRound && h('button', { class: 'ghost sm', onclick: newRound }, `Start round ${cur + 1}`),
+      canGoBackRound && !editing && h('button', { class: 'ghost sm', onclick: backRound }, `Back to round ${cur - 1}`),
+      canStartRound && !editing && h('button', { class: 'ghost sm', onclick: newRound }, `Start round ${cur + 1}`),
       h('button', { class: editing ? 'sm' : 'ghost sm', onclick: () => { editing = !editing; picked = null; paintTeams(); paintBalance(); } }, editing ? 'Done' : 'Change players')),
     editing && balance,
     picked && h('p', { class: 'small swap-hint', role: 'status' }, h('b', {}, `Picked: ${pname.get(picked[1]) ?? 'player'}.`), ' Tap someone on another team to swap, or tap them again to cancel.'),
@@ -168,7 +170,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       h('div', { class: 'team-grid' }, r.teams.map((ids, i) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, teamName(i + 1, r.n)), h('span', { class: 'muted small' }, record(i + 1, r.n))),
         h('ul', {}, ids.map(id => h('li', {}, avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player')))))))))
-    );
+    ].filter(Boolean));
   };
   // Start the next round from here: keep this round with its games and standings, then either play on with the same
   // teams (Change players opens to swap a few people) or build new ones on Teams.
@@ -258,18 +260,23 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
         h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
-        tagClosed(ses.played_on) ? h('button', { class: 'ghost sm', disabled: !tags?.get(g.id), title: `Tagging closes ${TAG_DAYS} days after the game day${tags?.get(g.id) ? '; the tags can still be viewed' : ''}`,
-          onclick: () => { taggingGame = g.id; render(); } }, tags?.get(g.id) ? `View tags (${tags.get(g.id)})` : 'Tagging closed') :
-        h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
-          if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
-          taggingGame = g.id; render();
-        } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
+        tagBtn(g),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
           if (!await ask(`Delete game ${n}?`, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b}${tags?.get(g.id) ? `, and its ${tags.get(g.id)} tagged rallies` : ''}. This can't be undone.`, 'Delete game')) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
           catch (e) { toast(e.message); }
         } }, 'Delete'));
     }))]).filter(Boolean));
+  };
+  // Tag button per game, from the tagging window: Tag / Tags (n) while open, View tags (n) or Tagging closed after.
+  const tagBtn = g => {
+    const { tagging } = day(), n = tags?.get(g.id) ?? 0, kind = tagButton(tagging, tags ? n : null);
+    const open = () => { taggingGame = g.id; render(); };
+    const until = `Tagging is open until ${dayTitle(tagging.until)} (${TAG_DAYS} days after the game day)`;
+    if (kind === 'upgrade') return h('button', { class: 'ghost sm', onclick: () => toast('Match stats need the database upgrade (supabase/match_stats.sql)') }, 'Tag');
+    if (kind === 'tag') return h('button', { class: 'ghost sm', title: `Tag who did what from the game's video.${me.role === 'super' ? '' : ` ${until}.`}`, onclick: open }, n ? `Tags (${n})` : 'Tag');
+    return h('button', { class: 'ghost sm', disabled: kind === 'closed', onclick: open,
+      title: `Tagging was open until ${dayTitle(tagging.until)}, ${TAG_DAYS} days after the game day${kind === 'view' ? '. The tags can still be viewed' : ''}` }, kind === 'view' ? `View tags (${n})` : 'Tagging closed');
   };
   // Once the day is ended the entry box gives way to the final standings: most wins, then point difference.
   const standings = (n = cur) => teamsIn(n).map((_, i) => {
@@ -290,8 +297,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       h('button', { class: 'ghost sm', onclick: () => setEnded(false) }, 'Reopen')),
     ...[...rounds].reverse().filter(r => inRound(r.n).length).flatMap(r => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${r.n}`),
       h('ol', { class: 'standings' }, standings(r.n).map(t => h('li', { style: `--tc: ${TEAM_COLORS[(t.k - 1) % TEAM_COLORS.length]}` },
-        h('b', {}, teamName(t.k, r.n)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`))))]));
-  paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList(); paintBalance();
+        h('b', {}, teamName(t.k, r.n)), h('span', {}, `${t.won} won, ${t.lost} lost`), h('span', { class: 'muted' }, `${t.diff > 0 ? '+' : ''}${t.diff} points`))))]).filter(Boolean));
+  paintTeams(); day().entry === 'final' ? paintEnded() : paintEntry(); paintList(); paintBalance();
   // Day recap: every game's result, plus standouts and team numbers from whatever has been tagged.
   const dayRecap = recapButton('Day recap', 'Game day recap', dayTitle(ses.played_on), `recap-${ses.played_on}.png`, pname, (k, n) => teamName(k, n),
     () => rounds.filter(r => inRound(r.n).length).map(r => ({ round: r.n, teams: teamsIn(r.n).map((ids, i) => ({ k: i + 1, ids })) })));
@@ -349,8 +356,10 @@ async function youtubeVideo(box, id) {
   return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy() };
 }
 
-// ro (read only): tagging has closed for this game day; the tags, video and recap can be looked at, not changed.
-async function tagView(g, n, pname, tname, back, ro = false) {
+// tagging: the day's tagWindow (gameday.mjs). Read only once it has closed: the tags, video and recap can be looked
+// at, not changed.
+async function tagView(g, n, pname, tname, back, tagging = { mode: 'open' }) {
+  const ro = tagging.mode === 'read-only';
   const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
   // What the database has: each rally as last saved (to send only what changed), and the video.
   const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
@@ -377,17 +386,27 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   const pn = id => firstName(pname.get(id) ?? '?');
   const side = p => sideOf(g, p);
   let player = null, sel = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = !!draft?.rallies;
+  // Save status: one of SYNC in gameday.mjs (saved, unsaved, saving, failed), moved only by syncNext.
   const now = () => player ? Math.round(player.now() * 10) / 10 : null;
   const open = () => { const r = rallies.at(-1); return r && !r.won ? r : null; };
   const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
 
   // ----- saving -----
-  const status = h('span', { class: 'muted small tag-status' }, ro ? `Read only: tagging closes ${TAG_DAYS} days after the game day` : stored.length ? 'Saved' : '');
+  const status = h('span', { class: 'muted small tag-status', role: 'status' });
+  let sync = dirty ? 'unsaved' : 'saved', syncError = '';
+  const SYNC_TEXT = { saved: () => stored.length || saved.size ? 'Saved' : '', unsaved: () => 'Unsaved', saving: () => 'Saving…',
+    failed: () => `Not saved (${syncError}). Kept on this device, retrying…` };
+  const paintSync = () => {
+    status.dataset.sync = ro ? 'read-only' : sync;
+    status.textContent = ro ? `Read only: tagging was open until ${dayTitle(tagging.until)}, ${TAG_DAYS} days after the game day` : SYNC_TEXT[sync]();
+  };
+  const move = (event, ctx) => { sync = syncNext(sync, event, ctx); paintSync(); };
+  paintSync();
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
     await saving;
     if (!dirty) return;
-    dirty = false; status.textContent = 'Saving…';
+    dirty = false; move('save');
     const ids = new Set(rallies.map(r => r.id));
     const changedRallies = rallies.filter(r => saved.get(r.id) !== JSON.stringify(r));
     const deleted = [...saved.keys()].filter(id => !ids.has(id));
@@ -399,16 +418,16 @@ async function tagView(g, n, pname, tname, back, ro = false) {
       for (const id of deleted) saved.delete(id);
       for (const [id, j] of sent) saved.set(id, j);
       if (!dirty) { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } }
-      status.textContent = dirty ? 'Unsaved' : 'Saved';
+      move('ok', { dirty });
     }, e => {
-      dirty = true; status.textContent = `Not saved (${e.message}). Kept on this device, retrying…`;
+      dirty = true; syncError = e.message; move('error');
       saveTimer = setTimeout(save, 10e3);
     }).finally(() => { saving = null; });
     await saving;
   };
   const changed = () => {
     if (ro) return paint();
-    dirty = true; status.textContent = 'Unsaved';
+    dirty = true; move('change');
     try { localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), rallies, video, known: [...saved.keys()] })); } catch { /* storage full or blocked */ }
     clearTimeout(saveTimer); saveTimer = setTimeout(save, 1500);
     paint();

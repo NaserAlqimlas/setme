@@ -76,3 +76,9 @@
 - Rejected: Nothing offered instead; asked for directly.
 - After that, organizers can still view a game's tags read-only (View tags).
 - Rests on: TAG_DAYS and tagClosed in site/js/pages/scores.mjs; tag_open and the rallies/touches write policies in supabase/tag_window.sql.
+
+## 2026-11-09 · Game-day rules live in one pure module
+- Decided by: Claude (asked to find the app's implicit state machines and make the best call)
+- Why: The game day drives most of the app's states (delete, scores, rounds, tagging window, what Save does), and its rules were re-derived inline on Teams and Scores. One tested place keeps them consistent for organizers, easy to change for developers, and findable for agents (docs/state-machines.md).
+- Rejected: A state-machine library (new dependency, no build step here); rewriting the Teams page's built/own/undo state (large, risky, and it already works); moving rules into the database only (the page still needs them to decide what to show).
+- Rests on: site/js/gameday.mjs, tests/test_gameday.mjs, docs/state-machines.md; tag_open() in supabase/tag_window.sql mirrors TAG_DAYS.
