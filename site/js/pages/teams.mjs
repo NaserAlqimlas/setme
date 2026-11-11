@@ -952,12 +952,18 @@ async function saveDraft(teams, opts, label) {
 // Set once the drafts table answers (club upgrade), so Save draft only shows when it can work.
 let draftsOk = false;
 // Saved drafts side by side: each one re-checked with today's ratings (gap, what's off, repeat teammates).
+// Only the drafts for the game date picked above (plus any saved without a date); other days' come back when their date is picked.
 function draftsCard(ownTeams) {
   const card = h('div', { class: 'card', hidden: true });
+  let asked = 0;
   card.refresh = async () => {
+    const mine = ++asked, day = gameDate;
     let drafts;
-    try { drafts = await q(sb.from('drafts').select('*').order('created_at', { ascending: false }).limit(12)); }
-    catch { card.hidden = true; return; }
+    try {
+      const all = sb.from('drafts').select('*');
+      drafts = await q((day ? all.or(`played_on.eq.${day},played_on.is.null`) : all.is('played_on', null)).order('created_at', { ascending: false }).limit(12));
+    } catch { card.hidden = true; return; }
+    if (mine !== asked) return; // the date changed while this was loading
     if (!draftsOk) { draftsOk = true; document.querySelectorAll('.draft-btn').forEach(b => { b.hidden = false; }); }
     card.hidden = !drafts.length;
     if (!drafts.length) return card.replaceChildren();
@@ -992,7 +998,7 @@ function draftsCard(ownTeams) {
     body.replaceChildren(...drafts.map(row));
     card.replaceChildren(
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Drafts'),
-        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Lineups you kept, checked again with today\'s ratings and the switches above. Lower gap is more even. Open one to swap, share or save it for scores.'))),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `${day ? `For ${dayTitle(day)}: l` : 'L'}ineups you kept, checked again with today\'s ratings and the switches above. Lower gap is more even. Open one to swap, share or save it for scores.`))),
       h('div', { class: 'scroll' }, stacked(h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'Draft'), h('th', { class: 'num', title: 'Strongest team minus weakest' }, 'Gap'), h('th', { class: 'num', title: 'Problems: setters, weak passers bunched, combos…' }, 'Issues'),
           h('th', { class: 'num', title: 'Pairs who were teammates on a recent game day' }, 'Repeats'), h('th', {}, ''))),
@@ -1000,6 +1006,8 @@ function draftsCard(ownTeams) {
   };
   card.refresh();
   document.addEventListener('drafts', () => { if (card.isConnected) card.refresh(); });
+  const onDate = () => card.isConnected ? card.refresh() : document.removeEventListener('gamedate', onDate);
+  document.addEventListener('gamedate', onDate);
   return card;
 }
 
