@@ -4,3 +4,11 @@ node_modules/
 .netlify/
 .env
 __pycache__/
+# Vision tool: its Python environment, and game videos and what it makes from them
+vision/.venv/
+vision/**/*.mp4
+vision/**/*.mov
+vision/**/*.rallies.json
+vision/**/*.court.json
+vision/**/*.pkl
+.pytest_cache/

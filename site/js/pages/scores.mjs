@@ -1,4 +1,5 @@
 import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
 import { ACTIONS, endsRally, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
@@ -361,6 +362,10 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : null;
   let savedVideo = JSON.stringify(videoOf());
   const draftKey = `setme-tags-${g.id}`;
+  // Rally times found by the vision tool (rallytimes.mjs), kept on this device like the video.
+  const timesKey = `setme-rallytimes-${g.id}`;
+  let found = null;
+  try { found = JSON.parse(localStorage.getItem(timesKey)); } catch { /* none */ }
   let draft = null;
   if (!ro) try { draft = JSON.parse(localStorage.getItem(draftKey)); } catch { /* no draft */ }
   // Changes on this device that never reached the database: apply them on top of what's saved. Rallies someone
@@ -451,6 +456,8 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   const summary = h('div', { class: 'tag-summary muted small' });
   const videoBox = h('div', { class: 'tag-video' });
   const sourceRow = h('div', { class: 'row tag-source' });
+  const foundBar = h('div', { class: 'row tag-found' });
+  const keyHint = h('p', { class: 'muted small' });
   const pad = h('div', { class: 'tag-pad' });
   const list = h('ol', { class: 'rally-list' });
 
@@ -486,6 +493,31 @@ async function tagView(g, n, pname, tname, back, ro = false) {
         !ro && h('button', { class: 'ghost sm', onclick: () => setEnd(null) }, 'Not the end'))] : []));
   };
 
+  // Jump to the next (dir 1) or previous (-1) rally the vision tool found.
+  const go = dir => {
+    if (!found || !player) return;
+    const i = jumpTo(found.rallies, player.now(), dir);
+    if (i < 0) return toast(dir > 0 ? 'That was the last rally found' : 'That was the first rally found');
+    player.seek(found.rallies[i].start);
+    setTimeout(paintFound, 300);
+  };
+  const paintFound = () => {
+    const n = found ? (ro ? ' · N next rally' : ' · N next rally (Shift N back)') : '';
+    keyHint.textContent = ro ? `Keys: space play/pause · ← → skip 2 s${n} · tap a rally or touch to watch it`
+      : `Keys: space play/pause · ← → skip 2 s${n} · 0–3 grade · S P T A B D action · U undo · Esc clear`;
+    if (!found) return foundBar.replaceChildren();
+    const at = player ? rallyAt(found.rallies, player.now()) : -1;
+    foundBar.replaceChildren(
+      h('span', { class: 'small' }, h('b', {}, `${found.rallies.length} rallies found`), at >= 0 ? ` · watching ${at + 1}` : '', ` · ${rallies.length} tagged`),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'ghost sm', onclick: () => go(-1), disabled: !player }, '◀ Previous'),
+      h('button', { class: 'ghost sm', onclick: () => go(1), disabled: !player }, 'Next rally ▶'),
+      h('button', { class: 'ghost sm', 'aria-label': 'Forget the rally times', title: 'Forget the rally times', onclick: () => {
+        found = null; try { localStorage.removeItem(timesKey); } catch { /* ignore */ }
+        paintSource();
+      } }, '×'));
+  };
+
   const paintSource = () => {
     const file = h('input', { type: 'file', accept: 'video/*', hidden: true });
     file.onchange = () => {
@@ -499,11 +531,22 @@ async function tagView(g, n, pname, tname, back, ro = false) {
       const id = ytId(yt.value); if (!id) return toast('That doesn\'t look like a YouTube link');
       try { player?.dispose(); player = null; player = await youtubeVideo(videoBox, id); } catch (e) { return toast(e.message); }
       if (video?.kind !== 'youtube' || video.id !== id) { video = { kind: 'youtube', id }; changed(); }
+      paintFound();
+    };
+    const times = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+    times.onchange = async () => {
+      const f = times.files[0]; if (!f) return;
+      try { found = parseRallyTimes(await f.text()); } catch (e) { return toast(e.message); }
+      try { localStorage.setItem(timesKey, JSON.stringify(found)); } catch { /* storage blocked: kept until you leave */ }
+      if (found.video && video?.kind === 'file' && found.video !== video.name) toast(`These times are for ${found.video}, not ${video.name}`);
+      paintFound();
     };
     yt.onkeydown = e => { if (e.key === 'Enter') loadYt(); };
     sourceRow.replaceChildren(
       h('button', { class: 'ghost sm', onclick: () => file.click() }, video?.kind === 'file' ? `Open ${video.name}` : 'Open video file'), file,
-      h('span', { class: 'muted small' }, 'or'), yt, h('button', { class: 'ghost sm', onclick: loadYt }, 'Load'));
+      h('span', { class: 'muted small' }, 'or'), yt, h('button', { class: 'ghost sm', onclick: loadYt }, 'Load'),
+      h('button', { class: 'ghost sm', onclick: () => times.click(), title: 'The game.rallies.json file the vision tool made' }, found ? 'Other rally times' : 'Load rally times'), times);
+    paintFound();
     if (!player && !videoBox.children.length) videoBox.replaceChildren(h('p', { class: 'muted small' },
       video?.kind === 'file' ? `Open ${video.name} again to see the video. It never leaves this device.` : 'Open the game\'s video, or tag live without one. Files stay on this device.'));
     return loadYt;
@@ -559,7 +602,7 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
     () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
-  const paint = () => { paintScore(); if (!ro) paintPad(); paintList(); gameRecap.refresh([{ game: g, rallies }]); };
+  const paint = () => { paintScore(); if (!ro) paintPad(); paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
   paint();
@@ -572,6 +615,7 @@ async function tagView(g, n, pname, tname, back, ro = false) {
     const k = e.key.toLowerCase();
     if (k === ' ') { e.preventDefault(); player?.toggle(); }
     else if (k === 'arrowleft' || k === 'arrowright') { e.preventDefault(); player?.seek(player.now() + (k === 'arrowright' ? 1 : -1) * (e.shiftKey ? 5 : 2)); }
+    else if (k === 'n' && found) { e.preventDefault(); go(e.shiftKey ? -1 : 1); }
     else if (ro) return;
     else if (k === 'escape') { sel = null; paintPad(); }
     else if (k === 'u') undo();
@@ -589,9 +633,8 @@ async function tagView(g, n, pname, tname, back, ro = false) {
     // Wide screens: the video stays on the left while the panels scroll on the right.
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
-        h('div', { class: 'card' }, videoBox, sourceRow,
-          h('p', { class: 'muted small' }, ro ? 'Keys: space play/pause · ← → skip 2 s · tap a rally or touch to watch it'
-            : 'Keys: space play/pause · ← → skip 2 s · 0–3 grade · S P T A B D action · U undo · Esc clear'))),
+        h('div', { class: 'card' }, videoBox, sourceRow, foundBar,
+          keyHint)),
       h('div', { class: 'tag-right' },
         !ro && h('div', { class: 'card' }, pad),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));

@@ -474,6 +474,7 @@ tr.dim td { color: var(--muted); }
 .tag-video video, .tag-video .yt iframe { display: block; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; border: 0; }
 .tag-source { flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .tag-source input[type=url] { flex: 1 1 200px; min-width: 0; }
+.tag-found { flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .tag-rally-head { flex-wrap: wrap; gap: 8px 12px; margin-bottom: 10px; }
 .tag-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .tag-team { border-top: 3px solid var(--tc); padding-top: 8px; display: flex; flex-direction: column; gap: 8px; }
