@@ -17,7 +17,7 @@ const PAGES = [
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
   { id: 'scores', label: 'Scores', roles: ['organizer', 'super'], view: scoresPage },
-  { id: 'ratings', label: role => role === 'super' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
+  { id: 'ratings', label: role => role === 'super' || role === 'organizer' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
 ];
 

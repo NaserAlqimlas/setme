@@ -133,7 +133,7 @@ create policy players_delete on public.players for delete to authenticated using
 
 -- ratings: you read and write only your own; super reads all.
 create policy ratings_read on public.ratings for select to authenticated
-  using (rater_id = auth.uid() or public.my_role() = 'super');
+  using (rater_id = auth.uid() or public.my_role() in ('organizer', 'super'));  -- organizers too: organizer_ratings.sql
 create policy ratings_insert on public.ratings for insert to authenticated with check (rater_id = auth.uid());
 create policy ratings_update on public.ratings for update to authenticated
   using (rater_id = auth.uid()) with check (rater_id = auth.uid());
@@ -142,9 +142,9 @@ create policy ratings_delete on public.ratings for delete to authenticated using
 create policy ratings_super_write on public.ratings for all to authenticated
   using (public.my_role() = 'super') with check (public.my_role() = 'super');
 
--- rating_history: super reads everything, everyone else their own; only the trigger writes it.
+-- rating_history: organizers and super read everything, everyone else their own; only the trigger writes it.
 create policy rating_history_read on public.rating_history for select to authenticated
-  using (public.my_role() = 'super' or rater_id = auth.uid());
+  using (rater_id = auth.uid() or public.my_role() in ('organizer', 'super'));
 
 -- Scores: saved lineups per game day and each game's result (same as scores.sql).
 create table public.sessions (
@@ -665,3 +665,14 @@ language sql stable security definer set search_path = public as $$
       or exists (select 1 from public.rounds r, jsonb_array_elements(r.teams) t where r.session_id = s.id and t @> to_jsonb(p_player)))
   order by s.played_on
 $$;
+
+-- Organizers see All ratings (same as organizer_ratings.sql).
+-- Names for the rater picker and charts. Profiles stay private (they hold emails), so this hands out only names.
+create or replace function public.rater_names()
+returns table (id uuid, display_name text, setme boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.display_name, p.email = 'setme@setme.invalid'
+  from public.profiles p
+  where public.my_role() in ('organizer', 'super');
+$$;
+grant execute on function public.rater_names() to authenticated;
