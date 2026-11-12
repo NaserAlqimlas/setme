@@ -694,13 +694,13 @@ async function insightsView(sessions, pname, tname, roundRows) {
 
   const parts = [early, tiles, chartCard, factors, weights, days].filter(Boolean);
 
-  // Super: players whose teams did better or worse than their ratings said. Based on results only, but it points at
-  // players who may be rated too low or too high, so organizers don't get it.
-  if (me.role === 'super') {
+  // Players whose teams did better or worse than their ratings said: points at who may be rated too low or too high.
+  // Organizers and super (only they reach Insights).
+  {
     const ps = playerStats(games, a.k).filter(p => pname.has(p.id)).sort((x, y) => y.over - x.over);
     const adj = resultAdjustments(games);
     parts.push(h('div', { class: 'card' }, h('h3', {}, 'Players vs their ratings'),
-      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only you see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only organizers and the site owner see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
         'High and steady: maybe rated too low. Low: maybe too high. Under 10 games it\'s mostly luck. ',
         h('b', {}, 'Adjust'), ` is what Adjust for results on Teams adds to their strength (same scale as a team total; pulled toward 0 for few games${adj.size ? '' : `; starts after ${ADJUST_MIN_GAMES} games`}).`),
       stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Won'), h('th', { class: 'num' }, 'Margin'), h('th', { class: 'num' }, 'Vs ratings'), h('th', { class: 'num' }, 'Adjust'))),

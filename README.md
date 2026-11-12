@@ -11,8 +11,8 @@ How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 |---|---|
 | **player** | **Sign up** for game days (if their account is linked to a player), see published teams and scores on **Lineup**, and their own profile (**Me**). Can't rate |
 | **rater** | Rate players on **Rate**; see their own ratings on **My ratings** |
-| **organizer** | Everything a rater can, plus **Players** (gender, setter role, who's playing, paste the WhatsApp list) and **Teams** (combos, build, share). On Teams, has everything super has (Ratings from picker, team totals, skill sums, gaps and rating-based notes, combined or per rater via Show ratings from); never a single player's ratings. My ratings shows only their own |
-| **super** | Everything, plus add and delete players, **All ratings** (every rater, combined values, rater leans, disagreements), choose whose ratings a build uses, and **Users** (invite, reset links, roles, remove) |
+| **organizer** | Everything a rater can, plus **Players** (gender, setter role, who's playing, paste the WhatsApp list) and **Teams** (combos, build, share). On Teams, has everything super has, including each player's ratings on built teams. Also **All ratings** (every rater, rating history, leans, disagreements; needs `supabase/organizer_ratings.sql`) and Players vs their ratings on Scores → Insights |
+| **super** | Everything, plus add and delete players, anchor players, save SetMe's ratings, import ratings for another rater, tag past the 3-day window, each player's Me page and per-rater ratings on their profile, and **Users** (invite, reset links, roles, remove) |
 
 ## What's in the app
 

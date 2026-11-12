@@ -87,3 +87,5 @@
 
 ## Organizers see All ratings
 Organizers build teams, so they see everyone's ratings, rating history, leans and disagreements on All ratings, like the super. Profiles still hold emails, so organizers get raters' names through `rater_names()` instead of reading profiles. Writing is unchanged: everyone edits only their own ratings, and only the super saves SetMe's ratings or imports for others. Raters are told organizers can see their ratings (My ratings page). Needs `supabase/organizer_ratings.sql`.
+
+- Later the same day: organizers also get each player's ratings on built teams (build-teams no longer strips them) and Players vs their ratings on Insights, since All ratings already shows them every rating.

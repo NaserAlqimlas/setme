@@ -201,10 +201,6 @@ export default async (req) => {
   }
   result.variety = history.length;
   result.adjusted = resultsAdjust ? adjusted : null;
-  if (me.role !== 'super') {
-    // Organizers see team numbers (combined or one rater's, per team) but never a single player's ratings.
-    for (const opt of result.options) for (const t of opt.teams) t.players = t.players.map(({ id, name, setting, allGame }) => ({ id, name, setting, allGame }));
-  }
   // Problems go out as full text; a suggestion's fixes and new problems as the short form.
   if (result.problems) result.problems = result.problems.map(x => x.text);
   for (const sg of result.suggestions ?? []) { sg.fixes = sg.fixes.map(x => x.short); sg.adds = sg.adds.map(x => x.short); }
