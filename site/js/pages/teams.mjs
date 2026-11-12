@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, missing, pageHead, q, sb, seg, setterMark, SHORT, stacked, TEAM_COLORS, TIER_OPTIONS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, choose, datePicker, firstName, fmt, h, LABEL, me, missing, pageHead, q, sb, seg, setterMark, SHORT, stacked, TEAM_COLORS, TIER_OPTIONS, toast, today, toggle } from '../ui.mjs';
 import { ALL_GAME, SETTING_WEIGHT, SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { parseTeams } from '../paste.mjs';
 import { courtImage } from '../courtimg.mjs';
@@ -231,7 +231,7 @@ export async function teamsPage() {
 
   // The date, in words and as a picker. Saving and the shared image use it.
   const dayWords = h('h3', { class: 'day' });
-  const date = h('input', { type: 'date', value: gameDate, 'aria-label': 'Game date' });
+  const date = datePicker(gameDate, 'Game date');
   const saved = h('p', { class: 'small saved-line', hidden: true });
   // Already saved for that day? Said here so whoever picks up the phone sees it. Quiet when Scores isn't set up.
   const paintDay = async () => {

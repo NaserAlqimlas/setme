@@ -72,6 +72,25 @@ h3 { margin: 0; font: 650 1.08rem/1.25 var(--body); letter-spacing: -.01em; }
 /* ---------- controls ---------- */
 input[type=text], input[type=date], input[type=email], input[type=password], input[type=search], input[type=url], select {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-width: 0; min-height: 44px; }
+/* datePicker (ui.mjs): looks like the other fields; the calendar opens under it, weeks from Sunday. */
+.datepick { position: relative; display: inline-flex; min-width: 0; }
+.field > .datepick { font-size: 1rem; font-weight: 400; color: var(--fg); } /* not the small grey label text */
+.date-btn { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-height: 44px; font-weight: 500; text-align: left; width: 100%; }
+.date-btn:hover { filter: none; border-color: var(--line-strong); }
+.date-btn[aria-expanded="true"] { border-color: var(--primary); }
+.cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 292px; max-width: calc(100vw - 32px); padding: 10px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / .16); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.cal-head button { min-height: 36px; padding: 4px 12px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.cal-dow { font-size: .75rem; font-weight: 600; color: var(--muted); padding: 4px 0; }
+.cal-day { min-height: 36px; padding: 0; border-radius: 8px; background: transparent; color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.cal-day:hover { background: var(--surface-2); filter: none; }
+.cal-day.out { color: var(--muted); opacity: .6; }
+.cal-day.today { box-shadow: inset 0 0 0 1px var(--primary); }
+.cal-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-fg); opacity: 1; }
+.cal-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+.cal-foot button { min-height: 36px; }
 input:focus, select:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
 button { background: var(--primary); color: var(--primary-fg); border: 0; border-radius: 10px; padding: 9px 16px; min-height: 44px; font-weight: 600; cursor: pointer; transition: transform .05s, filter .15s, background .15s; }
 button:hover { filter: brightness(1.08); }

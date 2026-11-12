@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, canProfile, fmt, LABEL, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, canProfile, datePicker, fmt, LABEL, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, teamNames, weightedTotal } from '../teams.mjs';
 import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
 import { gameTallies, metrics, score, tallyFromCounts } from '../stats.mjs';
@@ -73,7 +73,7 @@ export async function signupPage() {
         h('button', { class: 'danger sm', onclick: async () => await ask(`Delete ${dayTitle(ev.played_on)}?`, `Its ${list.length} sign-up${list.length === 1 ? '' : 's'} are deleted too. This can't be undone.`, 'Delete') && act(() => q(sb.from('events').delete().eq('id', ev.id)), 'Deleted') }, 'Delete')));
   };
 
-  const date = h('input', { type: 'date', value: now, 'aria-label': 'Game day' });
+  const date = datePicker(now, 'Game day');
   const cap = h('input', { type: 'number', min: 2, max: 200, value: 24, class: 'score-in', 'aria-label': 'Spots' });
   const note = h('input', { type: 'text', placeholder: 'Note (time, place…)', 'aria-label': 'Note' });
   const create = e => {
