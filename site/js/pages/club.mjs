@@ -7,6 +7,7 @@ import { courtShare, dayTitle, setterBadge } from './teams.mjs';
 import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed, svg } from './ratings.mjs';
 import { GUIDE, STEPS } from './rate.mjs';
+import { focusAreas, sentence } from '../focus.mjs';
 
 // Club pages: Sign up, Lineup (players and raters) and player profiles.
 
@@ -142,16 +143,25 @@ const shortDate = iso => { const [y, m, d] = iso.split('-').map(Number); return 
 const totalOf = sk => SKILLS.every(s => sk[s] != null) ? Math.round(SKILLS.reduce((a, s) => a + sk[s], 0) * 100) / 100 : null;
 const weightedOf = sk => SKILLS.every(s => sk[s] != null) ? Math.round(weightedTotal(sk) * 100) / 100 : null;
 const moved = (a, b) => { const d = Math.round((b - a) * 100) / 100; return d > 0 ? `up ${fmt(d)}` : d < 0 ? `down ${fmt(-d)}` : 'no change'; };
-async function ownRatingCard(player) {
+// The rating guide for one skill, with the level nearest v (0 to 1) marked.
+function guideFor(s, v) {
+  const [what, ...steps] = GUIDE[s];
+  const here = v == null ? -1 : Math.round(v * 4);
+  return h('div', { class: 'own-guide' }, h('p', {}, what),
+    h('dl', {}, steps.flatMap((text, i) => [h('dt', { class: i === here ? 'here' : null }, STEPS[i]),
+      h('dd', { class: i === here ? 'here' : null }, text, i === here && h('span', { class: 'muted small' }, ' · closest to you'))])));
+}
+const OWN_SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'];
+async function ownRatingCard(player, pending) {
   const card = h('div', { class: 'card own-rating' }, h('h3', {}, 'Your rating'));
   let res;
-  try { res = await callFn('my-rating', {}); }
+  try { res = await pending; }
   catch { card.append(h('p', { class: 'muted' }, 'Your rating couldn\'t load right now. Try again later.')); return card; }
   if (!res?.linked) return null;
   const { current: cur, history: hist } = res;
   const withTotal = p => ({ ...p, overall: totalOf(p.skills), weighted: weightedOf(p.skills) });
   const current = withTotal(cur), history = hist.map(withTotal);
-  const skills = ['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'].filter(s => forPlayer(s, player));
+  const skills = OWN_SKILLS.filter(s => forPlayer(s, player));
   card.append(h('p', { class: 'muted small' }, 'Each skill is the average of what everyone who rated you gave, from 0 to 1, Total adds up the five main skills (0 to 5), and Weighted counts them the way team building does (also 0 to 5), like everywhere else. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.'));
   if (current.overall == null && !skills.some(s => current.skills[s] != null)) {
     card.append(h('p', {}, 'Not enough ratings yet.'));
@@ -166,16 +176,11 @@ async function ownRatingCard(player) {
           prev?.[k] != null && prev[k] !== current[k] && h('p', { class: 'small muted', style: 'margin:2px 0 0' }, `${moved(prev[k], current[k])} since ${prev.date ? shortDate(prev.date) : 'before'}`))))),
     h('ul', { class: 'own-skills' }, skills.map(s => {
       const v = current.skills[s];
-      // The rating guide for this skill, with the level nearest their average marked.
-      const [what, ...steps] = GUIDE[s];
-      const here = v == null ? -1 : Math.round(v * 4);
       return h('li', {}, h('details', {},
         h('summary', {}, h('span', {}, LABEL[s]),
           v == null ? h('span', { class: 'muted small' }, 'Not enough ratings yet')
             : [h('span', { class: 'bar', 'aria-hidden': 'true' }, h('span', { style: `width:${v * 100}%` })), h('b', {}, fmt(v))]),
-        h('div', { class: 'own-guide' }, h('p', {}, what),
-          h('dl', {}, steps.flatMap((text, i) => [h('dt', { class: i === here ? 'here' : null }, STEPS[i]),
-            h('dd', { class: i === here ? 'here' : null }, text, i === here && h('span', { class: 'muted small' }, ' · closest to you'))])))));
+        guideFor(s, v)));
     }))].filter(Boolean));
   // Wide screens: where they stand on the left, the chart beside it.
   const chart = ownChart(history, skills);
@@ -267,9 +272,9 @@ function gameLine(c) {
 }
 // Your match stats, on your own profile only: what you did in tagged games (my-stats), all of them and game by game.
 // Hidden until a game you played in has been tagged.
-async function ownStatsCard() {
+async function ownStatsCard(pending) {
   let res;
-  try { res = await callFn('my-stats', {}); }
+  try { res = await pending; }
   catch { return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'), h('p', { class: 'muted' }, 'Your match stats couldn\'t load right now. Try again later.')); }
   if (!res?.linked || !res.total || !res.games?.length) return null;
   const m = metrics(tallyFromCounts([res.total]).get(res.total.player_id));
@@ -285,6 +290,26 @@ async function ownStatsCard() {
     ...(rest.length ? [h('details', {}, h('summary', { class: 'small' }, `${plural(rest.length, 'earlier game')}`), h('ul', { class: 'own-games' }, rest.map(row)))] : []));
 }
 
+// What to work on: one strength and up to two things to work on, from your match stats against the club average and
+// from your ratings (focus.mjs). Your own profile only. Hidden until there's a tagged game or a rating to go on.
+async function focusCard(player, ratingP, statsP) {
+  const [rating, stats] = await Promise.all([ratingP.catch(() => null), statsP.catch(() => null)]);
+  if (!rating?.linked && !stats?.linked) return null;
+  const mine = stats?.total ? tallyFromCounts([stats.total]).get(stats.total.player_id).counts : {};
+  const skills = rating?.current?.skills ?? {};
+  if (!stats?.total && !Object.values(skills).some(v => v != null)) return null;
+  const { strength, focus } = focusAreas({ mine, club: stats?.club ?? {}, skills, labels: LABEL, shown: OWN_SKILLS.filter(s => forPlayer(s, player)) });
+  const card = h('div', { class: 'card own-focus' }, h('h3', {}, 'What to work on'),
+    h('p', { class: 'muted small' }, 'From your tagged games next to the club average (once you have 10 of a touch), and from your ratings. Tap one to see what each level looks like.'));
+  const item = f => h('li', { class: f.good ? 'good' : 'work' }, h('details', {},
+    h('summary', {}, h('span', { class: 'focus-tag' }, f.good ? 'Strength' : 'Work on'), h('span', {}, sentence(f))),
+    guideFor(f.skill, skills[f.skill] ?? null)));
+  const items = [strength, ...focus].filter(Boolean);
+  card.append(items.length ? h('ul', { class: 'own-focus-list' }, items.map(item))
+    : h('p', {}, 'Nothing stands out yet. This fills in as more of your games are tagged and more people rate you.'));
+  return card;
+}
+
 export async function profilePage(id) {
   if (!canProfile(id)) return h('div', { class: 'card empty' }, 'You can only see your own profile.');
   const [player] = await q(sb.from('players').select('*').eq('id', id));
@@ -294,7 +319,10 @@ export async function profilePage(id) {
     h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
       player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(', ') || ' '))));
   const parts = [head];
-  if (id === me.player_id) parts.push(await ownRatingCard(player), await ownStatsCard());
+  if (id === me.player_id) {
+    const ratingP = callFn('my-rating', {}), statsP = callFn('my-stats', {});
+    parts.push(...await Promise.all([ownRatingCard(player, ratingP), focusCard(player, ratingP, statsP), ownStatsCard(statsP)]));
+  }
 
   // Game days and games (player_games works for the player themself, organizers and super).
   let days = null;

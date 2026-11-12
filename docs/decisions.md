@@ -76,3 +76,11 @@
 - Rejected: Nothing offered instead; asked for directly.
 - After that, organizers can still view a game's tags read-only (View tags).
 - Rests on: TAG_DAYS and tagClosed in site/js/pages/scores.mjs; tag_open and the rallies/touches write policies in supabase/tag_window.sql.
+
+## 2026-11-12 · What to work on, on a player's own profile
+- Decided by: the designer
+- Why: A suggestion the designer received: use each player's tagged stats and ratings to show them what to work on.
+- Compared with the club average, not their team's: teams are rebuilt every week, so a team average mostly reflects who they were grouped with. The club average leaves the player out and needs at least 4 other players with touches of that kind, so it never stands for one or two people.
+- An action speaks once the player has 10 touches of it. One strength first, then up to two things to work on; small gaps say nothing. Ratings cover skills the stats don't (hustle, consistency, or not enough touches yet). When stats and ratings disagree about a skill, it isn't mentioned.
+- Rejected: comparing with teammates' average (chosen against); a 15-touch minimum (lowered to 10, as few games are tagged).
+- Rests on: site/js/focus.mjs (focusAreas, clubCounts; tests/test_focus.mjs), club totals from the my-stats function, focusCard in site/js/pages/club.mjs.

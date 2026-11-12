@@ -8,7 +8,7 @@
 
 **Raters.** Trusted members who rate each player on six skills, privately. Rate in occasional batches of about 26 players, not every game day. See only their own ratings.
 
-**Players.** Most of the group. Several are not technical. On phones only. Say they're coming to a game day, see the published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them, and their own match stats from tagged games (totals and game by game).
+**Players.** Most of the group. Several are not technical. On phones only. Say they're coming to a game day, see the published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them, and their own match stats from tagged games (totals and game by game). A What to work on card names one strength and up to two things to work on, from their stats next to the club average and from their ratings.
 
 The group coordinates in WhatsApp, and the WhatsApp list of who's coming takes priority: many members won't sign up in SetMe. Sign up runs alongside it. A game day has about 24 players in 4 teams of 6, with mixed genders and a handful of setters. Games go to 25, or stop when time runs out.
 
