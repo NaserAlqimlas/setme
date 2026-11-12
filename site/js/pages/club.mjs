@@ -319,9 +319,14 @@ export async function profilePage(id) {
     h('div', {}, h('h2', {}, player.name), h('p', {}, [player.setting === 'M' ? 'Setter' : player.setting === 'B' ? 'Backup setter' : null,
       player.playing ? 'Playing this session' : null, player.anchor ? 'Anchor player' : null, !player.active ? 'Inactive' : null, id === me.player_id ? 'You' : null].filter(Boolean).join(', ') || ' '))));
   const parts = [head];
-  if (id === me.player_id) {
-    const ratingP = callFn('my-rating', {}), statsP = callFn('my-stats', {});
-    parts.push(...await Promise.all([ownRatingCard(player, ratingP), focusCard(player, ratingP, statsP), ownStatsCard(statsP)]));
+  // Their Me page: your own, or anyone's for the super (exactly what they see, then the super's cards below).
+  const meView = id === me.player_id || isSuper;
+  if (meView) {
+    const ask = id === me.player_id ? {} : { player: id };
+    const ratingP = callFn('my-rating', ask), statsP = callFn('my-stats', ask);
+    const cards = (await Promise.all([ownRatingCard(player, ratingP), focusCard(player, ratingP, statsP), ownStatsCard(statsP)])).filter(Boolean);
+    if (id !== me.player_id) parts.push(h('p', { class: 'muted small me-as' }, cards.length ? `What ${player.name.split(' ')[0]} sees on their Me page:` : `${player.name.split(' ')[0]}'s Me page has no ratings or match stats yet.`));
+    parts.push(...cards);
   }
 
   // Game days and games (player_games works for the player themself, organizers and super).
@@ -409,8 +414,8 @@ export async function profilePage(id) {
           adj != null ? ` · Adjust for results adds ${signed(adj)}` : ''),
         h('p', { class: 'small' }, h('a', { href: '#ratings', onclick: () => openHistory(id) }, 'Rating history →'))));
     }
-    // Your own profile already has Your match stats.
-    const statRow = id === me.player_id ? [] : await q(sb.from('player_stats').select('*').eq('player_id', id)).catch(() => []);
+    // Their Me page above already has the match stats.
+    const statRow = meView ? [] : await q(sb.from('player_stats').select('*').eq('player_id', id)).catch(() => []);
     if (statRow.length) {
       const m = metrics(tallyFromCounts(statRow).get(id));
       parts.push(h('div', { class: 'card' }, h('h3', {}, 'Match stats'), h('p', { class: 'muted small' }, `From ${m.games} tagged game${m.games === 1 ? '' : 's'}. Only you see these.`),

@@ -1,5 +1,5 @@
 // POST /.netlify/functions/my-stats  (anyone signed in whose account is linked to a player)
-// -> { linked, total, games, touches } for the caller's own player only, from tagged games (supabase/match_stats.sql):
+// -> { linked, total, games, touches } for the caller's own player only (the super may pass { player: id }), from tagged games (supabase/match_stats.sql):
 //   total: their player_stats row (all tagged games) or null; games: tagged games they played, newest first,
 //   [{ id, played_on, mine, theirs }]; touches: their own touches, [{ game_id, action, grade }];
 //   club: everyone else's touches added together, per action and grade ({ serve: { 0: n, 1: n, … }, … }), for What to
@@ -22,7 +22,10 @@ export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
   const me = await caller(req);
   if (!me) return json({ error: 'Sign in first' }, 401);
-  const [profile] = await rest(`profiles?id=eq.${me.id}&select=*`);
+  // The super can ask for any player ({ player: id }) to see their Me page as they do.
+  const body = await req.json().catch(() => ({}));
+  if (body.player != null && me.role !== 'super') return json({ error: 'Only the super can see another player\'s Me page' }, 403);
+  const [profile] = body.player != null ? [{ player_id: body.player }] : await rest(`profiles?id=eq.${me.id}&select=*`);
   const pid = Number(profile?.player_id);
   if (!profile?.player_id || !Number.isInteger(pid)) return json({ linked: false });
   let total, raw, games, everyone;
