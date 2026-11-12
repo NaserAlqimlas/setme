@@ -1,4 +1,4 @@
-import { avatar, h, me, q, sb, session, setMe, setRender, setSession, toast } from './ui.mjs';
+import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, toast } from './ui.mjs';
 import { ratePage } from './pages/rate.mjs';
 import { playersPage } from './pages/players.mjs';
 import { teamsPage, teamsStore } from './pages/teams.mjs';
@@ -28,12 +28,19 @@ const query = new URLSearchParams(location.search);
 let pendingLink = query.get('token_hash') ? { token_hash: query.get('token_hash'), type: query.get('type') === 'recovery' ? 'recovery' : 'invite' } : null;
 // Supabase reports expired or used links in the URL hash.
 let linkError = new URLSearchParams(location.hash.slice(1)).get('error_description');
+// Light, dark, or auto (follow the device). Kept on this device; index.html applies it before the page paints.
+const themeNow = () => { try { return localStorage.getItem('setme-theme') ?? 'auto'; } catch { return 'auto'; } };
+function setTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  try { t === 'auto' ? localStorage.removeItem('setme-theme') : localStorage.setItem('setme-theme', t); } catch { /* not remembered */ }
+}
 function accountMenu() {
   const box = h('details', { class: 'menu account' },
     h('summary', { 'aria-label': `Account: ${me.display_name}` }, avatar(me.display_name || '?', 34), h('span', { class: 'who-text' }, h('b', {}, me.display_name), h('small', {}, me.role))),
     h('div', { class: 'menu-list', role: 'menu' },
       h('p', { class: 'small' }, h('b', {}, me.display_name), h('br'), h('span', { class: 'muted' }, `${session.user.email}, ${me.role}`)),
       me.player_id && h('a', { href: `#player/${me.player_id}`, role: 'menuitem', onclick: () => { box.open = false; } }, 'My profile'),
+      h('div', { class: 'menu-theme' }, h('span', { class: 'small' }, 'Theme'), seg([['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], themeNow(), setTheme, 'Theme')),
       h('button', { type: 'button', role: 'menuitem', onclick: () => { teamsStore.clear(); sb.auth.signOut(); } }, 'Sign out')));
   return box;
 }
