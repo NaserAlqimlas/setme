@@ -1,9 +1,12 @@
 // POST /.netlify/functions/my-stats  (anyone signed in whose account is linked to a player)
 // -> { linked, total, games, touches } for the caller's own player only, from tagged games (supabase/match_stats.sql):
 //   total: their player_stats row (all tagged games) or null; games: tagged games they played, newest first,
-//   [{ id, played_on, mine, theirs }]; touches: their own touches, [{ game_id, action, grade }].
+//   [{ id, played_on, mine, theirs }]; touches: their own touches, [{ game_id, action, grade }];
+//   club: everyone else's touches added together, per action and grade ({ serve: { 0: n, 1: n, … }, … }), for What to
+//   work on. An action is left out until at least MIN_OTHERS other players have touches of it, so no one's own numbers show.
 // Nothing about other players: no names, no one else's touches.
 import { caller, json, rest } from '../lib/supabase.mjs';
+import { clubCounts } from '../../site/js/focus.mjs';
 
 // Every row, a page at a time (the API returns at most 1,000 rows per request).
 async function allRows(path) {
@@ -22,14 +25,15 @@ export default async (req) => {
   const [profile] = await rest(`profiles?id=eq.${me.id}&select=*`);
   const pid = Number(profile?.player_id);
   if (!profile?.player_id || !Number.isInteger(pid)) return json({ linked: false });
-  let total, raw, games;
+  let total, raw, games, everyone;
   try {
-    [[total], raw, games] = await Promise.all([
-      rest(`player_stats?player_id=eq.${pid}&select=*`),
+    [everyone, raw, games] = await Promise.all([
+      allRows(`player_stats?select=*&order=player_id`),
       allRows(`touches?player_id=eq.${pid}&select=action,grade,rallies(game_id)&order=rally_id,seq`),
       rest(`games?or=(players_a.cs.{${pid}},players_b.cs.{${pid}})&select=id,session_id,score_a,score_b,players_a,created_at`),
     ]);
-  } catch { return json({ linked: true, total: null, games: [], touches: [] }); }  // match stats not set up yet
+  } catch { return json({ linked: true, total: null, games: [], touches: [], club: {} }); }  // match stats not set up yet
+  total = everyone.find(r => Number(r.player_id) === pid);
   // Tagged = at least one finished rally, as player_stats counts games.
   const ids = games.map(g => g.id);
   // Read in pages: the API returns at most 1,000 rows at a time, and this is one row per finished rally.
@@ -48,5 +52,5 @@ export default async (req) => {
   }).sort((a, b) => String(b.played_on).localeCompare(String(a.played_on)) || String(b.at).localeCompare(String(a.at)))
     .map(({ at, ...g }) => g);
   const touches = raw.map(t => ({ game_id: t.rallies?.game_id, action: t.action, grade: t.grade })).filter(t => tagged.has(t.game_id));
-  return json({ linked: true, total: total ?? null, games: out, touches });
+  return json({ linked: true, total: total ?? null, games: out, touches, club: clubCounts(everyone, pid) });
 };

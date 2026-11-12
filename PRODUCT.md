@@ -12,7 +12,7 @@ web
 
 **Raters.** Trusted members who rate each player on six skills, privately, in occasional batches.
 
-**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them, and their own match stats from tagged games (totals and game by game).
+**Secondary: players.** Most of the group, several of them not technical, on phones only. They say they're coming, see published teams and scores, and see their own attendance and record. They never rate. On their own profile they see their own average rating, per skill and overall, and each day it changed, never who rated them, and their own match stats from tagged games (totals and game by game). A What to work on card names one strength and up to two things to work on, from their stats next to the club average and from their ratings.
 
 ## Product Purpose
 
