@@ -22,6 +22,17 @@ export const other = side => side === 'a' ? 'b' : 'a';
 // Which side a player was on in this game.
 export const sideOf = (game, pid) => game.players_a.includes(pid) ? 'a' : game.players_b.includes(pid) ? 'b' : null;
 
+// Tags moved from game `from` to game `to`: do 'a' and 'b' need swapping? Yes when most touches were by players on
+// the other side in `to`; with no players in common, when the two teams are listed the other way round.
+export function flipSides(rallies, from, to) {
+  let same = 0, opposite = 0;
+  for (const r of rallies) for (const t of r.touches) {
+    const s1 = sideOf(from, t.p), s2 = sideOf(to, t.p);
+    if (s1 && s2) s1 === s2 ? same++ : opposite++;
+  }
+  return same || opposite ? opposite > same : from.team_a === to.team_b && from.team_b === to.team_a;
+}
+
 export function score(rallies) {
   const s = { a: 0, b: 0 };
   for (const r of rallies) if (r.won) s[r.won]++;

@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -55,6 +55,16 @@ ok('missing columns are zero', tallyFromCounts([{ player_id: 1, games: 2 }]).get
 // Digs: Up, Good and Perfect all keep the ball alive; the average grades them 0 to 3.
 const dg = metrics(tallyFromCounts([{ player_id: 1, games: 2, dig_0: 1, dig_1: 1, dig_3: 2 }]).get(1));
 ok('perfect digs count', dg.digs === 4 && near(dg.digsPerGame, 1.5) && near(dg.digAvg, 7 / 4), dg);
+
+// Moving tags to another game: sides swap when the other game lists the teams the other way round.
+{
+  const g1 = { team_a: 1, team_b: 2, players_a: [1, 2, 3], players_b: [4, 5, 6] };
+  const g2 = { team_a: 2, team_b: 1, players_a: [4, 5, 6], players_b: [1, 2, 3] };
+  const g3 = { team_a: 3, team_b: 4, players_a: [7, 8], players_b: [9, 10] };
+  ok('same order, no flip', !flipSides(rallies, g1, game));
+  ok('other way round, flip', flipSides(rallies, g1, g2));
+  ok('no shared players, by team', !flipSides(rallies, g1, g3) && flipSides([], g1, g2));
+}
 
 // Rows from the database: sorted by seq, renamed.
 const rows = fromRows([
