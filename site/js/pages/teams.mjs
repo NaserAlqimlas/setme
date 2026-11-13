@@ -984,6 +984,25 @@ function draftsCard(ownTeams, checkOptions) {
     card.hidden = !drafts.length;
     if (!drafts.length) return card.replaceChildren();
     const body = h('tbody');
+    // Open, Rename and Delete as a dropdown. A native <select>: a pop-up menu would be cut off by the table's scroll box.
+    const draftActions = d => {
+      const actions = {
+        open: () => ownTeams.load(d.teams, d.name, d.id),
+        rename: async () => {
+          const name = prompt('Rename this draft', d.name)?.trim();
+          if (!name || name === d.name) return;
+          try { await q(sb.from('drafts').update({ name }).eq('id', d.id)); ownTeams.renamed(d.id, name); card.refresh(); } catch (e) { toast(e.message); }
+        },
+        delete: async () => {
+          if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
+          try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
+        },
+      };
+      const sel = h('select', { class: 'draft-actions', 'aria-label': `Actions for ${d.name}` },
+        h('option', { value: '' }, 'Actions'), h('option', { value: 'open' }, 'Open'), h('option', { value: 'rename' }, 'Rename'), h('option', { value: 'delete' }, 'Delete'));
+      sel.onchange = () => { const act = actions[sel.value]; sel.value = ''; act?.(); };
+      return sel;
+    };
     const row = d => {
       const cells = { was: h('td', { class: 'num muted' }, '…'), gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
       const offNote = h('div', { class: 'small warn-text', hidden: true });
@@ -1002,17 +1021,7 @@ function draftsCard(ownTeams, checkOptions) {
       return h('tr', {},
         h('td', {}, h('b', {}, d.name), h('div', { class: 'muted small' }, `${d.teams.length} teams of ${d.teams.map(t => t.length).join('/')}${d.played_on ? ` · for ${dayTitle(d.played_on)}` : ''}`), offNote),
         h('td', { class: 'small' }, madeBy(d.created_by)), cells.was, h('td', { class: 'small' }, whoRated(d.raters)), cells.gap, cells.off, cells.rep,
-        h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
-          h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
-          h('button', { class: 'ghost sm', 'aria-label': `Rename ${d.name}`, onclick: async () => {
-            const name = prompt('Rename this draft', d.name)?.trim();
-            if (!name || name === d.name) return;
-            try { await q(sb.from('drafts').update({ name }).eq('id', d.id)); ownTeams.renamed(d.id, name); card.refresh(); } catch (e) { toast(e.message); }
-          } }, 'Rename'),
-          h('button', { class: 'ghost sm', 'aria-label': `Delete ${d.name}`, onclick: async () => {
-            if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
-            try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
-          } }, 'Delete'))));
+        h('td', {}, draftActions(d)));
     };
     body.replaceChildren(...drafts.map(row));
     card.replaceChildren(
