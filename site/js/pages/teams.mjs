@@ -1,5 +1,5 @@
 import { ask, avatar, callFn, choose, datePicker, firstName, fmt, h, LABEL, me, missing, pageHead, q, sb, seg, setterMark, SHORT, stacked, TEAM_COLORS, TIER_OPTIONS, toast, today, toggle } from '../ui.mjs';
-import { ALL_GAME, SETTING_WEIGHT, SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
+import { ALL_GAME, matchTeams, SETTING_WEIGHT, SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { parseTeams } from '../paste.mjs';
 import { courtImage } from '../courtimg.mjs';
 import { recapImage } from '../recapimg.mjs';
@@ -959,6 +959,8 @@ let draftsOk = false;
 // switches picked above and today's setters, exactly as opening it would, so "Gap now" is the gap you see when you open
 // it and drafts compare on the same ratings). Issues and repeats are from now.
 let raterNames = null; // id -> name, from build-teams (organizers can't read profiles)
+// Compare two drafts: whether the panel is open and which two, kept while the card refreshes.
+let compareOpen = false, compareIds = [];
 function draftsCard(ownTeams, checkOptions) {
   const card = h('div', { class: 'card', hidden: true });
   let asked = 0;
@@ -984,6 +986,7 @@ function draftsCard(ownTeams, checkOptions) {
     card.hidden = !drafts.length;
     if (!drafts.length) return card.replaceChildren();
     const body = h('tbody');
+    const nowRes = new Map(); // draft id -> its check with the raters picked above (Gap now), for Compare
     // Open, Rename and Delete as a dropdown. A native <select>: a pop-up menu would be cut off by the table's scroll box.
     const draftActions = d => {
       const actions = {
@@ -1009,8 +1012,9 @@ function draftsCard(ownTeams, checkOptions) {
       callFn('build-teams', { teams: d.teams, raters: d.raters, allGame: d.all_game, combos: d.combos, useCombos: true, ...buildExtras(), playedOn: d.played_on })
         .then(res => { if (mine === asked) { cells.was.textContent = fmt(gapOf(res)); cells.was.className = 'num'; } })
         .catch(e => { cells.was.textContent = '!'; cells.was.title = e.message; });
-      (opts.raters?.length === 0 ? Promise.reject(new Error('Turn on at least one rater')) : callFn('build-teams', { teams: d.teams, ...opts, allGame }))
-        .then(res => {
+      const now = opts.raters?.length === 0 ? Promise.reject(new Error('Turn on at least one rater')) : callFn('build-teams', { teams: d.teams, ...opts, allGame });
+      nowRes.set(d.id, now);
+      now.then(res => {
           if (mine !== asked) return;
           cells.gap.replaceChildren(h('b', {}, fmt(gapOf(res)))); cells.gap.className = 'num';
           cells.off.textContent = String(res.problems?.length ?? 0); cells.off.className = 'num';
@@ -1024,6 +1028,7 @@ function draftsCard(ownTeams, checkOptions) {
         h('td', {}, draftActions(d)));
     };
     body.replaceChildren(...drafts.map(row));
+    const compare = drafts.length >= 2 ? compareDrafts(drafts, nowRes, whoRated(opts.raters ?? null), () => mine === asked) : null;
     card.replaceChildren(
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Drafts'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `${day ? `For ${dayTitle(day)}: l` : 'L'}ineups you kept. `, h('b', {}, 'Gap saved'), ' is the gap with the raters and setters it was saved with. ', h('b', {}, 'Gap now'),
@@ -1034,6 +1039,7 @@ function draftsCard(ownTeams, checkOptions) {
           h('th', { class: 'num', title: 'Strongest team minus weakest, with the raters picked above' }, 'Gap now'), h('th', { class: 'num', title: 'Problems: setters, weak passers bunched, combos…' }, 'Issues'),
           h('th', { class: 'num', title: 'Pairs who were teammates on a recent game day' }, 'Repeats'), h('th', {}, ''))),
         body))),
+      ...(compare ? [compare] : []),
       draftsKey());
   };
   card.refresh();
@@ -1043,6 +1049,89 @@ function draftsCard(ownTeams, checkOptions) {
   const onDate = () => card.isConnected ? card.refresh() : document.removeEventListener('gamedate', onDate);
   document.addEventListener('gamedate', onDate);
   return card;
+}
+
+// Two drafts side by side: the numbers (with the raters picked above, like Gap now), then the teams paired up by
+// shared players, so it's clear who moves between them. live(): false once the card has refreshed.
+function compareDrafts(drafts, nowRes, raters, live) {
+  const ids = drafts.map(d => d.id);
+  if (!ids.includes(compareIds[0])) compareIds[0] = ids[0];
+  if (!ids.includes(compareIds[1]) || compareIds[1] === compareIds[0]) compareIds[1] = ids.find(id => id !== compareIds[0]);
+  const box = h('div', { class: 'draft-compare' });
+  const out = h('div');
+  const picker = k => {
+    const sel = h('select', { 'aria-label': k ? 'Second draft' : 'First draft' }, drafts.map(d => h('option', { value: d.id, selected: d.id === compareIds[k] }, d.name)));
+    sel.onchange = () => { compareIds[k] = drafts.find(d => String(d.id) === sel.value).id; paint(); };
+    return sel;
+  };
+  const toggleBtn = h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(compareOpen) }, compareOpen ? 'Hide comparison' : 'Compare two drafts');
+  toggleBtn.onclick = () => { compareOpen = !compareOpen; toggleBtn.textContent = compareOpen ? 'Hide comparison' : 'Compare two drafts'; toggleBtn.setAttribute('aria-expanded', String(compareOpen)); paint(); };
+
+  const paint = async () => {
+    if (!compareOpen) return box.replaceChildren(toggleBtn);
+    const [a, b] = compareIds.map(id => drafts.find(d => d.id === id));
+    box.replaceChildren(toggleBtn, h('div', { class: 'row compare-pick' }, picker(0), h('span', { class: 'muted' }, 'vs'), picker(1)), out);
+    if (a.id === b.id) return out.replaceChildren(h('p', { class: 'muted' }, 'Pick two different drafts.'));
+    out.replaceChildren(h('p', { class: 'muted small' }, 'Checking…'));
+    let ra, rb;
+    try { [ra, rb] = await Promise.all([nowRes.get(a.id), nowRes.get(b.id)]); }
+    catch (e) { return out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
+    if (!live() || compareIds[0] !== a.id || compareIds[1] !== b.id) return;
+    const ta = ra.options[0].teams, tb = rb.options[0].teams;
+    const m = matchTeams(ta.map(t => t.players.map(p => p.id)), tb.map(t => t.players.map(p => p.id)));
+    const name = new Map([...ta, ...tb].flatMap(t => t.players.map(p => [p.id, p.name])));
+    const spread = (ts, f) => { const v = ts.map(f); return Math.max(...v) - Math.min(...v); };
+
+    // The numbers: lower is better in every row, and the better one is marked.
+    const rows = [
+      ['Gap', 'Strongest team minus weakest', t => spread(t, x => x.weighted), r => r.options[0].teams],
+      ['Issues', 'Problems: setters, weak passers bunched, combos…', null, r => r.problems?.length ?? 0],
+      ['Repeats', 'Pairs who were teammates on a recent game day', null, r => r.variety ? r.options[0].repeats?.length ?? 0 : null],
+      'Spread between teams',
+      ...[...SKILLS, 'setting'].map(s => [s === 'setting' ? 'Setting' : LABEL[s], `Best team's ${s === 'setting' ? 'setting' : LABEL[s].toLowerCase()} minus worst team's`, t => spread(t, x => x.sums[s]), r => r.options[0].teams]),
+    ];
+    const cellOf = (val, other) => h('td', { class: `num${val != null && other != null && val < other - 1e-9 ? ' better' : ''}` }, val == null ? '–' : Number.isInteger(val) ? String(val) : fmt(val));
+    const numbers = h('table', { class: 'compare-table' },
+      h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', { class: 'num' }, a.name), h('th', { class: 'num' }, b.name))),
+      h('tbody', {}, rows.map(row => {
+        if (typeof row === 'string') return h('tr', { class: 'group' }, h('th', { colspan: 3, scope: 'colgroup' }, row));
+        const [label, tip, f, get] = row;
+        const va = f ? f(get(ra)) : get(ra), vb = f ? f(get(rb)) : get(rb);
+        return h('tr', {}, h('th', { scope: 'row', title: tip }, label), cellOf(va, vb), cellOf(vb, va));
+      })));
+
+    // The teams paired up: who stays, who leaves (and for which team), who joins.
+    const teamOfB = new Map(tb.flatMap((t, j) => t.players.map(p => [p.id, j])));
+    const teamOfA = new Map(ta.flatMap((t, i) => t.players.map(p => [p.id, i])));
+    const side = (t, i, stay, which) => !t ? h('div', { class: 'compare-team empty muted small' }, 'No team') :
+      h('div', { class: 'compare-team' },
+        h('div', { class: 'compare-team-head' }, h('b', {}, `Team ${i + 1}`), h('span', { class: 'muted small' }, `total ${fmt(t.weighted)}`)),
+        h('ul', {}, t.players.map(p => {
+          const moving = !stay.includes(p.id);
+          const where = which === 'a' ? teamOfB.get(p.id) : teamOfA.get(p.id);
+          const note = !moving ? null : where == null ? (which === 'a' ? 'not in the other draft' : 'new to this draft')
+            : which === 'a' ? `to Team ${where + 1}` : `from Team ${where + 1}`;
+          return h('li', { class: moving ? 'moving' : null }, p.name, note && h('span', { class: 'muted small' }, ` · ${note}`));
+        })));
+    const teams = h('div', { class: 'compare-teams' },
+      h('div', { class: 'compare-team-labels' }, h('b', {}, a.name), h('b', {}, b.name)),
+      m.pairs.map(p => h('div', { class: 'compare-pair' },
+        side(p.a == null ? null : ta[p.a], p.a, p.stay, 'a'),
+        side(p.b == null ? null : tb[p.b], p.b, p.stay, 'b'))));
+    const moves = m.moved === 0 && !m.onlyA.length && !m.onlyB.length ? 'Same teams: nobody changes team.'
+      : [m.moved && `${m.moved} ${m.moved === 1 ? 'player changes' : 'players change'} team`,
+        m.onlyA.length && `${m.onlyA.map(id => name.get(id)).join(', ')} only in ${a.name}`,
+        m.onlyB.length && `${m.onlyB.map(id => name.get(id)).join(', ')} only in ${b.name}`].filter(Boolean).join(' · ') + '.';
+    const issues = [[a, ra], [b, rb]].filter(([, r]) => r.problems?.length);
+    out.replaceChildren(
+      h('p', { class: 'muted small' }, `Both checked with ${raters} and today's setters, like Gap now. Lower is more even; the better number is marked.`),
+      numbers,
+      h('p', {}, h('b', {}, moves)),
+      teams,
+      ...issues.map(([d, r]) => h('div', {}, h('p', { class: 'small', style: 'margin:10px 0 2px' }, h('b', {}, `Issues in ${d.name}`)), h('ul', { class: 'problems' }, r.problems.map(x => h('li', {}, x))))));
+  };
+  paint();
+  return box;
 }
 
 // Under the Drafts table: what each column means and why the two gaps differ.

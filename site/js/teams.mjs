@@ -384,6 +384,29 @@ function moved(a, b, n) {
   return n - best;
 }
 
+// Two lineups (arrays of teams of player ids) lined up team by team, for comparing drafts. Team numbers mean nothing
+// (Team 1 in one draft can be Team 3 in the other), so each team is paired with the one it shares the most players
+// with. -> { pairs: [{ a, b, stay, out, in }], moved, onlyA, onlyB }:
+//   a / b: team index in each lineup (null when one lineup has fewer teams); stay: on this team in both;
+//   out: on a's team only; in: on b's team only; moved: players in both lineups who change teams;
+//   onlyA / onlyB: players in one lineup and not the other.
+export function matchTeams(a, b) {
+  const n = Math.max(a.length, b.length);
+  const pad = l => [...l.map(t => new Set(t)), ...Array.from({ length: n - l.length }, () => new Set())];
+  const A = pad(a), B = pad(b);
+  let best = null, most = -1;
+  for (const perm of permutations([...Array(n).keys()])) {   // the first is a's own order, so ties keep it
+    let same = 0;
+    perm.forEach((j, i) => { for (const x of A[i]) if (B[j].has(x)) same++; });
+    if (same > most) { most = same; best = perm; }
+  }
+  const inA = new Set(a.flat()), inB = new Set(b.flat());
+  const pairs = best.map((j, i) => ({ a: i < a.length ? i : null, b: j < b.length ? j : null,
+    stay: [...A[i]].filter(x => B[j].has(x)), out: [...A[i]].filter(x => !B[j].has(x)), in: [...B[j]].filter(x => !A[i].has(x)) }));
+  return { pairs, moved: pairs.reduce((s, p) => s + p.out.filter(x => inB.has(x)).length, 0),
+    onlyA: [...inA].filter(x => !inB.has(x)), onlyB: [...inB].filter(x => !inA.has(x)) };
+}
+
 function* combinations(arr, k, startAt = 0, acc = []) {
   if (acc.length === k) { yield acc; return; }
   for (let i = startAt; i < arr.length; i++) yield* combinations(arr, k, i + 1, [...acc, arr[i]]);
