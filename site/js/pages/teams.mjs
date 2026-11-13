@@ -198,8 +198,10 @@ export async function teamsPage() {
   let raterIds = null;
   const newPlayers = newPlayersCard(() => raterIds);
   const out = h('div', { class: 'teams-out' });
-  const ownTeams = ownTeamsCard(out, () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })), ...buildExtras() }));
-  const drafts = draftsCard(ownTeams);
+  // What a check uses: the raters and switches picked above. Opened drafts and the Drafts list both use it, so they agree.
+  const checkOptions = () => ({ raters: raterIds, useCombos, combos: combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind })), ...buildExtras() });
+  const ownTeams = ownTeamsCard(out, checkOptions);
+  const drafts = draftsCard(ownTeams, checkOptions);
   const btn = h('button', { class: 'ball big', disabled: !playing.length }, 'Build teams');
   // An empty list means every rater is switched off: nothing to build from until one is back on.
   const needRater = h('p', { class: 'warn small need-rater', hidden: true }, 'Turn on at least one rater to build teams.');
@@ -213,14 +215,14 @@ export async function teamsPage() {
     : await callFn('build-teams', { listRaters: true }).then(({ raters }) => ({ ratings: raters.map(r => ({ rater_id: r.id })), profiles: raters })).catch(() => null);
   const raterPick = raterList === null ? null : await raterPicker(ids => {
     raterIds = ids;
-    ownTeams.refresh();
+    ownTeams.refresh(); drafts.refresh();
     const none = ids?.length === 0;
     btn.disabled = none || !playing.length; needRater.hidden = !none;
     if (none) options.open = true;
     if (!none) newPlayers.refresh();
     paintOptions();
   }, raterList);
-  const switched = (set) => v => { set(v); ownTeams.refresh(); paintOptions(); };
+  const switched = (set) => v => { set(v); ownTeams.refresh(); drafts.refresh(); paintOptions(); };
   options.body.append(
     raterPick ?? '', needRater,
     h('div', { class: 'switches' },
@@ -953,7 +955,11 @@ async function saveDraft(teams, opts, label) {
 let draftsOk = false;
 // Saved drafts side by side: each one re-checked with today's ratings (gap, what's off, repeat teammates).
 // Only the drafts for the game date picked above (plus any saved without a date); other days' come back when their date is picked.
-function draftsCard(ownTeams) {
+// Each draft is checked twice: as saved (the raters, setters and combos it was saved with) and now (the raters and
+// switches picked above and today's setters, exactly as opening it would, so "Gap now" is the gap you see when you open
+// it and drafts compare on the same ratings). Issues and repeats are from now.
+let raterNames = null; // id -> name, from build-teams (organizers can't read profiles)
+function draftsCard(ownTeams, checkOptions) {
   const card = h('div', { class: 'card', hidden: true });
   let asked = 0;
   card.refresh = async () => {
@@ -964,17 +970,30 @@ function draftsCard(ownTeams) {
       drafts = await q((day ? all.or(`played_on.eq.${day},played_on.is.null`) : all.is('played_on', null)).order('created_at', { ascending: false }).limit(12));
     } catch { card.hidden = true; return; }
     if (mine !== asked) return; // the date changed while this was loading
+    const opts = checkOptions();
+    raterNames ??= callFn('build-teams', { listRaters: true }).then(({ raters, people }) => new Map((people ?? raters).map(r => [r.id, r.display_name ?? '?'])), () => new Map());
+    const [allGame, names] = await Promise.all([ownTeams.roster().then(allGameIds), raterNames]);
+    if (mine !== asked) return;
+    // First names, unless two raters share one.
+    const first = id => (names.get(id) ?? 'Removed rater').split(/[\s.@]/)[0];
+    const nameOf = id => [...names.keys()].filter(x => first(x) === first(id)).length > 1 ? names.get(id) : first(id);
+    const madeBy = id => id == null ? '–' : id === me.id ? 'You' : nameOf(id);
+    const whoRated = ids => ids == null ? 'Everyone' : ids.map(nameOf).join(', ');
+    const gapOf = res => { const t = res.options[0].teams.map(x => x.weighted); return Math.max(...t) - Math.min(...t); };
     if (!draftsOk) { draftsOk = true; document.querySelectorAll('.draft-btn').forEach(b => { b.hidden = false; }); }
     card.hidden = !drafts.length;
     if (!drafts.length) return card.replaceChildren();
     const body = h('tbody');
     const row = d => {
-      const cells = { gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
+      const cells = { was: h('td', { class: 'num muted' }, '…'), gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
       const offNote = h('div', { class: 'small warn-text', hidden: true });
       callFn('build-teams', { teams: d.teams, raters: d.raters, allGame: d.all_game, combos: d.combos, useCombos: true, ...buildExtras(), playedOn: d.played_on })
+        .then(res => { if (mine === asked) { cells.was.textContent = fmt(gapOf(res)); cells.was.className = 'num'; } })
+        .catch(e => { cells.was.textContent = '!'; cells.was.title = e.message; });
+      (opts.raters?.length === 0 ? Promise.reject(new Error('Turn on at least one rater')) : callFn('build-teams', { teams: d.teams, ...opts, allGame }))
         .then(res => {
-          const tot = res.options[0].teams.map(t => t.weighted);
-          cells.gap.replaceChildren(h('b', {}, fmt(Math.max(...tot) - Math.min(...tot)))); cells.gap.className = 'num';
+          if (mine !== asked) return;
+          cells.gap.replaceChildren(h('b', {}, fmt(gapOf(res)))); cells.gap.className = 'num';
           cells.off.textContent = String(res.problems?.length ?? 0); cells.off.className = 'num';
           cells.rep.textContent = res.variety ? String(res.options[0].repeats?.length ?? 0) : '–'; cells.rep.className = 'num';
           const gone = res.offList?.out ?? [];
@@ -982,7 +1001,7 @@ function draftsCard(ownTeams) {
         }).catch(e => { cells.gap.textContent = '!'; cells.gap.title = e.message; });
       return h('tr', {},
         h('td', {}, h('b', {}, d.name), h('div', { class: 'muted small' }, `${d.teams.length} teams of ${d.teams.map(t => t.length).join('/')}${d.played_on ? ` · for ${dayTitle(d.played_on)}` : ''}`), offNote),
-        cells.gap, cells.off, cells.rep,
+        h('td', { class: 'small' }, madeBy(d.created_by)), cells.was, h('td', { class: 'small' }, whoRated(d.raters)), cells.gap, cells.off, cells.rep,
         h('td', {}, h('div', { class: 'row', style: 'gap:6px; justify-content:flex-end' },
           h('button', { class: 'sm', onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
           h('button', { class: 'ghost sm', 'aria-label': `Rename ${d.name}`, onclick: async () => {
@@ -998,17 +1017,41 @@ function draftsCard(ownTeams) {
     body.replaceChildren(...drafts.map(row));
     card.replaceChildren(
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Drafts'),
-        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `${day ? `For ${dayTitle(day)}: l` : 'L'}ineups you kept, checked again with today\'s ratings and the switches above. Lower gap is more even. Open one to swap, share or save it for scores.`))),
+        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, `${day ? `For ${dayTitle(day)}: l` : 'L'}ineups you kept. `, h('b', {}, 'Gap saved'), ' is the gap with the raters and setters it was saved with. ', h('b', {}, 'Gap now'),
+          ` uses the raters picked above (${whoRated(opts.raters ?? null)}) and today\'s setters, the same as when you open it. Both use today\'s ratings. Lower gap is more even.`))),
       h('div', { class: 'scroll' }, stacked(h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, 'Draft'), h('th', { class: 'num', title: 'Strongest team minus weakest' }, 'Gap'), h('th', { class: 'num', title: 'Problems: setters, weak passers bunched, combos…' }, 'Issues'),
+        h('thead', {}, h('tr', {}, h('th', {}, 'Draft'), h('th', { title: 'Who saved the draft' }, 'By'), h('th', { class: 'num', title: 'Strongest team minus weakest, with the raters it was saved with' }, 'Gap saved'),
+          h('th', { title: 'Raters switched on when the draft was saved' }, 'Saved with'),
+          h('th', { class: 'num', title: 'Strongest team minus weakest, with the raters picked above' }, 'Gap now'), h('th', { class: 'num', title: 'Problems: setters, weak passers bunched, combos…' }, 'Issues'),
           h('th', { class: 'num', title: 'Pairs who were teammates on a recent game day' }, 'Repeats'), h('th', {}, ''))),
-        body))));
+        body))),
+      draftsKey());
   };
   card.refresh();
   document.addEventListener('drafts', () => { if (card.isConnected) card.refresh(); });
+  const onSetters = () => card.isConnected ? card.refresh() : document.removeEventListener('setterplan', onSetters);
+  document.addEventListener('setterplan', onSetters);
   const onDate = () => card.isConnected ? card.refresh() : document.removeEventListener('gamedate', onDate);
   document.addEventListener('gamedate', onDate);
   return card;
+}
+
+// Under the Drafts table: what each column means and why the two gaps differ.
+function draftsKey() {
+  const rows = [
+    ['By', 'Who saved the draft.'],
+    ['Gap saved', 'Strongest team\'s total minus weakest team\'s, worked out with the raters and setters the draft was saved with.'],
+    ['Saved with', 'The raters switched on under Options when the draft was saved.'],
+    ['Gap now', 'The same gap with the raters switched on above right now, and today\'s setters. This is the gap you see when you open the draft, and every draft gets the same raters, so this is the column to compare drafts by.'],
+    ['Issues', 'Problems with the teams now: setters, weak passers on one team, combos broken…'],
+    ['Repeats', 'Pairs who were teammates on a recent game day.'],
+  ];
+  return h('details', { class: 'stats-key wide' }, h('summary', {}, 'What the columns mean'),
+    h('dl', {}, rows.flatMap(([t, d]) => [h('dt', {}, t), h('dd', {}, d)])),
+    h('p', { class: 'muted small' }, 'Why the two gaps can be far apart: raters don\'t agree on everyone. Teams built from one rater\'s numbers are even by that rater, ',
+      'but with everyone\'s ratings combined the same players can add up differently. Setters count too: a setter down to set the whole game counts differently from one who swaps out. ',
+      'Both gaps use today\'s ratings, so a big difference comes from whose ratings are used (or the setters), not from ratings changing since the draft was saved. ',
+      GAP_SCALE));
 }
 
 // Playing tonight with no ratings yet: whoever builds picks a stand-in level for each.

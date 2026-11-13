@@ -740,6 +740,7 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .stats-key summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .stats-key dl { display: grid; grid-template-columns: 4.5rem 1fr; gap: 4px 10px; margin: 10px 0; font-size: .9rem; }
 .stats-key dt { font-weight: 700; }
+.stats-key.wide dl { grid-template-columns: 6.5rem 1fr; }
 .stats-key dd { margin: 0; }
 .own-guide dl { display: grid; grid-template-columns: 2.5rem 1fr; gap: 4px 10px; margin: 0; }
 .own-guide dt { font-weight: 700; font-variant-numeric: tabular-nums; }

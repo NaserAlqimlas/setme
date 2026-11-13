@@ -1,5 +1,5 @@
 // POST /.netlify/functions/build-teams  { numTeams?: number, useCombos?: boolean, combos?: [{ player_a, player_b, kind: 'together'|'apart' }] }
-// raters: [ids] builds from those raters' ratings only. { listRaters: true } returns who has rated anyone.
+// raters: [ids] builds from those raters' ratings only. { listRaters: true } returns who has rated anyone, and everyone's names.
 // allGame: [playerId] = setters who set all game (default: every main setter); see teamSkills in teams.mjs.
 // POST { check: true } instead lists who's playing with no ratings yet, so the organizer can pick a tier for them.
 // POST { teams: [[playerId, ...], ...], locked?: [playerId] } rates teams you made yourself instead of building them (any active
@@ -63,10 +63,12 @@ export default async (req) => {
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
   ]);
-  // Who has rated anyone, for the Ratings from picker (organizers can't read other people's rating rows).
+  // Who has rated anyone, for the Ratings from picker (organizers can't read other people's rating rows), and everyone's
+  // name (people), for who made each draft. Names only, never emails.
   if (listRaters) {
     const has = new Set(ratings.map(r => r.rater_id));
-    return json({ raters: (await rest('profiles?select=id,display_name')).filter(p => has.has(p.id)) });
+    const people = await rest('profiles?select=id,display_name');
+    return json({ raters: people.filter(p => has.has(p.id)), people });
   }
   if (Array.isArray(raters) && !raters.length) return json({ error: 'Pick at least one rater' }, 400);
   const pick = Array.isArray(raters) ? new Set(raters) : null;
