@@ -33,7 +33,7 @@ class TrackSettings:
     max_misses: int = 5        # frames a track may go without a candidate before it ends
     window: int = 7            # points checked together for a smooth curve
     max_wobble: float = 0.006  # how far points may stray from the curve (root mean square, frame heights)
-    min_speed: float = 0.5     # slower than this (frame heights a second) is held, bounced or rolled, not flying
+    min_speed: float = 0.3     # slower than this (frame heights a second) is held, bounced or rolled, not flying
     max_speed: float = 8.0     # faster is a jump between two different things
     join: float = 0.35         # seconds: curve stretches this close together are one flight
 

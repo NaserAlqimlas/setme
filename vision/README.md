@@ -6,9 +6,24 @@ instead of scrubbing through the time between. It runs on your computer; the vid
 Works for a camera that doesn't move (a phone on a tripod or propped up), anywhere it can see the court. It spots
 the club's yellow-and-blue ball by its colour.
 
-**How well it works:** on a 20-minute game tagged in SetMe (37 rallies) it found all 37, split one in two, and added
-3 stretches that weren't rallies (the ball thrown back to the server). Each jump lands about 2 seconds before the serve.
-It reads a 20-minute iPhone video in under 3 minutes on an M1 laptop.
+**How well it works:** checked against seven games tagged in SetMe (342 rallies, two gyms, several camera spots),
+with the same settings for all: 279 found (82%), and about 10 stretches per game that weren't rallies (mostly the ball
+thrown back to the server). The settings were tuned on two of the games; on the five it never saw it found 205 of 255
+(80%). Each jump lands about 3 seconds before the serve. It reads a 20-minute iPhone video in about 3 minutes on an M1
+laptop.
+
+| Game | Found | Missed | Extra | |
+|---|---|---|---|---|
+| IMG_5276 | 34 of 37 | 3 | 6 | tuned on |
+| IMG_5289 | 40 of 50 | 10 | 10 | tuned on |
+| IMG_5277 | 36 of 41 | 5 | 13 | |
+| IMG_5278 | 24 of 46 | 22 | 2 | camera tilted down: the frame ends just above the net |
+| IMG_5279 | 35 of 37 | 2 | 7 | |
+| IMG_5290 | 37 of 48 | 11 | 10 | |
+| IMG_0300 | 73 of 83 | 10 | 21 | |
+
+**Filming tip:** keep plenty of room above the net in the frame. The ball spends most of a rally up there; a camera
+tilted down (IMG_5278) loses it and misses half the rallies.
 
 ## Set up (once)
 
@@ -60,11 +75,14 @@ Download the result as CSV, then:
 ```
 
 It says how many tagged rallies were found, missed, or found where there was none, and tries other settings to show
-which would do better. The first run reads the video; later runs reuse what it saw (`game.candidates-*.pkl`).
+which would do better. Give it a folder instead of a video to check every tagged video in it with the current
+settings and get the table above. The first run reads the video; later runs reuse what it saw (`game.candidates-*.pkl`).
 
 ## How it works
 
-1. **detect.py**: the club's ball is the only strong yellow in the gym, so yellow blobs are ball candidates. (With
+1. **detect.py**: blobs of the ball's yellow (hue around 24, saturated) that are moving and at least ball-sized are
+   candidates, at full resolution since the ball can be only a few pixels across. Lime shirts and pale wood are
+   close in colour, which is why the range is tight and the edges of a shirt (small blobs) don't count. (With
    `--ball motion`: the camera is still, so small, roundish things that move stand out from the background.)
 2. **track.py**: candidates are linked frame to frame. Between touches a ball in the air follows a smooth curve, so
    a *flight* is a stretch that fits one closely and moves fast enough. Hands, heads and noise don't; a ball held,
