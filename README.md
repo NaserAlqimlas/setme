@@ -80,6 +80,8 @@ Match stats: paste and run `supabase/match_stats.sql` (adds `rallies`, `touches`
 
 Perfect digs: paste and run `supabase/dig_perfect.sql` after `match_stats.sql` (adds `dig_3` to `player_stats`). Safe to run again. Until then Dig → Perfect saves and shows in each game's tags, but totals on All ratings and Me leave those digs out.
 
+Consistency from tags: paste and run `supabase/consistency.sql` after `match_stats.sql` and `dig_perfect.sql` (adds the `player_day_stats` view). Safe to run again. Until then SetMe's ratings leave consistency out and say the SQL is needed.
+
 Organizers see All ratings: paste and run `supabase/organizer_ratings.sql` (everyone's ratings and rating history, and raters' names, for organizers). Safe to run again. Until then organizers' All ratings page only has their own ratings.
 
 Tags on the wrong game: paste and run `supabase/move_tags.sql` after `match_stats.sql` and `tag_window.sql` (adds `move_game_tags`). Safe to run again. Until then the Tag screen's Wrong game? button says the SQL is needed.
