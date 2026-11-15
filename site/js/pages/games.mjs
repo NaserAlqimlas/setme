@@ -10,8 +10,10 @@ import { uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
 import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
+import { searchDays } from '../gamesearch.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
+let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
 const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -26,11 +28,23 @@ export async function gamesPage() {
   const consent = h('p', { class: 'muted small' }, 'Some games are filmed so the club can review them. ',
     'Only organizers and the players in a game can watch its video and see its stats. Rather not be filmed? Tell an organizer.');
   const all = data.days.flatMap(d => d.games.map(g => ({ ...g, played_on: d.played_on })));
+  const open = id => { openGame = id; show(); scrollTo(0, 0); };
+  // Only the list is redrawn while typing, so the search box keeps its place and focus.
+  const list = h('div');
+  const paintList = () => {
+    const found = searchDays(data.days, query), n = found.reduce((t, d) => t + d.games.length, 0);
+    fill(list, query.trim() && h('p', { class: 'muted small', role: 'status' }, n ? `${n} game${n === 1 ? '' : 's'} found` : ''),
+      found.length ? found.map(d => dayCard(d, open))
+        : h('div', { class: 'card empty' }, 'No games match that. Try a first name, a date like "nov 10", or video, tagged or untagged.'));
+  };
+  const search = h('input', { type: 'search', class: 'gd-search', placeholder: 'Search: a name, a date like "nov 10", video, tagged…', 'aria-label': 'Search games', value: query });
+  search.oninput = () => { query = search.value; paintList(); };
   const show = () => {
     const g = all.find(x => x.id === openGame);
     if (g) return fill(wrap, gameView(g, () => { openGame = null; show(); scrollTo(0, 0); }));
-    fill(wrap, head, bulkBox, data.days.length ? data.days.map(d => dayCard(d, id => { openGame = id; show(); scrollTo(0, 0); }))
-      : h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
+    if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
+    paintList();
+    fill(wrap, head, bulkBox, search, list, consent);
   };
   show();
   return wrap;
