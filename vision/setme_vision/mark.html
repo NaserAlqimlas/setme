@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Court marks</title>
+<style>
+  :root {
+    --bg: #f6f6f8; --surface: #ffffff; --fg: #17171f; --muted: #5f5f73; --line: #dcdce6;
+    --accent: #2f6fde; --on-accent: #ffffff; --ok: #13804f; --bad: #b8322a;
+    --mark: #ff2bd6; --court: #00e5ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111118; --surface: #1b1b26; --fg: #f0f0f6; --muted: #a0a0b6; --line: #2c2c3c;
+      --accent: #7ba4ff; --on-accent: #0b1430; --ok: #3cc488; --bad: #ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 17px; margin: 0; }
+  button, select { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .status { margin-left: auto; color: var(--muted); font-size: 14px; }
+  main { padding: 16px 20px 40px; max-width: 1500px; margin: 0 auto; }
+  .help { color: var(--muted); margin: 0 0 12px; max-width: 85ch; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
+  .work { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+  @media (max-width: 1000px) { .work { grid-template-columns: 1fr; } }
+  .stage { background: #000; border-radius: 10px; overflow: hidden; cursor: crosshair; }
+  .stage canvas { display: block; width: 100%; height: auto; }
+  .time { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 14px; }
+  .time input { flex: 1; min-width: 160px; }
+  aside { display: grid; gap: 12px; }
+  .zoom { width: 100%; aspect-ratio: 1; background: #000; border-radius: 10px; display: block; cursor: crosshair; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .now { font-weight: 600; font-size: 16px; }
+  .points { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; font-size: 14px; }
+  .points button { width: 100%; text-align: left; border: 0; padding: 4px 8px; border-radius: 6px; display: flex; gap: 8px; }
+  .points button[aria-current=true] { background: var(--accent); color: var(--on-accent); }
+  .points .st { width: 1.2em; text-align: center; }
+  .diagram { display: block; width: 120px; margin: 0 auto; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .fit { font-size: 14px; color: var(--muted); }
+  .fit b { color: var(--fg); }
+  .bad { color: var(--bad); }
+  .good { color: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Court marks</h1>
+  <label>Video <select id="video"></select></label>
+  <span class="status" id="status"></span>
+</header>
+<main>
+  <p class="help">Click each point of the <b>volleyball</b> court where its lines meet (the outside edge of the lines), in the
+    order on the right. The <b>centre line</b> is the one straight under the net, through the feet of the
+    net posts; the <b>attack lines</b> are 3 m either side of it. If a point is out of shot or hidden, press <b>Can't see it</b>. After four, the whole court is
+    drawn back in blue: if the blue lines sit on the real lines everywhere, save. Pick a moment with few people on the
+    lines. <kbd>S</kbd> can't see it · <kbd>⌫</kbd> undo · <kbd>Enter</kbd> save.</p>
+  <div class="work">
+    <div>
+      <div class="stage"><canvas id="frame"></canvas></div>
+      <div class="time">
+        <button data-dt="-30">−30 s</button><button data-dt="-5">−5 s</button>
+        <input type="range" id="t" min="0" step="1" aria-label="Time in the video">
+        <button data-dt="5">+5 s</button><button data-dt="30">+30 s</button>
+        <span id="tlabel"></span>
+      </div>
+    </div>
+    <aside>
+      <canvas class="zoom" id="zoom" width="300" height="300" aria-label="Zoomed view around the pointer"></canvas>
+      <div class="panel">
+        <div class="now" id="now"></div>
+        <svg class="diagram" id="diagram" viewBox="-1.5 -1.5 12 22.5" aria-hidden="true"></svg>
+        <div class="row" style="margin-top:8px">
+          <button id="skip">Can't see it</button><button id="undo">Undo</button><button id="clear">Start again</button>
+        </div>
+        <ul class="points" id="points"></ul>
+      </div>
+      <div class="panel">
+        <div class="fit" id="fit">Mark at least 4 points, on both sidelines.</div>
+        <div class="row" style="margin-top:10px"><button class="primary" id="save" disabled>Save this court</button></div>
+      </div>
+    </aside>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let VIDEOS = [], POINTS = {}, LINES = [], NAMES = [];
+let vid = null, t = 60, img = null, marks = {}, skipped = new Set(), cur = 0, fitted = null, hover = null, fitTimer = null;
+
+const color = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const nextOpen = (from = 0) => { for (let i = 0; i < NAMES.length; i++) { const k = (from + i) % NAMES.length; if (!(NAMES[k] in marks) && !skipped.has(NAMES[k])) return k; } return -1; };
+
+async function load() {
+  const j = await (await fetch('/api/videos')).json();
+  VIDEOS = j.videos; POINTS = j.points; LINES = j.lines; NAMES = Object.keys(POINTS);
+  $('#video').replaceChildren(...VIDEOS.map(v => new Option(`${v.marks ? '✓ ' : ''}${v.name}`, v.name)));
+  const first = VIDEOS.find(v => !v.marks) ?? VIDEOS[0];
+  $('#video').value = first.name; pick(first.name);
+}
+function status() {
+  const n = VIDEOS.filter(v => v.marks).length;
+  $('#status').textContent = `${n} of ${VIDEOS.length} videos marked`;
+}
+function pick(name) {
+  vid = VIDEOS.find(v => v.name === name);
+  marks = vid.marks ? structuredClone(vid.marks) : {}; skipped = new Set(); fitted = null;
+  cur = Math.max(0, nextOpen()); t = vid.t ?? Math.min(120, vid.duration / 3);
+  $('#t').max = Math.floor(vid.duration); status(); loadFrame(); listPoints(); refit();
+}
+function loadFrame() {
+  t = Math.max(0, Math.min(vid.duration - 1, t)); $('#t').value = t;
+  $('#tlabel').textContent = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const im = new Image(); im.onload = () => { img = im; draw(); }; im.src = `/frame/${encodeURIComponent(vid.name)}?t=${t}`;
+}
+
+function listPoints() {
+  const ul = $('#points'); ul.replaceChildren();
+  NAMES.forEach((n, i) => {
+    const st = n in marks ? '✓' : skipped.has(n) ? '–' : '';
+    const b = document.createElement('button');
+    b.setAttribute('aria-current', String(i === cur));
+    b.innerHTML = `<span class="st"></span><span></span>`;
+    b.children[0].textContent = st; b.children[1].textContent = n;
+    b.onclick = () => { cur = i; skipped.delete(n); listPoints(); draw(); };
+    const li = document.createElement('li'); li.append(b); ul.append(li);
+  });
+  $('#now').textContent = cur >= 0 && NAMES[cur] ? `Click: ${NAMES[cur]}` : 'All points done';
+  diagram();
+}
+function diagram() {
+  const svg = $('#diagram'), Y = y => 18 - y;   // near end at the bottom, as the camera sees it
+  const line = ([a, b]) => `<line x1="${a[0]}" y1="${Y(a[1])}" x2="${b[0]}" y2="${Y(b[1])}" stroke="currentColor" stroke-width="${a[1] === 9 && b[1] === 9 ? .35 : .15}"/>`;
+  svg.innerHTML = `<g style="color:${color('--muted')}">${LINES.map(line).join('')}</g>` + NAMES.map((n, i) => {
+    const [x, y] = POINTS[n], done = n in marks, on = i === cur;
+    return `<circle cx="${x}" cy="${Y(y)}" r="${on ? .9 : .5}" fill="${on ? color('--mark') : done ? color('--ok') : 'none'}" stroke="${on ? color('--mark') : color('--muted')}" stroke-width=".15"/>`;
+  }).join('') + `<text x="4.5" y="20.3" font-size="1.1" text-anchor="middle" fill="${color('--muted')}">camera this end</text>`;
+}
+
+function draw() {
+  if (!img) return;
+  const cv = $('#frame'); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  const g = cv.getContext('2d'); g.drawImage(img, 0, 0);
+  if (fitted) {
+    g.strokeStyle = color('--court'); g.lineWidth = 2;
+    for (const l of fitted.lines) { g.beginPath(); l.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke(); }
+  }
+  g.font = 'bold 22px system-ui'; g.lineWidth = 4;
+  for (const [n, [x, y]] of Object.entries(marks)) {
+    g.fillStyle = color('--mark'); g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+    const left = x > cv.width * .75; g.textAlign = left ? 'right' : 'left'; const tx = left ? x - 10 : x + 10;
+    g.strokeStyle = '#000'; g.strokeText(n, tx, y - 10); g.fillStyle = '#fff'; g.fillText(n, tx, y - 10);
+  }
+  // zoom around the pointer (or the point being placed)
+  const c = hover ?? marks[NAMES[cur]] ?? [cv.width / 2, cv.height / 2], side = 120, z = $('#zoom').getContext('2d');
+  z.imageSmoothingEnabled = false; z.fillStyle = '#000'; z.fillRect(0, 0, 300, 300);
+  z.drawImage(cv, c[0] - side / 2, c[1] - side / 2, side, side, 0, 0, 300, 300);
+  z.strokeStyle = color('--mark'); z.lineWidth = 1; z.beginPath(); z.moveTo(150, 135); z.lineTo(150, 165); z.moveTo(135, 150); z.lineTo(165, 150); z.stroke();
+  $('#zoom').dataset.c = JSON.stringify(c);
+}
+const at = (e, cv) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+function place(p) {
+  const n = NAMES[cur]; if (!n) return;
+  marks[n] = p.map(v => Math.round(v * 10) / 10); skipped.delete(n);
+  cur = nextOpen(cur + 1); listPoints(); draw(); refit();
+}
+$('#frame').onclick = e => place(at(e, $('#frame')));
+$('#frame').onmousemove = e => { hover = at(e, $('#frame')); draw(); };
+$('#zoom').onclick = e => { const [zx, zy] = at(e, $('#zoom')), c = JSON.parse($('#zoom').dataset.c); place([c[0] + (zx - 150) * 120 / 300, c[1] + (zy - 150) * 120 / 300]); };
+$('#skip').onclick = () => { const n = NAMES[cur]; if (!n) return; delete marks[n]; skipped.add(n); cur = nextOpen(cur + 1); listPoints(); draw(); refit(); };
+$('#undo').onclick = () => { const ks = Object.keys(marks); if (!ks.length) return; const n = ks[ks.length - 1]; delete marks[n]; cur = NAMES.indexOf(n); listPoints(); draw(); refit(); };
+$('#clear').onclick = () => { marks = {}; skipped = new Set(); cur = 0; fitted = null; listPoints(); draw(); refit(); };
+document.querySelectorAll('[data-dt]').forEach(b => b.onclick = () => { t += +b.dataset.dt; loadFrame(); });
+$('#t').onchange = e => { t = +e.target.value; loadFrame(); };
+$('#video').onchange = e => pick(e.target.value);
+
+function refit() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(async () => {
+    $('#save').disabled = true;
+    if (Object.keys(marks).length < 4) { fitted = null; $('#fit').textContent = `Mark at least 4 points, on both sidelines (${Object.keys(marks).length} so far).`; draw(); return; }
+    const r = await fetch('/api/fit', { method: 'POST', body: JSON.stringify({ video: vid.name, marks, width: vid.width, height: vid.height }) });
+    const j = await r.json();
+    if (!r.ok) { fitted = null; $('#fit').innerHTML = `<span class="bad"></span>`; $('#fit').firstChild.textContent = j.error; draw(); return; }
+    fitted = j; draw(); $('#save').disabled = false;
+    const cm = m => m == null ? 'out of shot' : m < 1 ? `${Math.round(m * 100)} cm` : `${m.toFixed(1)} m`;
+    const n = Object.keys(marks).length;
+    $('#fit').innerHTML = `<b>Do the blue lines sit on the court's lines?</b><br>` +
+      (n > 4 ? `<span class="${j.error <= 8 ? 'good' : 'bad'}">Your clicks agree to within ${j.error} pixels${j.error > 8 ? ': one is probably off, or on the wrong line' : ''}.</span><br>` : 'With exactly 4 points the lines always pass through them: check the other lines. A 5th point makes this a real check.<br>') +
+      `How finely a landing can be placed: near end line ${cm(j.blur['near end line'])}, at the net ${cm(j.blur.net)}, far end line ${cm(j.blur['far end line'])}.`;
+  }, 150);
+}
+$('#save').onclick = async () => {
+  const r = await fetch('/api/save', { method: 'POST', body: JSON.stringify({ video: vid.name, marks, t, width: vid.width, height: vid.height }) });
+  const j = await r.json();
+  if (!r.ok) return alert(j.error);
+  vid.marks = structuredClone(marks); vid.t = t; status();
+  $('#video').selectedOptions[0].textContent = `✓ ${vid.name}`;
+  const next = VIDEOS.find(v => !v.marks);
+  $('#fit').insertAdjacentHTML('beforeend', `<br><b class="good">Saved.</b>`);
+  if (next) setTimeout(() => { $('#video').value = next.name; pick(next.name); }, 900);
+};
+document.addEventListener('keydown', e => {
+  if (e.target.closest('select, input') || e.metaKey || e.ctrlKey) return;
+  if (e.key === 's') $('#skip').click();
+  else if (e.key === 'Backspace') { e.preventDefault(); $('#undo').click(); }
+  else if (e.key === 'Enter' && !$('#save').disabled) { e.preventDefault(); $('#save').click(); }
+});
+load();
+</script>
+</body>
+</html>

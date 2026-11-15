@@ -78,6 +78,23 @@ It says how many tagged rallies were found, missed, or found where there was non
 which would do better. Give it a folder instead of a video to check every tagged video in it with the current
 settings and get the table above. The first run reads the video; later runs reuse what it saw (`game.candidates-*.pkl`).
 
+## Where the ball lands, and in or out (work in progress)
+
+```sh
+# Mark the court once per video: click known court points, check the court drawn back over the picture, save
+.venv/bin/python -m setme_vision.mark ~/Documents/setme-test-video
+```
+
+`court.py` turns a spot on the floor in the picture into metres on the court, and says how finely it can tell (a
+pixel covers more floor far away). `landing.py` finds where the ball first touches the floor after a rally's last
+tagged touch (searching from a second before the tag, since tags are pressed a little late), puts the bottom of the
+ball on the court and calls it in, out or too close to call.
+
+**Checked against how six tagged games' rallies ended (Nov 2026):** a kill or ace should land in, an attack or serve
+error out or in the net. On the half nearest the camera the calls were right 48 of 61 times (79%); on the far half
+42 of 77 (55%), where the ball is tiny, often hidden, and placed 0.5 to 1 m out. Not good enough to show anyone yet.
+The limit is the filming: a camera high on the side, level with the net, sees both halves well.
+
 ## How it works
 
 1. **detect.py**: blobs of the ball's yellow (hue around 24, saturated) that are moving and at least ball-sized are
