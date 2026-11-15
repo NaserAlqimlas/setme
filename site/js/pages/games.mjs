@@ -14,6 +14,7 @@ import { searchDays, toTag } from '../gamesearch.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
+let videoOnly = false;   // Games: only games with a video
 let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
@@ -33,19 +34,23 @@ export async function gamesPage() {
   // Only the list is redrawn while typing, so the search box keeps its place and focus.
   const list = h('div');
   const paintList = () => {
-    const found = searchDays(data.days, query), n = found.reduce((t, d) => t + d.games.length, 0);
-    fill(list, query.trim() && h('p', { class: 'muted small', role: 'status' }, n ? `${n} game${n === 1 ? '' : 's'} found` : ''),
+    const found = searchDays(data.days, query).map(d => videoOnly ? { ...d, games: d.games.filter(g => g.video) } : d).filter(d => d.games.length);
+    const n = found.reduce((t, d) => t + d.games.length, 0);
+    fill(list, (query.trim() || videoOnly) && h('p', { class: 'muted small', role: 'status' }, n ? `${n} game${n === 1 ? '' : 's'} found` : ''),
       found.length ? found.map(d => dayCard(d, open))
-        : h('div', { class: 'card empty' }, 'No games match that. Try a first name, a date like "nov 10", or video, tagged or untagged.'));
+        : h('div', { class: 'card empty' }, videoOnly && !query.trim() ? 'No games have a video yet.' : 'No games match that. Try a first name, a date like "nov 10", or video, tagged or untagged.'));
   };
   const search = h('input', { type: 'search', class: 'gd-search', placeholder: 'Search: a name, a date like "nov 10", video, tagged…', 'aria-label': 'Search games', value: query });
   search.oninput = () => { query = search.value; paintList(); };
+  const withVideo = h('input', { type: 'checkbox', checked: videoOnly });
+  withVideo.onchange = () => { videoOnly = withVideo.checked; paintList(); };
+  const filters = h('div', { class: 'gd-filters' }, search, h('label', { class: 'gd-filter' }, withVideo, ' ▶ With video only'));
   const show = () => {
     const g = all.find(x => x.id === openGame);
     if (g) return fill(wrap, gameView(g, () => { openGame = null; show(); scrollTo(0, 0); }));
     if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
     paintList();
-    fill(wrap, head, bulkBox, me.role === 'super' && toTagCard(data.days), search, list, consent);
+    fill(wrap, head, bulkBox, me.role === 'super' && toTagCard(data.days), filters, list, consent);
   };
   show();
   return wrap;
@@ -205,7 +210,7 @@ function gameView(g, back) {
       (best.a.length || best.b.length) > 0 && h('p', { class: 'muted small gd-star-note' },
         won ? [h('span', { class: 'gd-star gold', 'aria-hidden': 'true' }, '★'), ' Best game on the winning team · ', h('span', { class: 'gd-star silver', 'aria-hidden': 'true' }, '★'), ' best on the losing team. ']
           : [h('span', { class: 'gd-star silver', 'aria-hidden': 'true' }, '★'), ' Best game on each team. '],
-        'Best: points scored, minus errors, plus half a point for each good pass, dig or set. Players level on that share the star.'),
+        'Best: points scored, minus errors, plus half a point for each good pass, dig or set. Players level on that share the star. Setters aren\'t starred: they touch the ball most, so they\'d top it every game.'),
       h('p', { class: 'muted small' }, 'Points: kills, aces and blocks. Good passes: passes graded 2 or 3. Only the organizers and the players in this game see this.'));
 
     const mineTally = Number.isInteger(mineId) && game.players_a.concat(game.players_b).includes(mineId) ? tally([{ game, rallies }]).get(mineId) : null;

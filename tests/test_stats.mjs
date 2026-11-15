@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -117,6 +117,10 @@ ok('setting only for setters', statRatings(tally(many), players).detail.setting_
   const best = bestPlayers(g, rs);
   ok('best on each team; a dead tie stars both', best.a.join() === '1' && best.b.join() === '4,5', best);
   ok('nobody did anything: no star', bestPlayers(g, []).a.length === 0);
+  // A setter with lots of good sets would top the list; they're left out and the star goes to the next best.
+  const sets = Array.from({ length: 8 }, () => R(T(3, 'set', 3)));
+  ok('setter: mostly sets', isSetter({ set: { 3: 8 } }) && !isSetter({ set: { 3: 2 } }) && !isSetter({ set: { 2: 3 }, attack: { 3: 4 } }));
+  ok('no star for the setter', bestPlayers(g, [...rs, ...sets]).a.join() === '1', bestPlayers(g, [...rs, ...sets]));
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

@@ -220,12 +220,20 @@ export function gameScore(counts) {
   return { score: points - errors + good / 2, points, errors };
 }
 
-// Each team's best players in one game -> { a: [pid], b: [pid] }. Ties go to more points, then fewer errors;
-// still tied, they all get the star. A best score of 0 or less earns no star.
+// Who set in a game: at least 3 sets, and sets at least half their touches. They touch the ball most, so they'd
+// top every game's score; the star goes to someone else.
+export function isSetter(counts) {
+  const sum = a => Object.values(counts?.[a] ?? {}).reduce((t, n) => t + n, 0);
+  const sets = sum('set'), all = Object.keys(ACTIONS).reduce((t, a) => t + sum(a), 0);
+  return sets >= 3 && sets * 2 >= all;
+}
+
+// Each team's best players in one game, setters left out -> { a: [pid], b: [pid] }. Ties go to more points, then
+// fewer errors; still tied, they all get the star. A best score of 0 or less earns no star.
 export function bestPlayers(game, rallies) {
   const t = tally([{ game, rallies }]);
   const pick = ids => {
-    const rows = ids.map(pid => ({ pid, ...gameScore(t.get(pid)?.counts) }))
+    const rows = ids.filter(pid => !isSetter(t.get(pid)?.counts)).map(pid => ({ pid, ...gameScore(t.get(pid)?.counts) }))
       .sort((x, y) => y.score - x.score || y.points - x.points || x.errors - y.errors);
     const [top] = rows;
     if (!top || top.score <= 0) return [];
