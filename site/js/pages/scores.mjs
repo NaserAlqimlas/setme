@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, spinner, stacked, TEAM_COLORS, toast, today, toggle, withSpinner } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
@@ -338,7 +338,7 @@ const loadYouTube = () => ytReady ??= new Promise((res, rej) => {
 // One interface for a local file, an uploaded video or a YouTube embed. Each is put in `box` before use.
 function urlVideo(box, url) {
   const v = h('video', { controls: true, playsinline: true, preload: 'metadata', src: url });
-  box.replaceChildren(v);
+  box.replaceChildren(withSpinner(v));
   return { uploaded: true, now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); } };
 }
 function fileVideo(box, file) {
@@ -568,9 +568,8 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       h('span', { class: 'muted small' }, 'or'), yt, h('button', { class: 'ghost sm', onclick: loadYt }, 'Load'),
       h('button', { class: 'ghost sm', onclick: () => times.click(), title: 'The game.rallies.json file the vision tool made' }, found ? 'Other rally times' : 'Load rally times'), times);
     paintFound();
-    if (!player && !videoBox.children.length) videoBox.replaceChildren(h('p', { class: 'muted small' },
+    if (!player && !videoBox.children.length) videoBox.replaceChildren(video?.kind === 'upload' ? spinner('Loading the uploaded video…') : h('p', { class: 'muted small' },
       video?.kind === 'file' ? `Open ${video.name} again to see the video. It never leaves this device.`
-      : video?.kind === 'upload' ? 'Loading the uploaded video…'
       : 'Open the game\'s video, or tag live without one. Opened files stay on this device; uploaded ones are kept for watching.'));
     return loadYt;
   };
