@@ -45,6 +45,26 @@ def frames(cap, fps, detector, step, start, stop, on_frame=None):
         i += 1
 
 
+def find(cap, fps, step, detector, duration, start=0, stop=None, s=Settings(), on_frame=None, on_progress=None):
+    """Runs the rally finder over an open video -> (rallies, flights, settings). on_progress(t) is called every frame."""
+    def watched(it):
+        for t, c in it:
+            if on_progress:
+                on_progress(t)
+            yield t, c
+    tracks = track(watched(frames(cap, fps, detector, step, start, stop, on_frame)), TrackSettings())
+    cap.release()
+    flights = [f for tr in tracks for f in flights_of(tr)]
+    return segment(flights, duration, s), flights, s
+
+
+def result(name, duration, s, rallies):
+    """What game.rallies.json holds (and what the worker sends SetMe)."""
+    return {'version': VERSION, 'video': name, 'duration': round(duration, 2),
+            'settings': {'gap': s.gap, 'min_len': s.min_len, 'min_speed': s.min_speed},
+            'rallies': [r.as_dict() for r in rallies]}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='setme_vision', description='Find the rallies in a game video.')
     ap.add_argument('video')
@@ -97,30 +117,20 @@ def main(argv=None):
             writer.write(img)
 
     began, last = time.time(), 0.0
-    def progress(it):
+    def progress(t):
         nonlocal last
-        for t, c in it:
-            if time.time() - last > 2:
-                last = time.time()
-                end = a.stop or duration
-                print(f'\r  {t / 60:5.1f} of {end / 60:.1f} min', end='', flush=True)
-            yield t, c
+        if time.time() - last > 2:
+            last = time.time()
+            print(f'\r  {t / 60:5.1f} of {(a.stop or duration) / 60:.1f} min', end='', flush=True)
 
-    tracks = track(progress(frames(cap, fps, detector, step, a.start, a.stop, on_frame)), TrackSettings())
-    cap.release()
+    rallies, flights, s = find(cap, fps, step, detector, duration, a.start, a.stop,
+                               Settings(gap=a.gap, min_len=a.min_len, min_speed=a.min_speed), on_frame, progress)
     if writer:
         writer.release()
-    flights = [f for tr in tracks for f in flights_of(tr)]
-    s = Settings(gap=a.gap, min_len=a.min_len, min_speed=a.min_speed)
-    rallies = segment(flights, duration, s)
     print(f'\r  done in {time.time() - began:.0f} s: {len(rallies)} rallies, {len(flights)} ball flights.          ')
 
     out = Path(a.out) if a.out else video.with_suffix('.rallies.json')
-    out.write_text(json.dumps({
-        'version': VERSION, 'video': video.name, 'duration': round(duration, 2),
-        'settings': {'gap': s.gap, 'min_len': s.min_len, 'min_speed': s.min_speed},
-        'rallies': [r.as_dict() for r in rallies],
-    }, indent=1))
+    out.write_text(json.dumps(result(video.name, duration, s, rallies), indent=1))
     print(f'Wrote {out}')
     if writer:
         print(f'Wrote {pv}: green circles are what it took for the ball.')

@@ -25,8 +25,10 @@ export async function usersPage() {
   const invite = async e => {
     e.preventDefault();
     try {
-      const { link } = await callFn('admin', { action: 'invite', email: email.value, name: name.value, role: inviteRole });
-      showLink(`Invite link for ${name.value || email.value} (${inviteRole}). Send it to them directly; it works once.${inviteRole === 'player' ? ' Then link their account to their player below.' : ''}`, link);
+      const r = await callFn('admin', { action: 'invite', email: email.value, name: name.value, role: inviteRole });
+      const who = name.value || email.value, then = inviteRole === 'player' ? ' Then link their account to their player below.' : '';
+      showLink(r.emailed ? `Invite emailed to ${who} (${inviteRole}). If it doesn't arrive, send them this link yourself; it works once.${then}`
+        : `Invite link for ${who} (${inviteRole}). ${r.emailError ? `The email didn't go (${r.emailError}), so send` : 'Send'} it to them directly; it works once.${then}`, r.link);
       email.value = name.value = '';
     } catch (err) { toast(err.message); }
   };
@@ -47,7 +49,11 @@ export async function usersPage() {
     } catch (err) { sel.value = p.player_id ?? ''; toast(err.message); }
   };
   const reset = async p => {
-    try { showLink(`Password reset link for ${p.display_name}.`, (await callFn('admin', { action: 'reset', email: p.email })).link); }
+    try {
+      const r = await callFn('admin', { action: 'reset', email: p.email });
+      showLink(r.emailed ? `Password reset emailed to ${p.display_name}. If it doesn't arrive, send them this link yourself.`
+        : `Password reset link for ${p.display_name}.${r.emailError ? ` The email didn't go (${r.emailError}).` : ''}`, r.link);
+    }
     catch (err) { toast(err.message); }
   };
   const remove = async p => {
@@ -70,7 +76,7 @@ export async function usersPage() {
     pageHead('Users', 'Players sign up, see published teams and their own average rating. Raters also rate. Organizers also run Players, Teams and Scores, but never see ratings.'),
     h('form', { class: 'card row', onsubmit: invite }, name, email,
       h('div', { class: 'field' }, h('span', {}, 'As'), seg(roleOptions, inviteRole, v => { inviteRole = v; }, 'Invite as')),
-      h('button', {}, 'Create invite link')),
+      h('button', {}, 'Invite')),
     linkBox,
     !club && h('p', { class: 'muted small' }, 'Player accounts, linking accounts to players, and the activity log need the database upgrade: run supabase/club.sql in Supabase.'),
     h('div', { class: 'grid' }, profiles.map(p => h('div', { class: 'card roster-card' },
@@ -135,8 +141,8 @@ function activityCard(profiles) {
       case 'anchor removed': return `${d.name} is no longer an anchor`;
       case 'game day deleted': return `Deleted the game day ${dayTitle(d.played_on)}`;
       case 'ratings imported': return `Imported ${d.players} players' ratings for ${who.get(d.for) ?? 'another rater'}${d.file ? ` (${d.file})` : ''}`;
-      case 'invite link created': return `Invite link for ${d.email}${d.role ? ` as ${d.role}` : ''}`;
-      case 'reset link created': return `Password reset link for ${d.email}`;
+      case 'invite link created': return `${d.emailed ? 'Invite emailed to' : 'Invite link for'} ${d.email}${d.role ? ` as ${d.role}` : ''}`;
+      case 'reset link created': return `${d.emailed ? 'Password reset emailed to' : 'Password reset link for'} ${d.email}`;
       case 'backup downloaded': return `Backup downloaded (${d.rows} rows)`;
       default: return r.action;
     }

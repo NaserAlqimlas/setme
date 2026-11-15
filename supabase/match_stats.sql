@@ -1,5 +1,5 @@
 -- Match stats: tags entered while watching a game's video. Run once in the SQL Editor (also in schema.sql for new projects).
--- The video itself is never uploaded: it plays from the tagger's device or YouTube; games only remember which one.
+-- The video plays from the tagger's device, YouTube, or (after video.sql) an upload; games only remember which one.
 -- Organizers and super read and write tags (they watch the same video). Per-player totals are only shown to the super.
 
 alter table public.games add column if not exists video_kind text check (video_kind in ('file', 'youtube'));

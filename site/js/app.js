@@ -5,6 +5,7 @@ import { teamsPage, teamsStore } from './pages/teams.mjs';
 import { scoresPage } from './pages/scores.mjs';
 import { ratingsPage } from './pages/ratings.mjs';
 import { usersPage } from './pages/users.mjs';
+import { videosPage } from './pages/videos.mjs';
 import { lineupPage, profilePage, signupPage } from './pages/club.mjs';
 
 const app = document.getElementById('app');
@@ -18,6 +19,7 @@ const PAGES = [
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
   { id: 'scores', label: 'Scores', roles: ['organizer', 'super'], view: scoresPage },
   { id: 'ratings', label: role => role === 'super' || role === 'organizer' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
+  { id: 'videos', label: 'Videos', roles: ['player', 'organizer', 'super'], view: videosPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
 ];
 
@@ -71,9 +73,9 @@ async function render() {
   } catch {
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
-  // Players (linked to a player) start on Me, then Lineup, then Sign up, which few use. Everyone else keeps PAGES order.
+  // Players (linked to a player) start on Me, then Lineup, Videos, then Sign up, which few use. Everyone else keeps PAGES order.
   const playerFirst = me.role === 'player' && !!me.player_id;
-  const PLAYER_ORDER = ['lineup', 'signup'];
+  const PLAYER_ORDER = ['lineup', 'videos', 'signup'];
   const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me))
     .sort((a, b) => playerFirst ? PLAYER_ORDER.indexOf(a.id) - PLAYER_ORDER.indexOf(b.id) : 0);
   // #player/12 opens a player's profile (not in the nav, except your own as "Me").

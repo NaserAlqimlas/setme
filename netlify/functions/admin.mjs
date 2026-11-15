@@ -1,14 +1,16 @@
 // POST /.netlify/functions/admin  (super only)
-//   { action: 'invite', email, name, role? } -> { link }   invite link to send yourself (no email is sent); role: player,
-//                                                    rater (default) or organizer
+//   { action: 'invite', email, name, role? } -> { link, emailed, emailError? }   invite link, emailed to them through
+//                                                    Resend when it's set up (netlify/lib/email.mjs), else for you to
+//                                                    send; role: player, rater (default) or organizer
 // Each action is written to the activity log (audit_log) with who did it, once the club upgrade has been run.
 // Links point at the site, which only signs in when the person taps Continue. Link previews (WhatsApp etc.)
 // open links automatically, which would use up a one-time Supabase link before the person ever sees it.
-//   { action: 'reset', email }         -> { link }   password reset link
+//   { action: 'reset', email }         -> { link, emailed, emailError? }   password reset link, emailed the same way
 //   { action: 'remove', id }           -> { ok }     delete the account and its ratings
 //   { action: 'setme' }                -> { id }     the SetMe rater (ratings from match stats), created the first time.
 //                                                    A normal rater account with a random password nobody knows.
 import { authAdmin, caller, json, rest } from '../lib/supabase.mjs';
+import { accountEmail, emailReady, sendEmail } from '../lib/email.mjs';
 
 const SETME_EMAIL = 'setme@setme.invalid';
 // Activity log entry; skipped quietly before the club upgrade (supabase/club.sql) adds the table.
@@ -41,8 +43,18 @@ export default async (req) => {
         await rest(`profiles?id=eq.${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role: body.role }) })
           .catch(e => { throw new Error(body.role === 'player' ? 'Invite made, but the player role needs the database upgrade (supabase/club.sql). They are a rater for now.' : e.message); });
       }
-      await audit(me.id, type === 'invite' ? 'invite link created' : 'reset link created', { email, ...(type === 'invite' ? { role: ['player', 'organizer'].includes(body.role) ? body.role : 'rater' } : {}) });
-      return json({ link: hashed ? `${redirect_to}/?token_hash=${encodeURIComponent(hashed)}&type=${type}` : (res.action_link ?? res.properties?.action_link) });
+      const role = ['player', 'organizer'].includes(body.role) ? body.role : 'rater';
+      const link = hashed ? `${redirect_to}/?token_hash=${encodeURIComponent(hashed)}&type=${type}` : (res.action_link ?? res.properties?.action_link);
+      // Emailed when Resend is set up. If it can't send (say the domain isn't verified yet), the link still comes back.
+      let emailed = false, emailError;
+      if (emailReady() && body.send !== false) {
+        const [who] = type === 'recovery' ? await rest(`profiles?email=eq.${encodeURIComponent(email)}&select=display_name`).catch(() => []) : [];
+        const name = type === 'invite' ? String(body.name || '').trim() : who?.display_name;
+        try { emailed = !!await sendEmail({ to: email, ...accountEmail({ kind: type === 'invite' ? 'invite' : 'reset', name, role, link }) }); }
+        catch (e) { emailError = e.message; }
+      }
+      await audit(me.id, type === 'invite' ? 'invite link created' : 'reset link created', { email, ...(type === 'invite' ? { role } : {}), ...(emailed ? { emailed } : {}) });
+      return json({ link, emailed, ...(emailError ? { emailError } : {}) });
     }
     if (body.action === 'setme') {
       const [found] = await rest(`profiles?email=eq.${encodeURIComponent(SETME_EMAIL)}&select=id`);

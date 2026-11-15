@@ -1,7 +1,7 @@
 # SetMe vision: rally times from game video
 
 Finds when each rally starts and ends in a game video, so taggers can jump from rally to rally on the tag screen
-instead of scrubbing through the time between. It runs on your computer; the video never leaves it.
+instead of scrubbing through the time between. It runs on your computer, or on Modal when a video is uploaded in SetMe (see Game videos below).
 
 Works for a camera that doesn't move (a phone on a tripod or propped up), anywhere it can see the court. It spots
 the club's yellow-and-blue ball by its colour.
@@ -94,6 +94,13 @@ ball on the court and calls it in, out or too close to call.
 error out or in the net. On the half nearest the camera the calls were right 48 of 61 times (79%); on the far half
 42 of 77 (55%), where the ball is tiny, often hidden, and placed 0.5 to 1 m out. Not good enough to show anyone yet.
 The limit is the filming: a camera high on the side, level with the net, sees both halves well.
+
+## Game videos (uploaded in SetMe)
+
+When the super uploads a video on a game's tag screen, the same rally finder runs on Modal (`worker/`), which also
+makes the 720p copy people watch. Setting it up: `architecture.md`, Setting it up. To try a job here without Modal:
+`python -m worker.job <source url> <put url> <callback url> <job id>` with `VIDEO_WORKER_SECRET` set.
+`tests/test_worker.py` runs a whole job against a stand-in for storage.
 
 ## How it works
 
