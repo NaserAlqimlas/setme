@@ -850,3 +850,4 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
 .gd-team { text-align: left; font-weight: 600; box-shadow: inset 3px 0 0 var(--tc); padding-left: 10px !important; }
 .gd-table tr.mine { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .gd-gap td { border: 0; padding: 4px; }
+.gd-search { width: 100%; margin: 0 0 14px; }
