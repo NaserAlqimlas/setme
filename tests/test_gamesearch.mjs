@@ -40,4 +40,6 @@ test('games to tag: untagged only, with a video first, then oldest first', async
   const more = [...days, { played_on: '2026-10-27', games: [game(4, 1, ['A'], ['B']), game(5, 2, ['C'], ['D'], { video: true })] }];
   assert.deepEqual(toTag(more).map(g => [g.id, g.played_on]), [[5, '2026-10-27'], [1, '2026-11-10'], [4, '2026-10-27']]);
   assert.deepEqual(toTag([]), []);
+  more[2].games[0].not_recorded = true;
+  assert.deepEqual(toTag(more).map(g => g.id), [5, 1]);   // marked not recorded: off the list
 });

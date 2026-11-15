@@ -6,9 +6,9 @@ import { teamNames } from '../../site/js/teams.mjs';
 // A round's teams: an earlier round's from rounds, the round playing now from the session (as on Scores).
 export const teamsOf = (session, rounds, n) => rounds.find(r => r.session_id === session.id && r.n === n) ?? session;
 
-// -> [{ session_id, played_on, games: [{ id, n, round, a: { k, name, players: [{ id, name }] , score }, b: {...}, tagged, video, mine }] }],
+// -> [{ session_id, played_on, games: [{ id, n, round, a: { k, name, players: [{ id, name }] , score }, b: {...}, tagged, video, not_recorded, mine }] }],
 // newest day first, games in the order played. me: { role, player_id }.
-export function buildDays({ sessions, rounds = [], games, players, tagged = new Map(), videos = new Set(), me }) {
+export function buildDays({ sessions, rounds = [], games, players, tagged = new Map(), videos = new Set(), unrecorded = new Set(), me }) {
   const pl = new Map(players.map(p => [p.id, p]));
   const pid = Number(me.player_id);
   const isPlayer = me.role === 'player';
@@ -29,7 +29,7 @@ export function buildDays({ sessions, rounds = [], games, players, tagged = new 
       return { session_id: s.id, played_on: s.played_on, games: all.map((g, i) => ({ g, n: i + 1 })).filter(({ g }) => seen(g)).map(({ g, n }) => ({
         id: g.id, n, round: g.round ?? 1,
         a: side(g, g.team_a, g.players_a, g.score_a), b: side(g, g.team_b, g.players_b, g.score_b),
-        tagged: tagged.get(g.id) ?? 0, video: videos.has(g.id),
+        tagged: tagged.get(g.id) ?? 0, video: videos.has(g.id), not_recorded: unrecorded.has(g.id),
         mine: Number.isInteger(pid) && (g.players_a.map(Number).includes(pid) || g.players_b.map(Number).includes(pid)) ? (g.players_a.map(Number).includes(pid) ? 'a' : 'b') : null,
       })) };
     })

@@ -15,10 +15,10 @@ const games = [
 ];
 
 test('organizers see every game day and game, newest first, with team names from the setters', () => {
-  const days = buildDays({ sessions, games, players, tagged: new Map([[101, 45]]), videos: new Set([101]), me: { role: 'organizer' } });
+  const days = buildDays({ sessions, games, players, tagged: new Map([[101, 45]]), videos: new Set([101]), unrecorded: new Set([101]), me: { role: 'organizer' } });
   assert.deepEqual(days.map(d => d.played_on), ['2026-11-10', '2026-11-03']);
   const g = days[1].games[0];
-  assert.deepEqual([g.n, g.a.name, g.b.name, g.a.score, g.tagged, g.video], [1, "Ali's Team", "Sara's Team", 25, 45, true]);
+  assert.deepEqual([g.n, g.a.name, g.b.name, g.a.score, g.tagged, g.video, g.not_recorded], [1, "Ali's Team", "Sara's Team", 25, 45, true, true]);
   assert.deepEqual(g.a.players.map(p => p.name), ['Ali', 'Omar']);
 });
 

@@ -17,6 +17,38 @@ const keep = (game, s) => { try { s ? localStorage.setItem(KEY(game), JSON.strin
 const running = new Map();
 export const activeUpload = game => running.get(game) ?? null;
 
+// The upload tray (uploadtray.mjs) on every page: each video waiting, uploading, uploaded or stopped, by game.
+// { game, name, size, state: 'waiting' | 'uploading' | 'done' | 'failed', progress, error, stop() }
+const tray = new Map(), trayWatchers = new Set();
+export const trayItems = () => [...tray.values()];
+export const onTray = fn => { trayWatchers.add(fn); return () => trayWatchers.delete(fn); };
+const tellTray = () => trayWatchers.forEach(fn => fn());
+export function trayPut(game, patch) {
+  tray.set(game, { game, progress: 0, error: null, ...(tray.get(game) ?? {}), ...patch });
+  tellTray();
+}
+export function trayDrop(game) { if (tray.delete(game)) tellTray(); }
+export function trayClearFinished() {
+  for (const [k, v] of tray) if (v.state === 'done' || v.state === 'failed') tray.delete(k);
+  tellTray();
+}
+// Uploads this device started and didn't finish (a reload, a dropped connection): [{ game, ...savedUpload }].
+export function unfinishedUploads() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const m = localStorage.key(i)?.match(/^setme-upload-(\d+)$/);
+      if (m && !running.has(Number(m[1]))) { const s = savedUpload(Number(m[1])); if (s?.job) out.push({ game: Number(m[1]), ...s }); }
+    }
+  } catch { /* storage blocked */ }
+  return out;
+}
+export async function forgetUpload(game) {
+  const s = savedUpload(game);
+  keep(game, null);
+  if (s?.job) await callFn('video', { action: 'cancel', job: s.job }).catch(() => {});
+}
+
 function putPart(url, blob, onBytes, track) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
@@ -40,7 +72,7 @@ export function uploadVideo(game, file) {
   const listeners = new Set(), xhrs = new Set();
   let cancelled = false;
   const up = { progress: 0, file: file.name, on: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
-  const tell = () => listeners.forEach(fn => fn(up));
+  const tell = () => { listeners.forEach(fn => fn(up)); if (tray.get(game)?.state === 'uploading') trayPut(game, { progress: up.progress }); };
   up.cancel = async () => {
     cancelled = true; xhrs.forEach(x => x.abort());
     const s = savedUpload(game);
@@ -87,6 +119,9 @@ export function uploadVideo(game, file) {
   const guard = e => { e.preventDefault(); e.returnValue = ''; };   // leaving the page stops the upload: ask first
   addEventListener('beforeunload', guard);
   running.set(game, up);
+  trayPut(game, { name: file.name, size: file.size, state: 'uploading', progress: 0, error: null, stop: () => up.cancel() });
+  up.done.then(() => trayPut(game, { state: 'done', progress: 1 }),
+    e => e.cancelled ? trayDrop(game) : trayPut(game, { state: 'failed', error: e.message }));
   up.done.finally(() => { running.delete(game); removeEventListener('beforeunload', guard); tell(); }).catch(() => {});
   return up;
 }

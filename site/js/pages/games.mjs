@@ -6,7 +6,7 @@ import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, 
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
 import { ACTIONS, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
-import { uploadVideo } from '../upload.mjs';
+import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
 import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
@@ -51,24 +51,41 @@ export async function gamesPage() {
   return wrap;
 }
 
-// The super's list of games still to tag, to work through. Each opens the tag screen.
+// The super's list of games still to tag, to work through. Each opens the tag screen; a game nobody filmed can be
+// marked not recorded, which takes it off the list (and can be put back).
+let showUnrecorded = false;
 function toTagCard(days) {
-  const games = toTag(days), FEW = 5;
-  if (!games.length) return h('div', { class: 'card' }, h('h3', {}, 'To tag'), h('p', { class: 'muted' }, 'Every game is tagged.'));
-  const card = h('div', { class: 'card' });
+  const FEW = 5, card = h('div', { class: 'card' });
+  const all = () => days.flatMap(d => d.games.map(g => ({ ...g, played_on: d.played_on })));
+  const mark = async (g, value) => {
+    const { error } = await sb.from('games').update({ not_recorded: value }).eq('id', g.id);
+    if (error) return toast(/not_recorded/.test(error.message) ? 'This needs the database upgrade first: run supabase/not_recorded.sql in the Supabase SQL Editor.' : error.message);
+    for (const d of days) for (const x of d.games) if (x.id === g.id) x.not_recorded = value;
+    toast(value ? `Game ${g.n} on ${day(g.played_on)} marked not recorded` : `Game ${g.n} on ${day(g.played_on)} is back on the list`);
+    paint();
+  };
+  const line = (g, ...end) => h('span', { class: 'gd-score' },
+    h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('b', {}, ` ${g.a.score}–${g.b.score} `), h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name), ...end);
   const paint = () => {
+    const games = toTag(days), off = all().filter(g => g.not_recorded && !g.tagged);
     const shown = showAllToTag ? games : games.slice(0, FEW);
     fill(card, h('div', { class: 'row', style: 'justify-content:space-between;align-items:baseline' },
-        h('h3', {}, 'To tag'), h('span', { class: 'muted small' }, `${games.length} game${games.length === 1 ? '' : 's'} left`)),
-      h('ul', { class: 'gd-games' }, shown.map(g => h('li', {}, h('button', { type: 'button', class: 'gd-game', onclick: () => openTagging(g.played_on, g.id) },
-        h('span', { class: 'muted small gd-n' }, `${day(g.played_on)} · Game ${g.n}`),
-        h('span', { class: 'gd-score' },
-          h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('b', {}, ` ${g.a.score}–${g.b.score} `),
-          h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name)),
-        h('span', { class: 'gd-tags' }, g.video ? h('span', { class: 'chip plain' }, '▶ Video') : h('span', { class: 'muted small' }, 'No video'),
-          h('span', { class: 'chip plain' }, 'Tag →')))))),
+        h('h3', {}, 'To tag'), games.length > 0 && h('span', { class: 'muted small' }, `${games.length} game${games.length === 1 ? '' : 's'} left`)),
+      games.length ? h('ul', { class: 'gd-games' }, shown.map(g => h('li', { class: 'gd-totag' },
+        h('button', { type: 'button', class: 'gd-game', onclick: () => openTagging(g.played_on, g.id) },
+          h('span', { class: 'muted small gd-n' }, `${day(g.played_on)} · Game ${g.n}`), line(g),
+          h('span', { class: 'gd-tags' }, g.video ? h('span', { class: 'chip plain' }, '▶ Video') : h('span', { class: 'muted small' }, 'No video'),
+            h('span', { class: 'chip plain' }, 'Tag →'))),
+        !g.video && h('button', { type: 'button', class: 'ghost sm', title: 'Nobody filmed this game, so it can\'t be tagged. Takes it off this list.', onclick: () => mark(g, true) }, 'Not recorded'))))
+        : h('p', { class: 'muted' }, 'Every game is tagged.'),
       games.length > FEW && h('button', { class: 'ghost sm', style: 'margin-top:8px', onclick: () => { showAllToTag = !showAllToTag; paint(); } },
-        showAllToTag ? 'Show fewer' : `Show all ${games.length}`));
+        showAllToTag ? 'Show fewer' : `Show all ${games.length}`),
+      off.length > 0 && h('div', { class: 'gd-unrec' },
+        h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(showUnrecorded), onclick: () => { showUnrecorded = !showUnrecorded; paint(); } },
+          `${showUnrecorded ? '▾' : '▸'} Not recorded (${off.length})`),
+        showUnrecorded && h('ul', { class: 'gd-games' }, off.map(g => h('li', { class: 'gd-totag' },
+          h('div', { class: 'gd-game static' }, h('span', { class: 'muted small gd-n' }, `${day(g.played_on)} · Game ${g.n}`), line(g)),
+          h('button', { type: 'button', class: 'ghost sm', onclick: () => mark(g, false) }, 'Put back'))))));
   };
   paint();
   return card;
@@ -85,7 +102,7 @@ function dayCard(d, open) {
           h('span', { style: `--tc:${color(g.b.k)}`, class: g.mine === 'b' ? 'mine' : null }, g.b.name)),
         h('span', { class: 'gd-tags' }, res && h('span', { class: `chip plain ${res === 'Won' ? 'won' : ''}` }, res),
           g.video && h('span', { class: 'chip plain' }, '▶ Video'),
-          g.tagged ? h('span', { class: 'chip plain' }, 'Stats') : null)));
+          g.tagged ? h('span', { class: 'chip plain' }, 'Stats') : g.not_recorded ? h('span', { class: 'muted small' }, 'Not recorded') : null)));
     })));
 }
 
@@ -246,6 +263,9 @@ function paintBulk() {
     const replacing = live.filter(r => byId.get(r.game)?.video_kind === 'upload').length;
     if (replacing && !await ask('Replace videos?', `${replacing} of these game${replacing === 1 ? ' has' : 's have'} an uploaded video already. It's replaced by the new one.`, 'Replace', '')) return;
     bulk.running = true; bulk.stop = false; paintBulk();
+    // The upload panel lists the ones waiting too; Stop there takes one off the list.
+    for (const r of live) trayPut(r.game, { name: r.file.name, size: r.file.size, state: 'waiting', progress: 0, error: null,
+      stop: () => { r.skip = true; trayDrop(r.game); paintBulk(); } });
     for (const r of bulk.rows) {
       if (bulk.stop) break;
       if (r.skip || r.state === 'done') continue;
@@ -265,17 +285,20 @@ function paintBulk() {
       bulk.current = null; paintBulk();
     }
     bulk.running = false; paintBulk();
+    for (const r of bulk.rows) if (r.state === 'waiting') trayDrop(r.game);   // stopped before their turn
     const done = bulk.rows.filter(r => r.state === 'done').length;
     if (!bulk.stop) toast(`${done} uploaded. You'll get an email as each one is analysed.`);
   };
   const stop = async () => {
     if (!await ask('Stop uploading?', 'The video uploading now is cancelled; the ones already uploaded carry on being analysed.', 'Stop')) return;
-    bulk.stop = true; bulk.current?.cancel();
+    bulk.stop = true;
+    for (const r of bulk.rows) if (r.state === 'waiting') trayDrop(r.game);
+    bulk.current?.cancel();
   };
   fill(card,
     h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-bottom:10px' },
       h('b', { class: 'grow' }, 'Upload several videos'),
-      bulk.running ? h('span', { class: 'muted small' }, 'Keep this page open and the computer awake') : null,
+      bulk.running ? h('span', { class: 'muted small' }, 'Keep this tab open; you can use the rest of SetMe') : null,
       bulk.running ? h('button', { class: 'ghost sm', onclick: stop }, 'Stop')
         : h('button', { class: 'ghost sm', onclick: () => { bulk.rows = null; paintBulk(); } }, 'Clear')),
     h('ul', { class: 'bulk-list' }, bulk.rows.map(rowEl)),

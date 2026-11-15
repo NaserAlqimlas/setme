@@ -40,17 +40,18 @@ export default async (req) => {
       const mineById = new Map(games.map(g => [g.id, g]));
       const merged = dayGames.map(g => mineById.get(g.id) ?? g);
       const ids = merged.map(g => g.id);
-      const [sessions, rounds, players, rallies, jobs] = await Promise.all([
+      const [sessions, rounds, players, rallies, jobs, unrecorded] = await Promise.all([
         rest(`sessions?id=in.(${sids.join(',')})&select=*`),
         rest(`rounds?session_id=in.(${sids.join(',')})&select=session_id,n,teams,all_game`).catch(() => []),
         allRows('players?select=id,name,setting&order=id'),
         allRows(`rallies?game_id=in.(${ids.join(',')})&won_by=not.is.null&select=game_id&order=game_id`).catch(() => []),
         rest(`video_jobs?game_id=in.(${ids.join(',')})&status=eq.done&viewing_key=not.is.null&select=id,game_id`).catch(() => []),
+        isPlayer ? [] : rest(`games?not_recorded=is.true&select=id`).catch(() => []),   // before not_recorded.sql: none
       ]);
       const tagged = new Map();
       for (const r of rallies) tagged.set(r.game_id, (tagged.get(r.game_id) ?? 0) + 1);
       const videos = new Set(jobs.filter(j => merged.find(g => g.id === j.game_id && g.video_kind === 'upload' && g.video_ref === j.id)).map(j => j.game_id));
-      const days = buildDays({ sessions, rounds, games: merged, players, tagged, videos, me });
+      const days = buildDays({ sessions, rounds, games: merged, players, tagged, videos, unrecorded: new Set(unrecorded.map(g => g.id)), me });
       return json({ days, me: { role: me.role, player_id: me.player_id } });
     }
 

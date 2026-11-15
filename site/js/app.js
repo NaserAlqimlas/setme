@@ -1,4 +1,5 @@
 import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, spinner, toast } from './ui.mjs';
+import { mountTray } from './uploadtray.mjs';
 import { ratePage } from './pages/rate.mjs';
 import { playersPage } from './pages/players.mjs';
 import { teamsPage, teamsStore } from './pages/teams.mjs';
@@ -87,6 +88,7 @@ async function render() {
   if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
   if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
+  if (me.role === 'super') mountTray();
   nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   app.replaceChildren(spinner());
   try {

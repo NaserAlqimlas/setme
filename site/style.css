@@ -889,3 +889,31 @@ main > .vb-spin { padding: 12vh 12px; }
   .vb-ball, .vb-shadow { animation: none; }
   .vb-ball svg { animation: vb-spin 3s linear infinite; }
 }
+
+/* Upload panel (uploadtray.mjs): bottom right on every page while videos upload */
+.up-tray { position: fixed; right: 16px; bottom: 16px; z-index: 25; width: min(360px, calc(100vw - 32px)); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); overflow: hidden; }
+.up-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.up-head b { flex: 1; font-size: .95rem; font-variant-numeric: tabular-nums; }
+.up-icon { min-height: 32px; width: 32px; padding: 0; border-radius: 50%; background: transparent; color: var(--muted); border: 0; font-size: 1rem; line-height: 1; }
+.up-icon:hover { background: var(--line); color: var(--fg); filter: none; }
+.up-list { list-style: none; margin: 0; padding: 4px 0; max-height: min(320px, 45vh); overflow-y: auto; }
+.up-list li { display: flex; flex-direction: column; gap: 4px; padding: 8px 8px 8px 14px; border-top: 1px solid var(--line); }
+.up-list li:first-child { border-top: 0; }
+.up-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.up-name { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.up-list progress { width: calc(100% - 6px); height: 6px; }
+.up-note { font-variant-numeric: tabular-nums; }
+.up-done .up-name::before { content: '✓ '; color: var(--up, #1a7f37); }
+.up-waiting .up-name { color: var(--muted); }
+.up-foot { margin: 0; padding: 8px 14px 10px; border-top: 1px solid var(--line); }
+body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
+@media (max-width: 600px) { .up-tray { right: 8px; left: 8px; bottom: 8px; width: auto; } }
+
+/* To tag: the game, and beside it Not recorded / Put back */
+.gd-totag { display: flex; align-items: center; gap: 8px; }
+.gd-totag > .gd-game { flex: 1; min-width: 0; }
+.gd-game.static { cursor: default; }
+.gd-unrec { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.gd-unrec > .gd-games { margin-top: 8px; }
+@media (max-width: 600px) { .gd-totag { flex-wrap: wrap; } .gd-totag > .ghost { margin-left: auto; } }
