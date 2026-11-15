@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, spinner, stacked, TEAM_COLORS, toast, today, toggle, withSpinner } from '../ui.mjs';
+import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, bigVideoButton, isBigVideo, spinner, stacked, TEAM_COLORS, toast, today, toggle, withSpinner } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, playAt, rallyAt } from '../rallytimes.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
@@ -729,7 +729,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     } catch (e) { toast(missing(e) || /move_game_tags/.test(e.message) ? 'Moving tags needs supabase/move_tags.sql run in Supabase first' : e.message); }
   };
 
-  const wrap = h('div', { class: 'tagger' },
+  const wrap = h('div', { class: `tagger${isBigVideo() ? ' big' : ''}` },
     h('div', { class: 'card tag-top' },
       h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
       h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
@@ -739,7 +739,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
         h('div', { class: 'card' }, videoBox, sourceRow, jobBar, foundBar,
-          keyHint)),
+          h('div', { class: 'row tag-keys' }, keyHint, bigVideoButton(() => wrap)))),
       h('div', { class: 'tag-right' },
         !ro && h('div', { class: 'card' }, pad),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));

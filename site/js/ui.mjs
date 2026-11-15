@@ -226,3 +226,20 @@ export function withSpinner(video, label = 'Loading the video…') {
   ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'seeked', 'suspend', 'error', 'pause'].forEach(e => video.addEventListener(e, off));
   return wrap;
 }
+
+// Bigger video, on Games and the tag screen: the page as wide as the window, the video taking most of it, still
+// side by side. Toggles class "big" on the page's view; one setting for both, remembered on this device.
+const BIG_KEY = 'setme-big-video';
+export const isBigVideo = () => { try { return localStorage.getItem(BIG_KEY) === '1'; } catch { return false; } };
+export function bigVideoButton(viewOf) {   // viewOf: the view, or a function giving it (when it's built after the button)
+  const view = () => { try { return typeof viewOf === 'function' ? viewOf() : viewOf; } catch { return null; } };   // not built yet
+  const btn = h('button', { type: 'button', class: 'ghost sm big-video-btn', title: 'Wider screens only: phones already show the video full width' });
+  const paint = () => { const big = view()?.classList.contains('big') ?? isBigVideo(); btn.textContent = big ? '⤡ Smaller video' : '⤢ Bigger video'; btn.setAttribute('aria-pressed', String(big)); };
+  btn.onclick = () => {
+    const big = view().classList.toggle('big');
+    try { localStorage.setItem(BIG_KEY, big ? '1' : '0'); } catch { /* not remembered */ }
+    paint();
+  };
+  paint();
+  return btn;
+}
