@@ -344,6 +344,9 @@ function urlVideo(box, url) {
 function fileVideo(box, file) {
   const v = h('video', { controls: true, playsinline: true, preload: 'auto' });
   v.src = URL.createObjectURL(file);
+  // Chrome can't play iPhone HEVC .mov files from the device; say so instead of its own error (Safari plays them).
+  v.onerror = () => box.replaceChildren(h('p', { class: 'muted small' }, `This browser can't play ${file.name} from your device. `,
+    'If it\'s uploading, the upload carries on, and the uploaded copy plays here once it\'s analysed. To tag from the file now, open SetMe in Safari.'));
   box.replaceChildren(v);
   return { now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => URL.revokeObjectURL(v.src) };
 }
