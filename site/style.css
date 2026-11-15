@@ -9,8 +9,9 @@
   --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
 }
+/* Dark: follows the device unless a theme is picked in the account menu (data-theme on <html>, set in index.html). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b1020; --surface: #141b30; --surface-2: #1a2238; --fg: #eef1f8; --muted: #9aa3bb; --line: #26304a; --line-strong: #3a4664;
     --primary: #6f93ff; --primary-fg: #0b1020;
     --danger: #ff7a6e; --ok: #3cc488; --warn-bg: #3a2e0d; --warn-fg: #ffd98a;
@@ -19,6 +20,15 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1020; --surface: #141b30; --surface-2: #1a2238; --fg: #eef1f8; --muted: #9aa3bb; --line: #26304a; --line-strong: #3a4664;
+  --primary: #6f93ff; --primary-fg: #0b1020;
+  --danger: #ff7a6e; --ok: #3cc488; --warn-bg: #3a2e0d; --warn-fg: #ffd98a;
+  --up: #ffa463; --down: #8fb0ff;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -62,6 +72,25 @@ h3 { margin: 0; font: 650 1.08rem/1.25 var(--body); letter-spacing: -.01em; }
 /* ---------- controls ---------- */
 input[type=text], input[type=date], input[type=email], input[type=password], input[type=search], input[type=url], select {
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-width: 0; min-height: 44px; }
+/* datePicker (ui.mjs): looks like the other fields; the calendar opens under it, weeks from Sunday. */
+.datepick { position: relative; display: inline-flex; min-width: 0; }
+.field > .datepick { font-size: 1rem; font-weight: 400; color: var(--fg); } /* not the small grey label text */
+.date-btn { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; min-height: 44px; font-weight: 500; text-align: left; width: 100%; }
+.date-btn:hover { filter: none; border-color: var(--line-strong); }
+.date-btn[aria-expanded="true"] { border-color: var(--primary); }
+.cal { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 292px; max-width: calc(100vw - 32px); padding: 10px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / .16); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.cal-head button { min-height: 36px; padding: 4px 12px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.cal-dow { font-size: .75rem; font-weight: 600; color: var(--muted); padding: 4px 0; }
+.cal-day { min-height: 36px; padding: 0; border-radius: 8px; background: transparent; color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.cal-day:hover { background: var(--surface-2); filter: none; }
+.cal-day.out { color: var(--muted); opacity: .6; }
+.cal-day.today { box-shadow: inset 0 0 0 1px var(--primary); }
+.cal-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-fg); opacity: 1; }
+.cal-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+.cal-foot button { min-height: 36px; }
 input:focus, select:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
 button { background: var(--primary); color: var(--primary-fg); border: 0; border-radius: 10px; padding: 9px 16px; min-height: 44px; font-weight: 600; cursor: pointer; transition: transform .05s, filter .15s, background .15s; }
 button:hover { filter: brightness(1.08); }
@@ -272,7 +301,8 @@ details.own[open] summary h3::before { transform: rotate(90deg); }
 .team { --tc: var(--primary); background: var(--surface); border: 1px solid var(--line); border-top: 5px solid var(--tc); border-radius: 14px; padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0; }
 .team header { display: flex; align-items: baseline; justify-content: space-between; }
 .team h4 { margin: 0; font: 700 1.6rem/1 var(--display); color: var(--tc); }
-@media (prefers-color-scheme: light) { .team-grid > .team:nth-child(6n+4) h4 { color: #8f6a00; } }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .team-grid > .team:nth-child(6n+4) h4 { color: #8f6a00; } }
+:root[data-theme="light"] .team-grid > .team:nth-child(6n+4) h4 { color: #8f6a00; }
 .team .total { font: 700 1.6rem/1 var(--display); font-variant-numeric: tabular-nums; }
 .team .total small { font: 600 .78rem var(--body); color: var(--muted); margin-right: 5px; }
 .team ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
@@ -542,6 +572,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .menu-list > button, .menu-list > a { min-height: 42px; padding: 8px 12px; border-radius: 8px; background: transparent; color: var(--fg); font-weight: 500; text-align: left; text-decoration: none; display: flex; align-items: center; }
 .menu-list > button:hover, .menu-list > a:hover { background: var(--surface-2); filter: none; }
 .menu-list > p { margin: 4px 12px 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.menu-theme { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 12px 8px; }
 .account > summary { display: flex; align-items: center; gap: 10px; padding: 3px 10px 3px 3px; border-radius: 999px; }
 .account > summary:hover { background: var(--surface-2); }
 .account .who-text { font-size: .88rem; line-height: 1.2; }
@@ -710,6 +741,8 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .stats-key summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .stats-key dl { display: grid; grid-template-columns: 4.5rem 1fr; gap: 4px 10px; margin: 10px 0; font-size: .9rem; }
 .stats-key dt { font-weight: 700; }
+.stats-key.wide dl { grid-template-columns: 6.5rem 1fr; }
+select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } /* font size left alone: under 16px, phones zoom in on tap */
 .stats-key dd { margin: 0; }
 .own-guide dl { display: grid; grid-template-columns: 2.5rem 1fr; gap: 4px 10px; margin: 0; }
 .own-guide dt { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -734,3 +767,25 @@ button:disabled.ghost { opacity: .75; cursor: default; }
 .own-games li { padding: 8px 0; border-top: 1px solid var(--line); }
 .own-games li > div { margin-top: 2px; }
 .own-changes li > .muted { flex-basis: 100%; }
+
+/* Drafts: compare two side by side */
+.draft-compare { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.compare-pick { flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.compare-pick select { flex: 1 1 160px; min-width: 0; }
+.compare-table { width: 100%; table-layout: fixed; }
+.compare-table th, .compare-table td { white-space: normal; overflow-wrap: anywhere; }
+.compare-table thead th:first-child { width: 34%; }
+.compare-table th[scope=row] { text-align: left; font-weight: 600; }
+.compare-table tr.group th { text-align: left; padding-top: 14px; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.compare-table td.better { font-weight: 700; color: var(--ok); }
+.compare-table td.better::after { content: ' ✓'; }
+.compare-team-labels, .compare-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.compare-team-labels { margin-top: 12px; }
+.compare-team-labels b { overflow-wrap: anywhere; }
+.compare-pair { margin-top: 8px; }
+.compare-team { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.compare-team.empty { display: grid; place-items: center; }
+.compare-team-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.compare-team ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.compare-team li { padding: 2px 0 2px 8px; border-left: 3px solid transparent; overflow-wrap: anywhere; }
+.compare-team li.moving { border-left-color: var(--warn-fg); font-weight: 600; }

@@ -148,3 +148,57 @@ export async function callFn(name, body) {
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
+
+// A date picker whose weeks always start on Sunday (the browser's own follows the device's language, and can't be told
+// otherwise). Acts like <input type=date> where the pages use it: .value is 'YYYY-MM-DD' or '', and picking a day fires
+// 'change'. Arrow keys move a day or a week, Page Up/Down a month, Enter picks, Escape closes.
+export function datePicker(value = '', label = 'Date') {
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parse = v => { const [y, m, d] = String(v).split('-').map(Number); return y && m && d ? new Date(y, m - 1, d) : null; };
+  let current = parse(value) ? value : '', shown = parse(current) ?? new Date(), focus = shown;
+  const btn = h('button', { type: 'button', class: 'date-btn', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-label': label });
+  const pop = h('div', { class: 'cal', role: 'dialog', 'aria-label': label, hidden: true });
+  const el = h('span', { class: 'datepick' }, btn, pop);
+  const words = d => d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const paintBtn = () => { btn.textContent = current ? words(parse(current)) : 'Pick a date'; };
+  const pick = d => { current = iso(d); paintBtn(); close(); btn.focus(); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  const paint = () => {
+    const y = shown.getFullYear(), m = shown.getMonth(), first = new Date(y, m, 1), today = iso(new Date());
+    const start = new Date(y, m, 1 - first.getDay()); // back to the Sunday on or before the 1st
+    const nav = (step, text, aria) => h('button', { type: 'button', class: 'ghost sm', 'aria-label': aria, onclick: () => { shown = new Date(y, m + step, 1); focus = shown; paint(); } }, text);
+    const days = Array.from({ length: 42 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)); // six weeks
+    pop.replaceChildren(
+      h('div', { class: 'cal-head' }, nav(-1, '‹', 'Previous month'), h('b', {}, first.toLocaleDateString([], { month: 'long', year: 'numeric' })), nav(1, '›', 'Next month')),
+      h('div', { class: 'cal-grid', role: 'grid' },
+        ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => h('span', { class: 'cal-dow', 'aria-hidden': 'true' }, d.slice(0, 2))),
+        days.map(d => {
+          const v = iso(d);
+          return h('button', { type: 'button', class: ['cal-day', d.getMonth() !== m && 'out', v === today && 'today'].filter(Boolean).join(' '),
+            'aria-pressed': String(v === current), 'aria-label': words(d), tabindex: v === iso(focus) ? '0' : '-1', 'data-day': v, onclick: () => pick(d) }, String(d.getDate()));
+        })),
+      h('div', { class: 'cal-foot' }, h('button', { type: 'button', class: 'ghost sm', onclick: () => pick(new Date()) }, 'Today')));
+  };
+  const outside = e => { if (!el.contains(e.target)) close(); };
+  const open = () => { shown = parse(current) ?? new Date(); focus = shown; paint(); pop.hidden = false; btn.setAttribute('aria-expanded', 'true');
+    pop.querySelector('.cal-day[tabindex="0"]')?.focus(); document.addEventListener('pointerdown', outside); };
+  function close() { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside); }
+  btn.onclick = () => pop.hidden ? open() : close();
+  // Inside a <label>, a tap on the calendar's background would "click" the label and so the button; don't let it.
+  pop.addEventListener('click', e => { if (!e.target.closest('button')) e.preventDefault(); });
+  pop.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); btn.focus(); return; }
+    const day = e.target.dataset?.day; if (!day) return;
+    const d = parse(day);
+    const move = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+    if (move != null) d.setDate(d.getDate() + move);
+    else if (e.key === 'PageUp' || e.key === 'PageDown') d.setMonth(d.getMonth() + (e.key === 'PageUp' ? -1 : 1));
+    else return;
+    e.preventDefault();
+    focus = d;
+    if (d.getMonth() !== shown.getMonth() || d.getFullYear() !== shown.getFullYear()) { shown = new Date(d.getFullYear(), d.getMonth(), 1); }
+    paint(); pop.querySelector('.cal-day[tabindex="0"]')?.focus();
+  });
+  Object.defineProperty(el, 'value', { get: () => current, set: v => { current = parse(v) ? v : ''; paintBtn(); } });
+  paintBtn();
+  return el;
+}

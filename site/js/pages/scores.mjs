@@ -1,8 +1,8 @@
-import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, endsRally, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -69,7 +69,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
     .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
   const tagGame = games.find(g => g.id === taggingGame);
-  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); }, tagClosed(ses.played_on))];
+  if (tagGame) return [await tagView(tagGame, games.indexOf(tagGame) + 1, pname, tname, () => { taggingGame = null; render(); }, tagClosed(ses.played_on), { games, tags })];
   taggingGame = null;
   const wrap = h('div');
   const daySel = h('select', { 'aria-label': 'Game day' }, sessions.map(s => h('option', { value: s.played_on, selected: s.played_on === scoresDay }, dayTitle(s.played_on) + (s.ended ? ' (ended)' : ''))));
@@ -351,7 +351,8 @@ async function youtubeVideo(box, id) {
 }
 
 // ro (read only): tagging has closed for this game day; the tags, video and recap can be looked at, not changed.
-async function tagView(g, n, pname, tname, back, ro = false) {
+// day: the day's games and how many tagged rallies each has, for moving tags put on the wrong game.
+async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g], tags: new Map() }) {
   const stored = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', g.id)));
   // What the database has: each rally as last saved (to send only what changed), and the video.
   const saved = new Map(stored.map(r => [r.id, JSON.stringify(r)]));
@@ -625,11 +626,38 @@ async function tagView(g, n, pname, tname, back, ro = false) {
   document.addEventListener('keydown', keys);
   const leave = async () => { await save(); player?.dispose(); document.removeEventListener('keydown', keys); back(); };
 
+  // Tagged the wrong game: move these tags (and the video) to the right one. If it has tags too, the two swap.
+  const others = day.games.filter(x => x.id !== g.id);
+  const moveTags = async () => {
+    const gameLabel = x => `Game ${day.games.indexOf(x) + 1} · ${tname(x.session_id, x.team_a, roundOf(x))} v ${tname(x.session_id, x.team_b, roundOf(x))} (${x.score_a}–${x.score_b})`;
+    const to = await choose('Move these tags to another game', `They're on Game ${n} (${g.score_a}–${g.score_b}). Pick the game they belong to. If it has tags too, the two games swap tags.`,
+      others.map(x => [x, gameLabel(x) + (day.tags?.get(x.id) ? ' · has tags, swap' : '')]));
+    if (!to) return;
+    await save();
+    if (dirty) return toast('Save the tags first, then move them');
+    try {
+      const theirs = fromRows(await q(sb.from('rallies').select('id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)').eq('game_id', to.id)));
+      const lineupOf = x => new Set([...x.players_a, ...x.players_b]);
+      const away = (rs, x) => [...new Set(rs.flatMap(r => r.touches.map(t => t.p)))].filter(p => !lineupOf(x).has(p)).map(pn);
+      const notThere = [...away(rallies, to), ...away(theirs, g)];
+      const swap = theirs.length > 0;
+      if (!await ask(swap ? `Swap tags between Game ${n} and Game ${day.games.indexOf(to) + 1}?` : `Move these tags to Game ${day.games.indexOf(to) + 1}?`,
+        `${rallies.length} rall${rallies.length === 1 ? 'y' : 'ies'} ${swap ? `and the other game's ${theirs.length} swap places` : `move, and Game ${n} is left untagged`}. The video goes with them.`
+        + (notThere.length ? ` Not in the other lineup: ${notThere.join(', ')}. Their touches move anyway; check this is the right game.` : ''),
+        swap ? 'Swap tags' : 'Move tags', 'ball')) return;
+      await q(sb.rpc('move_game_tags', { p_from: g.id, p_to: to.id, p_flip_from: flipSides(rallies, g, to), p_flip_to: flipSides(theirs, to, g) }));
+      for (const id of [g.id, to.id]) try { localStorage.removeItem(`setme-tags-${id}`); } catch { /* nothing kept */ }
+      toast(swap ? 'Tags swapped' : `Tags moved to Game ${day.games.indexOf(to) + 1}`);
+      player?.dispose(); document.removeEventListener('keydown', keys); back();
+    } catch (e) { toast(missing(e) || /move_game_tags/.test(e.message) ? 'Moving tags needs supabase/move_tags.sql run in Supabase first' : e.message); }
+  };
+
   const wrap = h('div', { class: 'tagger' },
     h('div', { class: 'card tag-top' },
       h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
       h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
-      scoreEl, gameRecap.btn),
+      scoreEl, gameRecap.btn,
+      !ro && others.length > 0 && h('button', { class: 'ghost sm', title: 'These tags belong to another game: move them there', onclick: moveTags }, 'Wrong game?')),
     // Wide screens: the video stays on the left while the panels scroll on the right.
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
@@ -709,13 +737,13 @@ async function insightsView(sessions, pname, tname, roundRows) {
 
   const parts = [early, tiles, chartCard, factors, weights, days].filter(Boolean);
 
-  // Super: players whose teams did better or worse than their ratings said. Based on results only, but it points at
-  // players who may be rated too low or too high, so organizers don't get it.
-  if (me.role === 'super') {
+  // Players whose teams did better or worse than their ratings said: points at who may be rated too low or too high.
+  // Organizers and super (only they reach Insights).
+  {
     const ps = playerStats(games, a.k).filter(p => pname.has(p.id)).sort((x, y) => y.over - x.over);
     const adj = resultAdjustments(games);
     parts.push(h('div', { class: 'card' }, h('h3', {}, 'Players vs their ratings'),
-      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only you see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
+      h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Only organizers and the site owner see this. ', h('b', {}, 'Vs ratings'), ' is how many points per game their teams did better (+) or worse (−) than the rating gap predicted. ',
         'High and steady: maybe rated too low. Low: maybe too high. Under 10 games it\'s mostly luck. ',
         h('b', {}, 'Adjust'), ` is what Adjust for results on Teams adds to their strength (same scale as a team total; pulled toward 0 for few games${adj.size ? '' : `; starts after ${ADJUST_MIN_GAMES} games`}).`),
       stacked(h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), h('th', { class: 'num' }, 'Won'), h('th', { class: 'num' }, 'Margin'), h('th', { class: 'num' }, 'Vs ratings'), h('th', { class: 'num' }, 'Adjust'))),

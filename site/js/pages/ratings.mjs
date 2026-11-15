@@ -10,17 +10,20 @@ import { pct, pts } from './scores.mjs';
 let pendingHistory = null;
 export const openHistory = id => { pendingHistory = id; };
 
-// ---------- all ratings (super) ----------
-// Super: everyone's ratings, combined or one rater at a time, plus rater leans and disagreements.
-// Raters and organizers: their own ratings only (the database only returns their rows anyway).
+// ---------- all ratings (organizers and super) ----------
+// Organizers and super: everyone's ratings, combined or one rater at a time, plus rater leans and disagreements.
+// Raters: their own ratings only (the database only returns their rows anyway). Only the super saves SetMe's ratings.
 export async function ratingsPage() {
-  const all = me.role === 'super';
+  const isSuper = me.role === 'super', all = isSuper || me.role === 'organizer';
   const [players, ratings, profiles] = await Promise.all([
     q(sb.from('players').select('*').eq('active', true).order('name')), // * so it works before the anchor column exists
     all ? q(sb.from('ratings').select('*')) : q(sb.from('ratings').select('*').eq('rater_id', me.id)),
-    all ? q(sb.from('profiles').select('id,display_name')) : [],
+    // Organizers get raters' names only (organizer_ratings.sql); profiles hold emails.
+    isSuper ? q(sb.from('profiles').select('id,display_name,email')).then(ps => ps.map(p => ({ ...p, setme: p.email === 'setme@setme.invalid' })))
+      : all ? q(sb.rpc('rater_names')).catch(() => [])
+      : [],
   ]);
-  // Super gets everyone's changes; anyone else only their own (the database enforces this too).
+  // Organizers and super get everyone's changes; anyone else only their own (the database enforces this too).
   const histQ = sb.from('rating_history').select('*').order('changed_at', { ascending: false }).limit(1000);
   const changeLog = await q(all ? histQ : histQ.eq('rater_id', me.id)).catch(() => null);
   const pname = new Map(profiles.map(p => [p.id, p.display_name]));
@@ -111,8 +114,8 @@ export async function ratingsPage() {
   draw();
 
   return h('div', {},
-    all ? pageHead('All ratings', 'Only you can see this page.')
-      : pageHead('My ratings', 'Only you and the site owner can see your ratings. Change them on the Rate page.'),
+    all ? pageHead('All ratings', isSuper ? 'Only you and the organizers can see this page.' : 'Only organizers and the site owner can see this page.')
+      : pageHead('My ratings', 'Only you, the organizers and the site owner can see your ratings. Change them on the Rate page.'),
     picker && h('div', { class: 'card' }, picker),
     h('div', { class: 'card toolbar' },
       h('label', { class: 'sort' }, h('span', {}, 'Sort by'), sortSel), dirBtn,
@@ -120,7 +123,7 @@ export async function ratingsPage() {
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
     hist.el,
     all && coverageCard(players, ratings, short),
-    all && matchStatsCard(players, ratings),
+    all && matchStatsCard(players, ratings, profiles.find(p => p.setme)?.id ?? null, isSuper),
     all && extra);
 }
 
@@ -156,9 +159,10 @@ function coverageCard(players, ratings, short) {
         anchors.length > 0 && h('td', { class: 'num' }, `${anchors.filter(a => by.get(a.id).has(c.rid)).length} of ${anchors.length}`))))))));
 }
 
-// Super only: per-player numbers from tagged games, and SetMe's ratings worked out from them (see statRatings in
+// Organizers and super: per-player numbers from tagged games, and SetMe's ratings worked out from them (see statRatings in
 // stats.mjs). SetMe is a rater account of its own, so its ratings are combined, picked and charted like anyone's.
-function matchStatsCard(players, ratings) {
+// setmeId: SetMe's account (null before the first save). canSave: only the super writes SetMe's ratings.
+function matchStatsCard(players, ratings, setmeId, canSave) {
   const el = foldCard('match-stats', 'Match stats', h('p', { class: 'muted' }, 'Loading…'));
   (async () => {
     let rows, tagged;
@@ -204,8 +208,7 @@ function matchStatsCard(players, ratings) {
     const table = stacked(h('table', {}, h('thead', {}, h('tr', {}, heads)), tbody));
 
     // SetMe's ratings: preview the changes, then write them as the SetMe rater.
-    const [setme] = await q(sb.from('profiles').select('id').eq('email', 'setme@setme.invalid'));
-    const current = new Map(setme ? ratings.filter(r => r.rater_id === setme.id).map(r => [r.player_id, r]) : []);
+    const current = new Map(setmeId ? ratings.filter(r => r.rater_id === setmeId).map(r => [r.player_id, r]) : []);
     const out = h('div');
     const preview = () => {
       const { ratings: next, detail } = statRatings(tallies, players);
@@ -234,10 +237,10 @@ function matchStatsCard(players, ratings) {
         ...(skipped.length ? [h('p', { class: 'muted small' }, `Not rated yet, too little data: ${skipped.join('; ')}.`)] : []),
         changes.length ? h('div', { class: 'chips' }, changes.map(c => h('span', { class: `chip plain ${c.old == null ? '' : c.new > c.old ? 'up' : 'down'}` },
           `${name.get(c.pid)} · ${SHORT[c.s]} ${fmt(c.old)} → ${fmt(c.new)}`))) : h('p', { class: 'muted' }, 'SetMe\'s ratings already match the stats.'),
-        h('div', { class: 'row', style: 'margin-top:10px' }, apply));
+        h('div', { class: 'row', style: 'margin-top:10px' }, canSave ? apply : h('span', { class: 'muted small' }, 'Only the site owner can save these.')));
     };
     el.body.replaceChildren(
-      h('p', { class: 'muted small' }, `From ${tagged} tagged game${tagged === 1 ? '' : 's'}. Only you can see these. Tap a heading to sort.`),
+      h('p', { class: 'muted small' }, `From ${tagged} tagged game${tagged === 1 ? '' : 's'}. Only organizers and the super see these. Tap a heading to sort.`),
       h('div', { class: 'scroll' }, table),
       statsKey(),
       h('h3', { style: 'margin-top:18px' }, 'SetMe\'s ratings'),

@@ -133,7 +133,7 @@ create policy players_delete on public.players for delete to authenticated using
 
 -- ratings: you read and write only your own; super reads all.
 create policy ratings_read on public.ratings for select to authenticated
-  using (rater_id = auth.uid() or public.my_role() = 'super');
+  using (rater_id = auth.uid() or public.my_role() in ('organizer', 'super'));  -- organizers too: organizer_ratings.sql
 create policy ratings_insert on public.ratings for insert to authenticated with check (rater_id = auth.uid());
 create policy ratings_update on public.ratings for update to authenticated
   using (rater_id = auth.uid()) with check (rater_id = auth.uid());
@@ -142,9 +142,9 @@ create policy ratings_delete on public.ratings for delete to authenticated using
 create policy ratings_super_write on public.ratings for all to authenticated
   using (public.my_role() = 'super') with check (public.my_role() = 'super');
 
--- rating_history: super reads everything, everyone else their own; only the trigger writes it.
+-- rating_history: organizers and super read everything, everyone else their own; only the trigger writes it.
 create policy rating_history_read on public.rating_history for select to authenticated
-  using (public.my_role() = 'super' or rater_id = auth.uid());
+  using (rater_id = auth.uid() or public.my_role() in ('organizer', 'super'));
 
 -- Scores: saved lineups per game day and each game's result (same as scores.sql).
 create table public.sessions (
@@ -261,6 +261,30 @@ begin
     select rid, (x.ord - 1)::smallint, (x.t->>'p')::bigint, x.t->>'a', (x.t->>'g')::smallint, (x.t->>'t')::real
     from jsonb_array_elements(r->'touches') with ordinality as x(t, ord);
   end loop;
+end $$;
+
+-- Move or swap a game's tags with another game on the same day (same as move_tags.sql).
+create or replace function public.move_game_tags(p_from bigint, p_to bigint, p_flip_from boolean default false, p_flip_to boolean default false)
+returns void language plpgsql security invoker set search_path = public as $$
+declare a games; b games;
+begin
+  select * into a from games where id = p_from;
+  select * into b from games where id = p_to;
+  if a.id is null or b.id is null then raise exception 'Game not found'; end if;
+  if a.id = b.id then raise exception 'Pick a different game'; end if;
+  if a.session_id <> b.session_id then raise exception 'Both games must be on the same game day'; end if;
+  -- The SET expressions see each row as it was, so this moves both ways at once.
+  update rallies set
+    game_id = case when game_id = p_from then p_to else p_from end,
+    serving = case when (game_id = p_from and p_flip_from) or (game_id = p_to and p_flip_to)
+      then case serving when 'a' then 'b' else 'a' end else serving end,
+    won_by = case when won_by is not null and ((game_id = p_from and p_flip_from) or (game_id = p_to and p_flip_to))
+      then case won_by when 'a' then 'b' else 'a' end else won_by end,
+    updated_at = now()
+  where game_id in (p_from, p_to);
+  -- The video and the end mark go with the tags (rally times point into that video).
+  update games g set video_kind = o.video_kind, video_ref = o.video_ref, tags_end = o.tags_end
+  from games o where (g.id = p_from and o.id = p_to) or (g.id = p_to and o.id = p_from);
 end $$;
 
 -- One row per player across tagged games: games played (a game counts once it has a finished rally) and how many
@@ -641,3 +665,14 @@ language sql stable security definer set search_path = public as $$
       or exists (select 1 from public.rounds r, jsonb_array_elements(r.teams) t where r.session_id = s.id and t @> to_jsonb(p_player)))
   order by s.played_on
 $$;
+
+-- Organizers see All ratings (same as organizer_ratings.sql).
+-- Names for the rater picker and charts. Profiles stay private (they hold emails), so this hands out only names.
+create or replace function public.rater_names()
+returns table (id uuid, display_name text, setme boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.display_name, p.email = 'setme@setme.invalid'
+  from public.profiles p
+  where public.my_role() in ('organizer', 'super');
+$$;
+grant execute on function public.rater_names() to authenticated;

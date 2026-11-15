@@ -84,3 +84,15 @@
 - An action speaks once the player has 10 touches of it. One strength first, then up to two things to work on; small gaps say nothing. Ratings cover skills the stats don't (hustle, consistency, or not enough touches yet). When stats and ratings disagree about a skill, it isn't mentioned.
 - Rejected: comparing with teammates' average (chosen against); a 15-touch minimum (lowered to 10, as few games are tagged).
 - Rests on: site/js/focus.mjs (focusAreas, clubCounts; tests/test_focus.mjs), club totals from the my-stats function, focusCard in site/js/pages/club.mjs.
+
+## Organizers see All ratings
+Organizers build teams, so they see everyone's ratings, rating history, leans and disagreements on All ratings, like the super. Profiles still hold emails, so organizers get raters' names through `rater_names()` instead of reading profiles. Writing is unchanged: everyone edits only their own ratings, and only the super saves SetMe's ratings or imports for others. Raters are told organizers can see their ratings (My ratings page). Needs `supabase/organizer_ratings.sql`.
+
+- Later the same day: organizers also get each player's ratings on built teams (build-teams no longer strips them) and Players vs their ratings on Insights, since All ratings already shows them every rating.
+
+## 2026-11-14 · Compare two drafts side by side
+- Decided by: the designer
+- Why: The Drafts table shows each draft's numbers, but not how two drafts differ.
+- Compare two drafts, under the Drafts table: gap, issues, repeats and each skill's spread between teams, the better number marked, all checked with the raters picked above like Gap now. Then the teams paired by shared players (Team 1 in one draft can be Team 3 in the other), with who changes team and to which.
+- Rejected: Nothing offered instead; asked for directly.
+- Rests on: matchTeams in site/js/teams.mjs (tests/test_matchteams.mjs), compareDrafts in site/js/pages/teams.mjs.

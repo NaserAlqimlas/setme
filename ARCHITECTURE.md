@@ -21,7 +21,7 @@ There is no build step and no framework: the browser loads plain ES modules.
 Only the super can see individual ratings. Organizers see team numbers on the Teams page (combined, or one rater's via Show ratings from) and nothing else. Everything else follows from that:
 
 - **RLS**: a rater or organizer can only read their own rows in `ratings`. The super can read all.
-- **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and for organizers strips per-player data. Organizers get team totals, skill sums, gaps and rating-based notes, combined and per rater (`byRater`, `suggestRater`), never a single player's numbers.
+- **Building teams happens on the server.** `build-teams` loads every rating with the secret key, builds the teams, and returns team totals, skill sums, gaps, rating-based notes and each player's numbers, combined and per rater (`byRater`, `suggestRater`), to organizers and the super alike.
 - **The New players check** (`build-teams` with `check: true`) only says who has no ratings, never values.
 - **Your own teams** (`build-teams` with `teams`) goes through the same stripping, so organizers checking their own teams see the same team numbers.
 - **Match stats** are observations, not ratings: organizers tag games and can read the tags (they're watching the same video). Game and day recaps (per-player box scores) are made to be shared with the group, by organizers or the super. Season-long per-player stats and SetMe's ratings are only shown to the super.
