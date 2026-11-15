@@ -111,12 +111,20 @@ export async function ratePage() {
   // What a skill row shows: the number, U if they said don't know, or nothing pressed if not answered yet.
   const shown = (r, s) => r?.[s] != null ? Number(r[s]) : (hasUnknown ? unknownOf(r).includes(s) : r != null) ? 'U' : undefined;
   let onlyPlaying = false, onlyUnrated = false, onlyLook = false, search = '';
-  // Why a player is worth a (fresh) look: ids only from the server, never which way.
+  // Why a player is worth a (fresh) look: ids only from the server, never which way. Organizers and the super can see
+  // every rating anyway, so for them the server also says how (queue.how).
+  const how = queue?.how;
+  const resultsWhy = id => {
+    const x = how?.[id];
+    if (!x) return 'Results don\'t match their ratings';
+    const better = x.over > 0;
+    return `Their teams do ${Math.abs(x.over).toFixed(1)} points a game ${better ? 'better' : 'worse'} than rated (won ${x.wins} of ${x.games}): maybe rated too ${better ? 'low' : 'high'}`;
+  };
   const sets = { results: new Set(queue?.results), few: new Set(queue?.few), anchors: new Set(queue?.anchors ?? players.filter(p => p.anchor).map(p => p.id)) };
   const reasons = p => {
     const r = byPlayer.get(p.id), out = [];
     if (sets.anchors.has(p.id) && !done(p)) out.push('Anchor player: rate them first');
-    if (sets.results.has(p.id)) out.push('Results don\'t match their ratings');
+    if (sets.results.has(p.id)) out.push(resultsWhy(p.id));
     if (sets.few.has(p.id)) out.push('Few people have rated them');
     if (r?.updated_at && Date.now() - Date.parse(r.updated_at) > STALE_DAYS * 864e5) out.push(`Your rating is over ${Math.round(STALE_DAYS / 30)} months old`);
     return out;
@@ -130,7 +138,8 @@ export async function ratePage() {
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Worth a fresh look'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, anchorsLeft.length
           ? `New here? Start with the ${anchorsLeft.length} anchor player${anchorsLeft.length === 1 ? '' : 's'} everyone rates; it tells SetMe how you rate compared with the others, and until then your ratings count for less.`
-          : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
+          : how ? 'Players where another look helps most. You see which way because you can see everyone\'s ratings; raters see only the names, so they rate what they see.'
+            : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
       h('ul', { class: 'look-list' }, list.map(({ p, why }) => h('li', { title: why.join('\n') },
         h('button', { type: 'button', class: 'look-name', onclick: () => jumpTo(p.id), 'aria-label': `Go to ${p.name}` }, p.name),
         h('span', { class: 'muted small' }, why[0] + (why.length > 1 ? `, and ${why.length - 1} more` : ''))))));

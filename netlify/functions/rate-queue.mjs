@@ -1,6 +1,7 @@
-// POST /.netlify/functions/rate-queue  (raters, organizers, super)  -> { results: [id], few: [id], anchors: [id] }
-// Players worth a fresh look on the Rate page. Ids only, never which way or by how much, so nobody learns anything
-// about anyone's ratings:
+// POST /.netlify/functions/rate-queue  (raters, organizers, super)  -> { results: [id], few: [id], anchors: [id], how? }
+// Players worth a fresh look on the Rate page. For raters, ids only, never which way or by how much, so nobody learns
+// anything about anyone's ratings. Organizers and the super can already see every rating (and Insights' Players vs
+// their ratings), so they also get how: { [id]: { over, games, wins } } for the results players:
 //   results: their teams keep doing better or worse than their ratings said (resultAdjustments in scores.mjs,
 //            at least NEEDS_GAMES games and a shift of SHIFT or more)
 //   few:     active players fewer than MIN_RATERS people have rated
@@ -25,9 +26,19 @@ export default async (req) => {
   const adj = resultAdjustments(games);
   const played = new Map(analyze(games).n ? playerStats(games, 1).map(p => [p.id, p.games]) : []);
   const results = [...adj].filter(([id, v]) => active.has(id) && Math.abs(v) >= SHIFT && (played.get(id) ?? 0) >= NEEDS_GAMES).map(([id]) => id);
+  // over: points a game their teams did better (+) or worse (−) than the rating gap predicted; the same numbers as
+  // Insights' Players vs their ratings.
+  let how;
+  if (['organizer', 'super'].includes(me.role) && results.length) {
+    const a = analyze(games), st = new Map(playerStats(games, a.k).map(p => [p.id, p]));
+    how = Object.fromEntries(results.filter(id => st.has(id)).map(id => {
+      const p = st.get(id);
+      return [id, { over: Math.round(p.over * 10) / 10, games: p.games, wins: p.wins }];
+    }));
+  }
   const count = new Map();
   for (const r of ratings) count.set(r.player_id, (count.get(r.player_id) ?? 0) + 1);
   const few = players.filter(p => (count.get(p.id) ?? 0) < MIN_RATERS).map(p => p.id);
   const anchors = players.filter(p => p.anchor).map(p => p.id);
-  return json({ results, few, anchors });
+  return json({ results, few, anchors, ...(how ? { how } : {}) });
 };
