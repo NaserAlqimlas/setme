@@ -2,7 +2,7 @@
 // and a box score with everyone's line) and your own. Organizers and the super see every game; a player sees the
 // games they played in, on published game days (netlify/functions/game-view.mjs). The super also uploads videos
 // here (Upload several) and can go from a game to tagging it.
-import { ask, callFn, fill, h, me, pageHead, q, sb, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
+import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
 import { ACTIONS, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
@@ -14,9 +14,7 @@ import { searchDays, toTag } from '../gamesearch.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
-let query = '';
-const BIG = 'setme-big-video';
-const bigVideo = () => { try { return localStorage.getItem(BIG) === '1'; } catch { return false; } };        // what's typed in the search box, kept the same way
+let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
 const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -95,7 +93,7 @@ function dayCard(d, open) {
 function gameView(g, back) {
   const left = h('div', { class: 'gd-left' }, h('div', { class: 'card' }, spinner('Loading the game…')));
   const right = h('div', { class: 'gd-right' });
-  const view = h('div', { class: `gd-view${bigVideo() ? ' big' : ''}` },
+  const view = h('div', { class: `gd-view${isBigVideo() ? ' big' : ''}` },
     h('div', { class: 'card gd-top' },
       h('button', { class: 'ghost sm', onclick: back }, '← Games'),
       h('div', { class: 'grow' }, h('h3', { style: 'margin:0' }, `Game ${g.n} · ${day(g.played_on)}`),
@@ -132,20 +130,11 @@ function gameView(g, back) {
         if (e.key.toLowerCase() === 'n' && times.length && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) { e.preventDefault(); go(e.shiftKey ? -1 : 1); }
       };
       document.addEventListener('keydown', keys);
-      // Bigger video: still side by side, but the video takes most of the window. Remembered on this device.
-      const sizeBtn = h('button', { class: 'ghost sm' });
-      const paintSize = () => { const big = view.classList.contains('big'); sizeBtn.textContent = big ? '⤡ Smaller video' : '⤢ Bigger video'; sizeBtn.setAttribute('aria-pressed', String(big)); };
-      sizeBtn.onclick = () => {
-        const big = view.classList.toggle('big');
-        try { localStorage.setItem(BIG, big ? '1' : '0'); } catch { /* not remembered */ }
-        paintSize();
-      };
-      paintSize();
       const full = () => (video.requestFullscreen?.() ?? video.webkitRequestFullscreen?.() ?? video.webkitEnterFullscreen?.())?.catch?.(() => {});
       fill(videoCard, withSpinner(video), h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:10px' },
         times.length && h('button', { class: 'ghost sm', onclick: () => go(-1) }, '◀ Previous rally'), times.length && h('button', { class: 'ghost sm', onclick: () => go(1) }, 'Next rally ▶'), times.length && where,
         h('span', { class: 'grow' }),
-        sizeBtn, h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
+        bigVideoButton(view), h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
         times.length && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Keys: N next rally · Shift N back'));
     } else fill(videoCard, h('p', { class: 'muted' }, 'No video of this game.'));
     const seek = t => { if (!video || t == null) return; playAt(video, t - 2); video.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };

@@ -500,7 +500,12 @@ tr.dim td { color: var(--muted); }
   .tag-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(380px, 1fr); align-items: start; }
   .tag-left { position: sticky; top: calc(var(--top-h, 60px) + 12px); }
   .tag-left .tag-video video, .tag-left .tag-video .yt iframe { max-height: calc(100vh - var(--top-h, 60px) - 170px); }
+  .tagger.big { --tag-w: calc(100vw - 32px); }
+  .tagger.big .tag-cols { grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); }
 }
+.tag-keys { justify-content: space-between; gap: 8px; margin-top: 10px; }
+.tag-keys > p { margin: 0; flex: 1 1 200px; }
+@media (max-width: 999px) { .big-video-btn { display: none; } }
 .tag-video video, .tag-video .yt iframe { display: block; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; border: 0; }
 .tag-source { flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .tag-source input[type=url] { flex: 1 1 200px; min-width: 0; }
