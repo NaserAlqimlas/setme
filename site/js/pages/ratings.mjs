@@ -1,6 +1,6 @@
 import { callFn, fmt, forPlayer, h, LABEL, me, pageHead, q, render, sb, seg, SHORT, spinner, stacked, toast, today } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, weightedTotal } from '../teams.mjs';
-import { metrics, MIN_PLAYERS, SKILL_STATS, statRatings, tallyFromCounts } from '../stats.mjs';
+import { metrics, SETME_CLEARS, SKILL_STATS, statRatings, tallyFromCounts, withDays } from '../stats.mjs';
 import { raterPicker } from './teams.mjs';
 import { pct, pts } from './scores.mjs';
 
@@ -170,7 +170,16 @@ function matchStatsCard(players, ratings, setmeId, canSave) {
       [rows, [{ games: tagged }]] = await Promise.all([q(sb.from('player_stats').select('*')), q(sb.from('tagged_games').select('games'))]);
     } catch { return el.body.replaceChildren(h('p', { class: 'muted' }, 'Not set up yet: run supabase/match_stats.sql in Supabase, then tag games on Scores.')); }
     if (!tagged) return el.body.replaceChildren(h('p', { class: 'muted' }, 'No games tagged yet. On Scores, tap Tag on a saved game.'));
-    const tallies = tallyFromCounts(rows);
+    // Game-day tallies for consistency (consistency.sql); without the view SetMe just leaves consistency out.
+    const dayRows = await (async () => {
+      const all = [];
+      for (let from = 0; ; from += 1000) {
+        const page = await q(sb.from('player_day_stats').select('*').range(from, from + 999));
+        all.push(...page);
+        if (page.length < 1000) return all;
+      }
+    })().catch(() => null);
+    const tallies = withDays(tallyFromCounts(rows), dayRows);
     const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`, num = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
     // [sort key, header, hover text]. Tap a header to sort by it (numbers high to low first); tap again to flip.
     const COLS = [['name', 'Player'], ['games', 'Games'], ['serves', 'Serves'], ['aceRate', 'Aces', 'Ace %'], ['serveErr', 'Srv err', 'Serve errors'],
@@ -218,16 +227,22 @@ function matchStatsCard(players, ratings, setmeId, canSave) {
         const was = current.get(pid)?.[s]; const old = was == null ? null : Number(was);
         if (old !== sk[s]) changes.push({ pid, s, old, new: sk[s] });
       }
-      const skipped = skills.filter(s => detail[s].skipped).map(s => detail[s].flat ? `${LABEL[s]} (no differences between players yet)`
-        : `${LABEL[s]} (${detail[s].players} of ${MIN_PLAYERS} players have ${SKILL_STATS[s].min}+ ${s === 'blocking' || s === 'hustle' ? 'games' : 'attempts'})`);
+      // Skills SetMe no longer rates (hustle) are cleared from its rows.
+      for (const [pid, r] of current) for (const s of SETME_CLEARS) if (r[s] != null) changes.push({ pid, s, old: Number(r[s]), new: null });
+      const unit = s => s === 'blocking' ? 'games' : s === 'consistency' ? 'game days' : 'attempts';
+      const skipped = skills.filter(s => detail[s].skipped).map(s => s === 'consistency' && !dayRows ? `${LABEL[s]} (run supabase/consistency.sql in Supabase first)`
+        : detail[s].untagged ? `${LABEL[s]} (nothing tagged yet)`
+        : `${LABEL[s]} (nobody has ${SKILL_STATS[s].min}+ ${unit(s)} yet)`);
       const apply = h('button', { class: 'ball', disabled: !changes.length }, changes.length ? `Save ${changes.length} change${changes.length === 1 ? '' : 's'} as SetMe` : 'Nothing to change');
       apply.onclick = async () => {
         apply.disabled = true; apply.textContent = 'Saving…';
         try {
           const { id } = await callFn('admin', { action: 'setme' });
           // Every row carries every derived skill (unchanged ones as they were), so nothing gets blanked.
-          const body = [...next].map(([pid, sk]) => ({ rater_id: id, player_id: pid,
-            ...Object.fromEntries(skills.map(s => [s, s in sk ? sk[s] : current.get(pid)?.[s] ?? null])) }));
+          const pids = new Set([...next.keys(), ...current.keys()]);
+          const body = [...pids].map(pid => { const sk = next.get(pid) ?? {}; return { rater_id: id, player_id: pid,
+            ...Object.fromEntries(skills.map(s => [s, s in sk ? sk[s] : current.get(pid)?.[s] ?? null])),
+            ...Object.fromEntries(SETME_CLEARS.map(s => [s, null])) }; });
           await q(sb.from('ratings').upsert(body));
           toast('SetMe\'s ratings saved'); render();
         } catch (e) { toast(e.message); apply.disabled = false; apply.textContent = 'Try again'; }
@@ -246,10 +261,21 @@ function matchStatsCard(players, ratings, setmeId, canSave) {
       h('h3', { style: 'margin-top:18px' }, 'SetMe\'s ratings'),
       h('p', { class: 'muted small' }, 'SetMe rates players from these stats as a rater of its own: ',
         Object.entries(SKILL_STATS).map(([s, d]) => `${LABEL[s]} from ${d.label.toLowerCase()}`).join(', '),
-        '. Small samples are pulled toward the average, then players are ranked and spread over 0 to 1. Pick SetMe in Ratings from to see or use them.'),
+        '. Consistency is how much their game score (points, minus errors, plus half for each good pass, dig or set, per game) moves from one game day to the next. Hustle is left to people. Each player is rated from their own stats against fixed steps, so tagging other games never moves their number. Small samples are pulled toward .5. Pick SetMe in Ratings from to see or use them.'),
+      stepsKey(),
       h('button', { class: 'ghost sm', onclick: preview }, 'Preview changes'), out);
   })().catch(e => el.body.replaceChildren(h('p', { class: 'warn' }, e.message)));
   return el;
+}
+
+// The fixed steps SetMe reads each stat against, folded.
+function stepsKey() {
+  const show = (s, v) => s === 'consistency' ? String(-v) : s === 'hitting' || s === 'serve' ? `${v > 0 ? '+' : ''}${v}` : String(v);
+  return h('details', { class: 'stats-key' }, h('summary', {}, 'The steps'),
+    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Skill'), ['0', '.25', '.5', '.75', '1'].map(l => h('th', { class: 'num' }, l)))),
+      h('tbody', {}, Object.entries(SKILL_STATS).map(([s, d]) => h('tr', {}, h('td', {}, `${LABEL[s]} · ${d.label.toLowerCase()}`),
+        d.steps.map((v, i) => h('td', { class: 'num' }, `${i === 0 ? (s === 'consistency' ? '≥ ' : '≤ ') : i === 4 ? (s === 'consistency' ? '≤ ' : '≥ ') : ''}${show(s, v)}`))))))),
+    h('p', { class: 'muted small' }, 'In between, the rating sits between the two steps and is rounded to the nearest .25.'));
 }
 
 // What each Match stats column means, folded under the table.
@@ -271,7 +297,7 @@ function statsKey() {
   return h('details', { class: 'stats-key' }, h('summary', {}, 'What the columns mean'),
     h('dl', {}, rows.flatMap(([t, d]) => [h('dt', {}, t), h('dd', {}, d)])),
     h('p', { class: 'muted small' }, 'Small numbers move a lot: one bad pass out of 8 shifts the average by more than 0.1. SetMe only rates a skill from these once a player has enough: ',
-      Object.values(SKILL_STATS).map(d => `${d.min}+ ${d.label === 'Blocks per game' || d.label === 'Digs per game' ? 'games' : 'attempts'} for ${d.label.toLowerCase()}`).join(', '), '.'));
+      Object.entries(SKILL_STATS).map(([s, d]) => `${d.min}+ ${s === 'blocking' ? 'games' : s === 'consistency' ? 'game days' : 'attempts'} for ${d.label.toLowerCase()}`).join(', '), '.'));
 }
 
 // Who changed what and when, newest first. Changes one person made to one player within a few minutes show as one entry.

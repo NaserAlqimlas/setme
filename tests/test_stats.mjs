@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -72,7 +72,7 @@ const rows = fromRows([
   { id: 'r1', seq: 1, video_t: 10, serving: 'a', won_by: 'a', touches: [] }]);
 ok('rows sorted', rows[0].id === 'r1' && rows[1].touches[0].a === 'serve' && rows[1].touches[1].p === 2 && rows[1].t === 30 && rows[0].won === 'a', rows);
 
-// SetMe ratings: better passers rank higher, few attempts get pulled to the middle, too few players = no rating.
+// SetMe ratings: fixed steps, own stats only, few attempts pulled to the middle.
 const many = [];
 const players = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, setting: 'N' }));
 for (let k = 0; k < 4; k++) many.push({ game: { players_a: [1, 2, 3], players_b: [4, 5, 6] }, rallies: [{ serve: 'a', won: 'a', touches:
@@ -80,13 +80,34 @@ for (let k = 0; k < 4; k++) many.push({ game: { players_a: [1, 2, 3], players_b:
 const { ratings, detail } = statRatings(tally(many), players);
 const rc = id => ratings.get(id)?.receiving;
 ok('receiving rated', detail.receiving.players === 6 && !detail.receiving.skipped, detail.receiving);
-ok('ranked by passing', rc(1) <= rc(3) && rc(3) <= rc(5) && rc(1) === 0 && rc(5) === 1, [...ratings]);
+ok('better passers higher', rc(1) <= rc(3) && rc(3) <= rc(5), [...ratings]);
+ok('read off the steps, not ranked', rc(1) === 0 && rc(3) === .5 && rc(5) === .75, [rc(1), rc(3), rc(5)]);
 ok('quarter steps', [...ratings.values()].every(r => Object.values(r).every(v => [0, .25, .5, .75, 1].includes(v))));
 ok('no serve data, no serve rating', detail.serve.skipped && ![...ratings.values()].some(r => 'serve' in r));
-ok('no blocks tagged, no blocking rating', detail.blocking.skipped && detail.blocking.flat && ![...ratings.values()].some(r => 'blocking' in r));
-ok('too few players', statRatings(tally(many), players.slice(0, MIN_PLAYERS - 1)).detail.receiving.skipped);
-ok('setting only for setters', statRatings(tally(many), players).detail.setting_skill.players === 0);
-
+ok('no blocks tagged, no blocking rating', detail.blocking.untagged && ![...ratings.values()].some(r => 'blocking' in r));
+ok('one player is enough', statRatings(tally(many), players.slice(0, 1)).ratings.get(1)?.receiving === 0);
+ok('setting only for setters', statRatings(tally(many), players).detail.setting_skill.skipped);
+{
+  // Tagging a game someone wasn't in leaves their rating alone.
+  const extra = [...many, { game: { players_a: [7], players_b: [8] }, rallies: [{ serve: 'a', won: 'a', touches: Array.from({ length: 20 }, () => T(7, 'pass', 0)) }] }];
+  const more = [...players, { id: 7, setting: 'N' }, { id: 8, setting: 'N' }];
+  const after = statRatings(tally(extra), more).ratings;
+  ok('others\' games don\'t move you', players.every(p => after.get(p.id)?.receiving === rc(p.id)), [...after]);
+  ok('their own rating is low', after.get(7)?.receiving === 0);
+}
+ok('hustle left to people', !('hustle' in SKILL_STATS) && ![...ratings.values()].some(r => 'hustle' in r));
+{
+  // Consistency: game score per game on each game day. Player 1 is the same every day, player 2 swings, player 3 has two days.
+  const day = (pid, session, kills, errs) => ({ player_id: pid, session_id: session, games: 2, attack_3: kills, attack_0: errs });
+  const rows = [1, 2, 3, 4].flatMap(s => [day(1, s, 6, 2), day(2, s, s % 2 ? 14 : 0, s % 2 ? 0 : 6)]).concat([day(3, 1, 4, 0), day(3, 2, 8, 0)]);
+  const tallies = withDays(tally(many), rows);
+  const r = statRatings(tallies, players).ratings;
+  ok('steady player rates high', r.get(1)?.consistency === 1, r.get(1));
+  ok('swinging player rates low', r.get(2)?.consistency === 0, r.get(2));
+  ok('too few game days, no consistency', r.get(3)?.consistency === undefined);
+  ok('no game-day data, no consistency', statRatings(tally(many), players).detail.consistency.untagged);
+}
+ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - .375) < 1e-9 && levelOf(SKILL_STATS.receiving.steps, 0) === 0 && levelOf(SKILL_STATS.receiving.steps, 3) === 1);
 
 // Recap: results from saved scores, a stat line per player by team, sorted by points.
 {

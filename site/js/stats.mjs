@@ -138,47 +138,76 @@ export function metrics(t) {
     stuffsPerGame: per(c.block[3]), blockValue: per(c.block[3] + c.block[1] * .5 - c.block[0]),
     digs: n('dig'), digAvg: avg('dig'),
     digsPerGame: per(c.dig[1] + c.dig[2] + c.dig[3]),
+    ...daySpread(t.days),
   };
 }
 
-// How SetMe turns stats into ratings, per skill: the number used, how many attempts it rests on, and the minimum.
-// A skill is left out while fewer than MIN_PLAYERS have enough attempts, or while everyone is level. Consistency isn't derived. Setting only for players marked as setters.
-export const SKILL_STATS = {
-  receiving: { label: 'Pass average', value: m => m.passAvg, n: m => m.passes, min: 8 },
-  hitting: { label: 'Attack efficiency', value: m => m.attackEff, n: m => m.attacks, min: 8 },
-  serve: { label: 'Serve value', value: m => m.serveValue, n: m => m.serves, min: 10 },
-  blocking: { label: 'Blocks per game', value: m => m.blockValue, n: m => m.games, min: 3 },
-  hustle: { label: 'Digs per game', value: m => m.digsPerGame, n: m => m.games, min: 3 },
-  setting_skill: { label: 'Set average', value: m => m.setAvg, n: m => m.sets, min: 10, setters: true },
-};
-export const MIN_PLAYERS = 4; // fewer qualifying players than this and a skill isn't rated at all
+// How much a player's game score (gameScore, per game) moves from one game day to the next: the standard deviation
+// across the days they played tagged games. days: [tally per game day] (withDays), or none.
+function daySpread(days) {
+  const xs = (days ?? []).filter(d => d.games > 0).map(d => gameScore(d.counts).score / d.games);
+  if (xs.length < 2) return { days: xs.length, daySpread: null };
+  const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+  return { days: xs.length, daySpread: Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1)) };
+}
 
-// SetMe's ratings. Each number is pulled toward the group's average by how few attempts it rests on (a player with
-// `min` attempts lands halfway), then players are ranked and spread over 0 to 1 in .25 steps: SetMe rates
-// relative to the group, and combineRatings takes out its lean like any rater's.
+// Adds each player's game-day tallies (rows of the player_day_stats view: player_id, session_id, games, counts) to
+// their overall tally, for consistency.
+export function withDays(tallies, dayRows) {
+  for (const r of dayRows ?? []) {
+    const t = tallies.get(r.player_id);
+    if (t) (t.days ??= []).push(tallyFromCounts([r]).get(r.player_id));
+  }
+  return tallies;
+}
+
+// How SetMe turns stats into ratings, per skill: the number used, how many attempts it rests on, the minimum, and the
+// action that has to be tagged at all. steps: the stat that earns 0, .25, .5, .75 and 1, the same for everyone, so a
+// player's rating only moves when their own play does. Setting only for players marked as setters. Hustle isn't
+// derived (digs per game says more about where the ball went than about effort).
+// Consistency: the spread of their game score between game days, lower is steadier, so its steps are negative spreads.
+export const SKILL_STATS = {
+  receiving: { label: 'Pass average', value: m => m.passAvg, n: m => m.passes, min: 8, action: 'pass', steps: [.8, 1.2, 1.6, 2, 2.4] },
+  hitting: { label: 'Attack efficiency', value: m => m.attackEff, n: m => m.attacks, min: 8, action: 'attack', steps: [-.2, 0, .15, .3, .45] },
+  serve: { label: 'Serve value', value: m => m.serveValue, n: m => m.serves, min: 10, action: 'serve', steps: [-.35, -.15, 0, .15, .3] },
+  blocking: { label: 'Blocks per game', value: m => m.blockValue, n: m => m.games, min: 3, action: 'block', steps: [0, .25, .6, 1, 1.5] },
+  setting_skill: { label: 'Set average', value: m => m.setAvg, n: m => m.sets, min: 10, setters: true, action: 'set', steps: [1, 1.4, 1.8, 2.2, 2.5] },
+  consistency: { label: 'Spread between game days', value: m => m.daySpread == null ? null : -m.daySpread, n: m => m.days, min: 3, steps: [-4, -3, -2, -1.25, -.75] },
+};
+// Skills SetMe used to rate and no longer does: saving clears them from SetMe's rows.
+export const SETME_CLEARS = ['hustle'];
+const LEVELS = [0, .25, .5, .75, 1];
+
+// A stat on the 0 to 1 scale: straight lines between the steps, capped at both ends.
+export function levelOf(steps, v) {
+  if (v <= steps[0]) return 0;
+  for (let i = 1; i < steps.length; i++) if (v <= steps[i]) return LEVELS[i - 1] + (v - steps[i - 1]) / (steps[i] - steps[i - 1]) * .25;
+  return 1;
+}
+
+// SetMe's ratings. Each player's number comes from their own stats only: a small sample is pulled toward the middle
+// step (.5) by how few attempts it rests on (a player with `min` attempts lands halfway), then read off the fixed
+// steps and rounded to .25. Tagging other people's games never moves it.
+// A skill is left out while nobody has a single tag of its action (blocks often aren't tagged at first), and
+// consistency while there are no game-day tallies (before consistency.sql).
 // players: [{ id, setting }]. Returns Map player id -> { skill: rating }, and per skill the numbers behind it.
 export function statRatings(tallies, players) {
   const ratings = new Map(), detail = {};
   for (const [skill, def] of Object.entries(SKILL_STATS)) {
+    const tagged = def.action ? [...tallies.values()].some(t => sum(t.counts[def.action] ?? {}) > 0) : [...tallies.values()].some(t => t.days?.length);
+    if (!tagged) { detail[skill] = { players: 0, skipped: true, untagged: true }; continue; }
     const rows = players
       .filter(p => !def.setters || (p.setting && p.setting !== 'N'))
       .map(p => { const t = tallies.get(p.id); const m = t && metrics(t); return m && { id: p.id, v: def.value(m), n: def.n(m) }; })
       .filter(r => r && r.v != null && r.n >= def.min);
-    if (rows.length < MIN_PLAYERS) { detail[skill] = { players: rows.length, skipped: true }; continue; }
-    const tot = rows.reduce((a, r) => a + r.n, 0), mean = rows.reduce((a, r) => a + r.v * r.n, 0) / tot;
-    for (const r of rows) r.adj = (r.v * r.n + mean * def.min) / (r.n + def.min);
-    // Everyone level (often: nobody tagged that action yet) says nothing about who's better.
-    if (Math.max(...rows.map(r => r.adj)) - Math.min(...rows.map(r => r.adj)) < 1e-9) { detail[skill] = { players: rows.length, skipped: true, flat: true }; continue; }
-    const sorted = [...rows].sort((a, b) => a.adj - b.adj);
+    const middle = def.steps[2];
     for (const r of rows) {
-      // Rank 0..1 with ties sharing their average rank.
-      const lo = sorted.findIndex(x => x.adj === r.adj), hi = sorted.findLastIndex(x => x.adj === r.adj);
-      const rank = (lo + hi) / 2 / (sorted.length - 1);
-      r.rating = Math.round(rank * 4) / 4;
+      r.adj = (r.v * r.n + middle * def.min) / (r.n + def.min);
+      r.rating = Math.round(levelOf(def.steps, r.adj) * 4) / 4;
       if (!ratings.has(r.id)) ratings.set(r.id, {});
       ratings.get(r.id)[skill] = r.rating;
     }
-    detail[skill] = { players: rows.length, mean, rows };
+    detail[skill] = { players: rows.length, skipped: !rows.length, rows };
   }
   return { ratings, detail };
 }
