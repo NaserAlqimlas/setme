@@ -1,4 +1,4 @@
-import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, toast } from './ui.mjs';
+import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, spinner, toast } from './ui.mjs';
 import { ratePage } from './pages/rate.mjs';
 import { playersPage } from './pages/players.mjs';
 import { teamsPage, teamsStore } from './pages/teams.mjs';
@@ -88,7 +88,7 @@ async function render() {
   if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
   nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  app.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
+  app.replaceChildren(spinner());
   try {
     app.replaceChildren(await current.view());
   } catch (e) {

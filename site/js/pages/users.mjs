@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, downloadFile, h, me, missing, pageHead, q, render, sb, seg, toast, today } from '../ui.mjs';
+import { ask, avatar, callFn, downloadFile, h, me, missing, pageHead, q, render, sb, seg, spinner, toast, today } from '../ui.mjs';
 import { other } from '../stats.mjs';
 import { dayTitle } from './teams.mjs';
 
@@ -126,7 +126,7 @@ function backupCard() {
 
 // The activity log, newest first: roles, links, removals, players added or deleted, imports, backups.
 function activityCard(profiles) {
-  const el = h('div', { class: 'card' }, h('h3', {}, 'Activity'), h('p', { class: 'muted' }, 'Loading…'));
+  const el = h('div', { class: 'card' }, h('h3', {}, 'Activity'), spinner());
   const who = new Map(profiles.map(p => [p.id, p.display_name]));
   const say = r => {
     const d = r.detail ?? {};
