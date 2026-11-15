@@ -96,3 +96,10 @@ Organizers build teams, so they see everyone's ratings, rating history, leans an
 - Compare two drafts, under the Drafts table: gap, issues, repeats and each skill's spread between teams, the better number marked, all checked with the raters picked above like Gap now. Then the teams paired by shared players (Team 1 in one draft can be Team 3 in the other), with who changes team and to which.
 - Rejected: Nothing offered instead; asked for directly.
 - Rests on: matchTeams in site/js/teams.mjs (tests/test_matchteams.mjs), compareDrafts in site/js/pages/teams.mjs.
+
+## 2026-11-15 · Worth a fresh look says which way, for organizers and the super
+- Decided by: the designer
+- Why: "Results don't match their ratings" didn't say how. Organizers and the super can already see every rating and Insights' Players vs their ratings, so telling them which way and by how much reveals nothing new.
+- For them: "Their teams do 1.5 points a game worse than rated (won 3 of 10): maybe rated too high", the same numbers as Insights.
+- Raters still get only the name and "Results don't match their ratings": the server never sends them which way, so their ratings aren't steered and they learn nothing about anyone's ratings.
+- Rests on: how in netlify/functions/rate-queue.mjs (organizer and super only), resultsWhy in site/js/pages/rate.mjs.
