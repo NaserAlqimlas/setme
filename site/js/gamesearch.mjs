@@ -31,9 +31,9 @@ export function searchDays(days, query) {
     .filter(d => d.games.length);
 }
 
-// The super's to-do list: games with no tags yet -> [{ ...game, played_on }]. Games with a video come first (they
+// The super's to-do list: games with no tags yet, leaving out those marked not recorded -> [{ ...game, played_on }]. Games with a video come first (they
 // can be tagged now), then the oldest day first, then by game number.
 export function toTag(days) {
-  return days.flatMap(d => d.games.filter(g => !g.tagged).map(g => ({ ...g, played_on: d.played_on })))
+  return days.flatMap(d => d.games.filter(g => !g.tagged && !g.not_recorded).map(g => ({ ...g, played_on: d.played_on })))
     .sort((x, y) => (!!y.video - !!x.video) || x.played_on.localeCompare(y.played_on) || x.n - y.n);
 }
