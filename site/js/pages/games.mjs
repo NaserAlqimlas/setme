@@ -4,7 +4,7 @@
 // here (Upload several) and can go from a game to tagging it.
 import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
-import { ACTIONS, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, bestPlayers, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
 import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
@@ -183,13 +183,29 @@ function gameView(g, back) {
     const mineId = Number(me.player_id);
     const head = ['Points', 'Kills', 'Aces', 'Serves in', 'Good passes', 'Blocks', 'Digs', 'Sets'];
     const cells = p => [p.points, p.attacks ? `${p.kills}/${p.attacks}` : '—', p.aces, p.serves ? `${p.servesIn}/${p.serves}` : '—', p.passes ? `${p.passesGood}/${p.passes}` : '—', p.blocks, p.digs, p.sets];
+    // Stars: each team's best game, gold on the side that won and silver on the side that lost (silver both, if tied).
+    const best = bestPlayers(game, rallies), won = g.a.score > g.b.score ? 'a' : g.b.score > g.a.score ? 'b' : null;
+    const star = s => {
+      const gold = s === won;
+      const what = `Best game on ${won ? (gold ? 'the winning' : 'the losing') : 'their'} team`;
+      return h('span', { class: `gd-star ${gold ? 'gold' : 'silver'}`, title: what, 'aria-label': what, role: 'img' }, '★');
+    };
+    // Each team's players under a heading in its colour, so the two teams read apart.
+    const teamHead = s => h('tr', { class: 'gd-teamhead', style: `--tc:${color(side[s].k)}` },
+      h('th', { colspan: head.length + 1, scope: 'rowgroup' }, h('span', { class: 'gd-teamname' }, side[s].name),
+        h('span', { class: 'muted small' }, ` ${side[s].score}${won ? (won === s ? ' · Won' : ' · Lost') : ' · Tied'}`)));
     const boxRows = s => box.filter(p => game[`players_${s}`].includes(p.pid)).map(p => h('tr', { class: p.pid === mineId ? 'mine' : null },
-      h('th', { scope: 'row', style: `--tc:${color(side[s].k)}`, class: 'gd-team' }, name.get(p.pid) ?? 'Someone', p.pid === mineId ? h('span', { class: 'muted small' }, ' (you)') : null),
+      h('th', { scope: 'row', style: `--tc:${color(side[s].k)}`, class: 'gd-team' }, name.get(p.pid) ?? 'Someone', best[s].includes(p.pid) ? star(s) : null,
+        p.pid === mineId ? h('span', { class: 'muted small' }, ' (you)') : null),
       ...cells(p).map(v => h('td', { class: 'num' }, String(v)))));
     const players = h('div', { class: 'card' }, h('h3', {}, 'Players'),
       h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
         h('thead', {}, h('tr', {}, h('th', {}, ''), ...head.map(t => h('th', { class: 'num' }, t)))),
-        h('tbody', {}, boxRows('a'), h('tr', { class: 'gd-gap' }, h('td', { colspan: head.length + 1 })), boxRows('b')))),
+        h('tbody', {}, teamHead('a'), boxRows('a'), teamHead('b'), boxRows('b')))),
+      (best.a.length || best.b.length) > 0 && h('p', { class: 'muted small gd-star-note' },
+        won ? [h('span', { class: 'gd-star gold', 'aria-hidden': 'true' }, '★'), ' Best game on the winning team · ', h('span', { class: 'gd-star silver', 'aria-hidden': 'true' }, '★'), ' best on the losing team. ']
+          : [h('span', { class: 'gd-star silver', 'aria-hidden': 'true' }, '★'), ' Best game on each team. '],
+        'Best: points scored, minus errors, plus half a point for each good pass, dig or set. Players level on that share the star.'),
       h('p', { class: 'muted small' }, 'Points: kills, aces and blocks. Good passes: passes graded 2 or 3. Only the organizers and the players in this game see this.'));
 
     const mineTally = Number.isInteger(mineId) && game.players_a.concat(game.players_b).includes(mineId) ? tally([{ game, rallies }]).get(mineId) : null;

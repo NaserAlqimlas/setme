@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, endsRally, MIN_PLAYERS } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -105,6 +105,18 @@ ok('setting only for setters', statRatings(tally(many), players).detail.setting_
   ok('receives good of total', line(4).passes === 3 && line(4).passesGood === 2 && line(2).passes === 1 && line(2).passesGood === 0, line(4), line(2));
   ok('by team, then points', day.players.map(p => p.team).join() === '1,1,1,2,2,2' && day.players[3].pid === 6, day.players.map(p => p.pid));
   ok('untagged day: results only', recap([{ game: g3, rallies: [] }]).players.length === 0);
+}
+
+// Best player on each team in a game.
+{
+  const g = { players_a: [1, 2, 3], players_b: [4, 5] };
+  const R = (...touches) => ({ won: 'a', touches });
+  const rs = [R(T(1, 'attack', 3)), R(T(1, 'attack', 3), T(2, 'pass', 3), T(2, 'set', 2)), R(T(2, 'serve', 0)), R(T(3, 'dig', 2)),
+    R(T(4, 'attack', 3)), R(T(5, 'attack', 3))];
+  ok('game score: points − errors + good touches / 2', gameScore({ attack: { 3: 2 }, pass: { 3: 1, 0: 1 }, set: { 2: 1 } }).score === 2, gameScore({ attack: { 3: 2 }, pass: { 3: 1, 0: 1 }, set: { 2: 1 } }));
+  const best = bestPlayers(g, rs);
+  ok('best on each team; a dead tie stars both', best.a.join() === '1' && best.b.join() === '4,5', best);
+  ok('nobody did anything: no star', bestPlayers(g, []).a.length === 0);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

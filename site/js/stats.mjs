@@ -209,3 +209,27 @@ export function recap(docs) {
   }).sort((a, b) => a.round - b.round || a.team - b.team || b.points - a.points || b.kills - a.kills || a.pid - b.pid);
   return { results, players, tagged: tagged.length };
 }
+
+// How well a player played one game, from their tags: points scored (kills, aces, stuff blocks), minus errors
+// (any touch that lost the rally), plus half a point for each good or perfect pass, dig or set.
+export function gameScore(counts) {
+  const c = a => counts?.[a] ?? {};
+  const points = (c('attack')[3] ?? 0) + (c('serve')[3] ?? 0) + (c('block')[3] ?? 0);
+  const errors = Object.keys(ACTIONS).reduce((t, a) => t + (c(a)[0] ?? 0), 0);
+  const good = ['pass', 'dig', 'set'].reduce((t, a) => t + (c(a)[2] ?? 0) + (c(a)[3] ?? 0), 0);
+  return { score: points - errors + good / 2, points, errors };
+}
+
+// Each team's best players in one game -> { a: [pid], b: [pid] }. Ties go to more points, then fewer errors;
+// still tied, they all get the star. A best score of 0 or less earns no star.
+export function bestPlayers(game, rallies) {
+  const t = tally([{ game, rallies }]);
+  const pick = ids => {
+    const rows = ids.map(pid => ({ pid, ...gameScore(t.get(pid)?.counts) }))
+      .sort((x, y) => y.score - x.score || y.points - x.points || x.errors - y.errors);
+    const [top] = rows;
+    if (!top || top.score <= 0) return [];
+    return rows.filter(r => r.score === top.score && r.points === top.points && r.errors === top.errors).map(r => r.pid);
+  };
+  return { a: pick(game.players_a), b: pick(game.players_b) };
+}

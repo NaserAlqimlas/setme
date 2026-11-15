@@ -863,6 +863,10 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
 .gd-team { text-align: left; font-weight: 600; box-shadow: inset 3px 0 0 var(--tc); padding-left: 10px !important; }
 .gd-table tr.mine { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .gd-gap td { border: 0; padding: 4px; }
+.gd-teamhead th { text-align: left; padding: 14px 8px 6px; border-bottom: 2px solid var(--tc); background: color-mix(in srgb, var(--tc) 9%, transparent); }
+.gd-teamhead + tr th, .gd-teamhead + tr td { border-top: 0; }
+tbody > .gd-teamhead:not(:first-child) th { border-top: 3px solid var(--line-strong); }
+.gd-teamname { font-weight: 700; color: var(--tc); font-size: .95rem; }
 .gd-search { width: 100%; margin: 0 0 14px; }
 
 /* Loading: a volleyball that bounces and spins (ui.mjs spinner) */
@@ -917,3 +921,10 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .gd-unrec { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .gd-unrec > .gd-games { margin-top: 8px; }
 @media (max-width: 600px) { .gd-totag { flex-wrap: wrap; } .gd-totag > .ghost { margin-left: auto; } }
+
+/* Best game in the box score: gold for the winning team's, silver for the losing team's */
+.gd-star { display: inline-block; margin-left: 5px; font-size: 1.05em; line-height: 1; vertical-align: -1px; }
+.gd-star.gold { color: #e6a700; text-shadow: 0 0 6px rgba(255, 197, 49, .45); }
+.gd-star.silver { color: #9aa3b5; text-shadow: 0 0 5px rgba(180, 190, 210, .35); }
+.gd-star-note .gd-star { margin-left: 0; }
+.gd-star-note { margin-bottom: 4px; }
