@@ -16,7 +16,7 @@ async function tellUploader(job, origin) {
   if (!who?.email || !g) return;
   const day = await rest(`games?session_id=eq.${g.session_id}&select=id&order=created_at`);
   const label = gameLabel(day.findIndex(x => x.id === g.id) + 1, g.sessions?.played_on);
-  await sendEmail({ to: who.email, ...doneEmail({ status: job.status, label, rallies: job.result?.rallies?.length ?? 0, error: job.error, link: `${origin}/#videos` }) });
+  await sendEmail({ to: who.email, ...doneEmail({ status: job.status, label, rallies: job.result?.rallies?.length ?? 0, error: job.error, link: `${origin}/#games` }) });
 }
 
 export default async (req) => {

@@ -544,7 +544,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const loadYt = async () => {
       const id = ytId(yt.value); if (!id) return toast('That doesn\'t look like a YouTube link');
       try { player?.dispose(); player = null; player = await youtubeVideo(videoBox, id); } catch (e) { return toast(e.message); }
-      if (video?.kind === 'upload' && !await ask('Use the YouTube video instead?', 'The uploaded video stays in storage, but this game would point at YouTube instead, and players couldn\'t watch it on Videos.', 'Use YouTube', '')) return;
+      if (video?.kind === 'upload' && !await ask('Use the YouTube video instead?', 'The uploaded video stays in storage, but this game would point at YouTube instead, and players couldn\'t watch it on Games.', 'Use YouTube', '')) return;
       if (video?.kind !== 'youtube' || video.id !== id) { video = { kind: 'youtube', id }; changed(); }
       paintFound();
     };
@@ -590,7 +590,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       : job.status === 'processing' ? [h('b', { class: 'small' }, 'Analysing'), bar(job.progress), h('span', { class: 'small' }, `${pctOf(job.progress)} · ${me.role === 'super' ? 'you\'ll get an email when it\'s ready' : 'ready soon'}`)]
       : job.status === 'failed' ? [h('span', { class: 'small warn-text' }, job.error || 'The analysis failed.'),
         me.role === 'super' && !ro && job.original_key && h('button', { class: 'sm', onclick: retry }, 'Try again')]
-      : job.status === 'done' ? [h('span', { class: 'muted small' }, 'Uploaded video · organizers and the players in this game can watch it on Videos')]
+      : job.status === 'done' ? [h('span', { class: 'muted small' }, 'Uploaded video · organizers and the players in this game can watch it on Games')]
       : [];
     jobBar.replaceChildren(...(parts.length ? [h('div', { class: 'row' }, ...parts)] : []));
   };

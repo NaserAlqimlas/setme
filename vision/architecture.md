@@ -17,7 +17,7 @@ and the worker also makes the viewing copy. The decision is in `docs/decisions.m
 | Worker callbacks; daily clean-up | `netlify/functions/video-worker.mjs`, `video-cleanup.mjs` |
 | Worker | `vision/worker/job.py` (the job), `vision/worker/modal_app.py` (Modal) |
 | Upload in parts, resumable | `site/js/upload.mjs` |
-| Tag screen (upload, status, play the copy, rally times) and Videos page | `site/js/pages/scores.mjs`, `site/js/pages/videos.mjs` |
+| Tag screen (upload, status, play the copy, rally times) and Videos page | `site/js/pages/scores.mjs`, `site/js/pages/games.mjs` (Games: video, stats, upload several) |
 
 ## Setting it up
 

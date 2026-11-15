@@ -257,7 +257,7 @@ const statTiles = m => h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `$
   [num2(m.stuffsPerGame), 'Blocks a game'], [num2(m.digsPerGame), 'Digs a game'], [num2(m.digAvg), 'Dig average', `${m.digs} digs, 0–3`]].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))));
 // One game in a line: what they did, counted.
 const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
-function gameLine(c) {
+export function gameLine(c) {
   const n = a => Object.values(c[a]).reduce((x, y) => x + y, 0);
   const avg = a => n(a) ? Object.entries(c[a]).reduce((s, [g, k]) => s + g * k, 0) / n(a) : null;
   const up = c.dig[1] + c.dig[2] + c.dig[3];
@@ -284,7 +284,7 @@ async function ownStatsCard(pending) {
     g.mine != null && g.theirs != null && h('span', { class: 'muted small' }, ` · ${g.mine > g.theirs ? 'Won' : g.mine < g.theirs ? 'Lost' : 'Tied'} ${g.mine}–${g.theirs}`),
     h('div', { class: 'small' }, gameLine(g.tally.counts)));
   return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'),
-    h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these.`),
+    h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these totals; each game's own stats, on Games, are seen by the players in that game.`),
     statTiles(m),
     h('h4', {}, 'Game by game'), h('ul', { class: 'own-games' }, first.map(row)),
     ...(rest.length ? [h('details', {}, h('summary', { class: 'small' }, `${plural(rest.length, 'earlier game')}`), h('ul', { class: 'own-games' }, rest.map(row)))] : []));

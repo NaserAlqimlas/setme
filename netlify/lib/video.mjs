@@ -96,7 +96,7 @@ export function doneEmail({ status, label, rallies, error, link }) {
   const subject = ok ? `${label} is ready to watch` : `${label}: the video couldn't be analysed`;
   const lines = ok
     ? [`${label} is ready. ${rallies ? `${rallies} rall${rallies === 1 ? 'y' : 'ies'} found, so Next rally skips the time between them.` : 'No rallies were found, but the video is ready to watch.'}`,
-      'Organizers and the players in the game can watch it now.']
+      'Organizers and the players in the game can watch it now, with its stats, on Games.']
     : [`${label} couldn't be analysed: ${error}`, 'You can try again from the game\'s tag screen. The upload is kept for 7 days.'];
   return { subject, text: [...lines, '', link, '', 'SetMe'].join('\n') };
 }
