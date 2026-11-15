@@ -15,12 +15,24 @@ export function numbered(games) {
 }
 
 // files: [{ name, size, lastModified }] -> [{ file, game, how }] in the files' order.
-// how: 'name' (the game was tagged from a file with this name), 'day' (the only game that day without a video), or
+// how: 'name' (the game was tagged from a file with this name, give or take the extension and _tag), 'day' (the only game that day without a video), or
 // null (pick one). A game is never suggested for two files.
+// A video's name, for matching: no extension, case or copy markers, so the original IMG_5287.MOV matches the
+// IMG_5287_tag.mp4 made from it for tagging (or "IMG_5287 (1).MOV", "IMG_5287-edited.mov").
+export const nameKey = name => String(name).toLowerCase().replace(/\.[a-z0-9]{2,4}$/, '').trim()
+  .replace(/\s*\(\d+\)$/, '')
+  .replace(/[\s_-]+(tag|tags|tagged|tagging|edit|edited|copy|small|compressed|trim|trimmed|\d{3,4}p)$/, '')
+  .replace(/\s*\(\d+\)$/, '');
+
 export function matchFiles(files, games) {
-  const byName = new Map(games.filter(g => g.video_kind === 'file' && g.video_ref).map(g => [g.video_ref.toLowerCase(), g]));
+  // A name two games share points at neither.
+  const byName = new Map();
+  for (const g of games.filter(g => g.video_kind === 'file' && g.video_ref)) {
+    const k = nameKey(g.video_ref);
+    byName.set(k, byName.has(k) ? null : g);
+  }
   const out = files.map(file => {
-    const g = byName.get(file.name.toLowerCase());
+    const g = byName.get(nameKey(file.name));
     if (g) return { file, game: g.id, how: 'name' };
     const free = games.filter(x => x.played_on === fileDay(file.lastModified) && !x.video_kind);
     return { file, game: free.length === 1 ? free[0].id : null, how: free.length === 1 ? 'day' : null };

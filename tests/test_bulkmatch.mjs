@@ -1,7 +1,7 @@
 // Bulk video upload: matching files to games by the name they were tagged with, or by the day they were filmed.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fileDay, matchFiles, numbered, problems } from '../site/js/bulkmatch.mjs';
+import { fileDay, matchFiles, nameKey, numbered, problems } from '../site/js/bulkmatch.mjs';
 
 const at = day => new Date(`${day}T19:30:00`).getTime();   // filmed in the evening, local time
 const games = [
@@ -39,4 +39,14 @@ test('what has to be fixed before uploading', () => {
   assert.deepEqual(problems([{ file: f('a'), game: null, skip: true }], games), []);
   assert.deepEqual(problems([{ file: f('a'), game: 1 }, { file: f('b'), game: 1 }], games), ['a and b are both set to the same game']);
   assert.deepEqual(problems([{ file: f('a'), game: 99 }], games), ['The game for a is gone']);
+});
+
+test('the original matches the copy made for tagging', () => {
+  for (const n of ['IMG_5287.MOV', 'img_5287_tag.mp4', 'IMG_5287 (1).MOV', 'IMG_5287-edited.mov', 'IMG_5287 tag.MP4', 'img_5287_720p.mp4'])
+    assert.equal(nameKey(n), 'img_5287', n);
+  assert.notEqual(nameKey('IMG_5288.MOV'), nameKey('IMG_5287.MOV'));
+  const tagged = [{ id: 7, session_id: 1, created_at: 'a', played_on: '2026-10-01', video_kind: 'file', video_ref: 'img_5287_tag.mp4' }];
+  assert.deepEqual(matchFiles([{ name: 'IMG_5287.MOV', lastModified: at('2026-11-20') }], tagged).map(m => [m.game, m.how]), [[7, 'name']]);
+  const twice = [...tagged, { ...tagged[0], id: 8, video_ref: 'IMG_5287.MOV' }];
+  assert.deepEqual(matchFiles([{ name: 'IMG_5287.MOV', lastModified: at('2026-11-20') }], twice).map(m => m.game), [null]);   // ambiguous: pick
 });
