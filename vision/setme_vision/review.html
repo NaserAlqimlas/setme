@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ball labels</title>
+<style>
+  :root {
+    --bg: #f6f6f8; --surface: #ffffff; --fg: #17171f; --muted: #66667a; --line: #dcdce6;
+    --accent: #2f6fde; --on-accent: #ffffff; --ok: #13804f; --bad: #c0352b; --on-bad: #ffffff; --mark: #d63bd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111118; --surface: #1b1b26; --fg: #f0f0f6; --muted: #9a9ab0; --line: #2c2c3c;
+      --accent: #7ba4ff; --on-accent: #0b1430; --ok: #3cc488; --bad: #ff7a6e; --on-bad: #2a0805; --mark: #ff7aff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 17px; margin: 0; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button, button { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  .tabs button[aria-selected=true] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+  .progress { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+  .bar { width: 160px; height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--ok); }
+  main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
+  .help { color: var(--muted); margin: 0 0 14px; max-width: 75ch; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .tile { position: relative; padding: 0; border: 3px solid transparent; border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .tile img { display: block; width: 100%; aspect-ratio: 1; }
+  .tile small { display: block; padding: 3px 6px; color: var(--muted); font-size: 12px; text-align: left; }
+  .tile[aria-pressed=true] { border-color: var(--bad); }
+  .tile[aria-pressed=true]::after { content: '✕ fix later'; position: absolute; top: 6px; left: 6px; background: var(--bad); color: var(--on-bad);
+    font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 6px; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
+  .single { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .single { grid-template-columns: 1fr; } .zoom { max-width: 220px; justify-self: center; } }
+  .stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; cursor: crosshair; }
+  .stage canvas { display: block; width: 100%; height: auto; }
+  aside { display: grid; gap: 12px; }
+  .zoom { width: 100%; aspect-ratio: 1; background: #000; border-radius: 10px; cursor: crosshair; display: block; }
+  .info { color: var(--muted); font-size: 14px; }
+  .info b { color: var(--fg); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); background: var(--surface); border-radius: 12px; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg);
+    padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ball labels</h1>
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tab-grid" aria-selected="true">Quick check</button>
+    <button role="tab" id="tab-single" aria-selected="false">One by one</button>
+  </div>
+  <label>Game <select id="video"><option value="">All games</option></select></label>
+  <div class="progress"><span id="count"></span><div class="bar"><span id="fill"></span></div></div>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k.startsWith('on')) e[k] = v; else if (v !== false && v != null) e.setAttribute(k, v); } e.append(...kids.flat().filter(k => k != null && k !== false)); return e; };
+const SOURCE = { flight: 'on a flight', colour: 'yellow blob', 'flight-guess': 'flight, no blob', none: 'nothing found' };
+const DONE = new Set(['ok', 'moved', 'no-ball']);
+let items = [], mode = 'grid', video = '', page = [], marked = new Set();
+let queue = [], pos = 0, size = 18, placed = null, img = null, hover = null;
+
+const toast = msg => { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 1600); };
+async function send(changes) {
+  const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes) });
+  const j = await r.json();
+  if (!r.ok) { toast(j.error || 'Not saved'); throw new Error(j.error); }
+  for (const it of j.items) Object.assign(items.find(x => x.id === it.id), it);
+  progress();
+}
+const mine = () => items.filter(it => !video || it.video === video);
+function progress() {
+  const all = mine(), done = all.filter(it => DONE.has(it.status)).length;
+  $('#count').textContent = `${done.toLocaleString()} of ${all.length.toLocaleString()} checked`;
+  $('#fill').style.width = `${all.length ? 100 * done / all.length : 0}%`;
+}
+
+// ----- quick check: proposals with a box, 24 at a time -----
+const ORDER = { flight: 0, colour: 1, 'flight-guess': 2 };
+function paintGrid() {
+  page = mine().filter(it => it.status === 'pending' && it.box && !it.check).sort((a, b) => ORDER[a.source] - ORDER[b.source] || a.id.localeCompare(b.id)).slice(0, 24);
+  marked = new Set();
+  const main = $('#main');
+  if (!page.length) {
+    main.replaceChildren(el('div', { class: 'empty' }, 'Nothing left to quick-check here. ', el('button', { onclick: () => setMode('single') }, 'Go to One by one')));
+    return;
+  }
+  const confirm = el('button', { class: 'primary' });
+  const label = () => { confirm.textContent = marked.size ? `Confirm: ${page.length - marked.size} right, ${marked.size} to fix` : `All ${page.length} look right`; };
+  confirm.onclick = async () => {
+    await send(page.map(it => marked.has(it.id) ? { id: it.id, status: 'pending', check: true } : { id: it.id, status: 'ok' }));
+    toast(`${page.length - marked.size} confirmed`); paintGrid();
+  };
+  label();
+  main.replaceChildren(
+    el('p', { class: 'help' }, 'Each picture is zoomed in on where the ball is thought to be (the pink circle). Tap any where the circle is ',
+      el('b', {}, 'not'), ' on the ball, then confirm. The ones you tap come back in One by one to fix. ', el('kbd', {}, 'Enter'), ' confirms.'),
+    el('div', { class: 'grid' }, page.map(it => {
+      const b = el('button', { class: 'tile', 'aria-pressed': 'false', title: `${it.video} at ${it.t}s`,
+        onclick: () => { marked.has(it.id) ? marked.delete(it.id) : marked.add(it.id); b.setAttribute('aria-pressed', String(marked.has(it.id))); label(); } },
+        el('img', { src: `/crop/${it.id}.jpg?s=300`, alt: `Frame from ${it.video} at ${it.t} seconds`, loading: 'lazy' }), el('small', {}, SOURCE[it.source]));
+      return b;
+    })),
+    el('div', { class: 'actions' }, confirm));
+}
+
+// ----- one by one: the frames that need a person -----
+function buildQueue() {
+  const rank = it => it.check ? 0 : !it.box ? 1 : 2;
+  queue = mine().filter(it => it.status === 'pending' || it.status === 'skip').sort((a, b) => (a.status === 'skip') - (b.status === 'skip') || rank(a) - rank(b) || a.id.localeCompare(b.id));
+  pos = 0;
+}
+function paintSingle() {
+  const it = queue[pos], main = $('#main');
+  if (!it) { main.replaceChildren(el('div', { class: 'empty' }, 'All done for this game. Thank you!')); return; }
+  placed = it.box ? [...it.box] : null;
+  size = it.box ? Math.round(Math.max(it.box[2], it.box[3])) : size;
+  const stage = el('canvas'), zoom = el('canvas', { class: 'zoom', width: 320, height: 320 });
+  const right = el('button', { class: 'primary', onclick: () => answer('ok') }, 'Ball is right');
+  main.replaceChildren(
+    el('p', { class: 'help' }, 'Click the ball (in the frame or the zoom) to put the circle on it, then ', el('kbd', {}, 'Enter'), '. ',
+      el('kbd', {}, 'N'), ' no ball in this frame (out of shot, or you really can\'t see it) · ', el('kbd', {}, '['), ' ', el('kbd', {}, ']'), ' circle size · ',
+      el('kbd', {}, 'S'), ' skip · ', el('kbd', {}, '←'), ' back. A ball being held or on the floor counts: mark it.'),
+    el('div', { class: 'single' },
+      el('div', { class: 'stage' }, stage),
+      el('aside', {}, zoom,
+        el('div', { class: 'info' }, el('b', {}, it.video), ` at ${it.t}s · ${SOURCE[it.source]}${it.check ? ' · you marked this to fix' : ''}`, el('br'), `${pos + 1} of ${queue.length} to do`),
+        el('div', { class: 'actions', style: 'margin:0' }, right,
+          el('button', { onclick: () => answer('no-ball') }, 'No ball'),
+          el('button', { onclick: () => answer('skip') }, 'Skip'),
+          el('button', { onclick: back, disabled: pos === 0 ? '' : false }, 'Back')))));
+  const draw = () => {
+    if (!img) return;
+    stage.width = img.naturalWidth; stage.height = img.naturalHeight;
+    const g = stage.getContext('2d'); g.drawImage(img, 0, 0);
+    const c = placed ? [placed[0], placed[1]] : hover ?? [it.width / 2, it.height / 2];
+    if (placed) { g.strokeStyle = getComputedStyle(document.body).getPropertyValue('--mark'); g.lineWidth = 3; g.beginPath(); g.arc(placed[0], placed[1], size / 2 + 6, 0, 7); g.stroke(); }
+    const z = zoom.getContext('2d'), side = Math.max(80, size * 6);
+    z.imageSmoothingEnabled = false;
+    z.drawImage(img, c[0] - side / 2, c[1] - side / 2, side, side, 0, 0, 320, 320);
+    if (placed) { const k = 320 / side; z.strokeStyle = g.strokeStyle; z.lineWidth = 2; z.beginPath(); z.arc((placed[0] - c[0]) * k + 160, (placed[1] - c[1]) * k + 160, (size / 2 + 2) * k, 0, 7); z.stroke(); }
+    zoom.dataset.cx = c[0]; zoom.dataset.cy = c[1]; zoom.dataset.side = side;
+    right.disabled = !placed;
+  };
+  const at = (e, cv) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+  stage.onclick = e => { placed = [...at(e, stage), size, size]; draw(); };
+  stage.onmousemove = e => { if (!placed) { hover = at(e, stage); draw(); } };
+  zoom.onclick = e => {
+    const [zx, zy] = at(e, zoom), s = +zoom.dataset.side;
+    placed = [+zoom.dataset.cx + (zx - 160) * s / 320, +zoom.dataset.cy + (zy - 160) * s / 320, size, size]; draw();
+  };
+  paintSingle.resize = d => { size = Math.max(6, Math.min(120, size + d)); if (placed) placed[2] = placed[3] = size; draw(); };
+  img = new Image(); img.onload = draw; img.src = `/frames/${it.id}.jpg`;
+}
+async function answer(status) {
+  const it = queue[pos]; if (!it) return;
+  if (status === 'ok' && !placed) return toast('Click the ball first, or press N for no ball');
+  const changed = placed && (!it.box || placed.some((v, i) => Math.abs(v - it.box[i]) > .5));
+  const box = status === 'no-ball' ? null : placed;
+  await send([{ id: it.id, status: status === 'ok' && changed ? 'moved' : status, ...(status === 'skip' ? {} : { box }), check: false }]);
+  pos++; hover = null; paintSingle();
+}
+function back() { if (pos > 0) { pos--; paintSingle(); } }
+
+function setMode(m) {
+  mode = m;
+  $('#tab-grid').setAttribute('aria-selected', String(m === 'grid'));
+  $('#tab-single').setAttribute('aria-selected', String(m === 'single'));
+  if (m === 'grid') paintGrid(); else { buildQueue(); paintSingle(); }
+}
+$('#tab-grid').onclick = () => setMode('grid');
+$('#tab-single').onclick = () => setMode('single');
+$('#video').onchange = e => { video = e.target.value; progress(); setMode(mode); };
+document.addEventListener('keydown', e => {
+  if (e.target.closest('select') || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (mode === 'grid') { if (k === 'Enter') { e.preventDefault(); document.querySelector('.actions .primary')?.click(); } return; }
+  if (k === 'Enter' || k === 'y') { e.preventDefault(); answer('ok'); }
+  else if (k === 'n' || k === '0') answer('no-ball');
+  else if (k === 's' || k === 'ArrowRight') answer('skip');
+  else if (k === 'ArrowLeft' || k === 'Backspace') { e.preventDefault(); back(); }
+  else if (k === '[') paintSingle.resize?.(-2);
+  else if (k === ']') paintSingle.resize?.(2);
+});
+
+(async () => {
+  items = (await (await fetch('/api/items')).json()).items;
+  for (const v of [...new Set(items.map(it => it.video))].sort()) $('#video').append(el('option', { value: v }, v));
+  progress(); setMode('grid');
+})();
+</script>
+</body>
+</html>
