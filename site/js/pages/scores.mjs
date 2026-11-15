@@ -1,5 +1,5 @@
 import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, spinner, stacked, TEAM_COLORS, toast, today, toggle, withSpinner } from '../ui.mjs';
-import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
+import { jumpTo, parseRallyTimes, playAt, rallyAt } from '../rallytimes.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
@@ -339,7 +339,7 @@ const loadYouTube = () => ytReady ??= new Promise((res, rej) => {
 function urlVideo(box, url) {
   const v = h('video', { controls: true, playsinline: true, preload: 'metadata', src: url });
   box.replaceChildren(withSpinner(v));
-  return { uploaded: true, now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); } };
+  return { uploaded: true, now: () => v.currentTime, seek: t => playAt(v, t, false), toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); } };
 }
 function fileVideo(box, file) {
   const v = h('video', { controls: true, playsinline: true, preload: 'auto' });

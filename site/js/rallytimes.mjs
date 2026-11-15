@@ -25,3 +25,13 @@ export function jumpTo(rallies, t, dir) {
 
 // Which rally t falls in -> index or -1.
 export const rallyAt = (rallies, t) => rallies.findIndex(r => t >= r.start && t <= r.end);
+
+// Plays a video from t seconds. A video that hasn't loaded yet ignores a jump (Safari always, Chrome sometimes),
+// so it starts playing (inside the tap, as phones require) and jumps once it knows its length.
+export function playAt(video, t, play = true) {
+  const to = Math.max(0, t);
+  const jump = () => { video.currentTime = Math.min(to, Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.5) : to); };
+  if (video.readyState >= 1) jump();
+  else video.addEventListener('loadedmetadata', jump, { once: true });
+  if (play) video.play()?.catch(() => {});
+}
