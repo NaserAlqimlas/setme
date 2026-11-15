@@ -738,8 +738,8 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     // Wide screens: the video stays on the left while the panels scroll on the right.
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
-        h('div', { class: 'card' }, videoBox, sourceRow, jobBar, foundBar,
-          h('div', { class: 'row tag-keys' }, keyHint, bigVideoButton(() => wrap)))),
+        h('div', { class: 'card' }, h('div', { class: 'video-frame' }, videoBox, bigVideoButton(() => wrap)), sourceRow, jobBar, foundBar,
+          keyHint)),
       h('div', { class: 'tag-right' },
         !ro && h('div', { class: 'card' }, pad),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));
