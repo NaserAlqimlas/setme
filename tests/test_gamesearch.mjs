@@ -34,3 +34,10 @@ test('by day, game number, video and tags', () => {
   assert.deepEqual(ids('omar video untagged'), [1]);
   assert.deepEqual(searchDays(days, 'nov 3').map(d => d.played_on), ['2026-11-03']);   // days with no match drop out
 });
+
+test('games to tag: untagged only, with a video first, then oldest first', async () => {
+  const { toTag } = await import('../site/js/gamesearch.mjs');
+  const more = [...days, { played_on: '2026-10-27', games: [game(4, 1, ['A'], ['B']), game(5, 2, ['C'], ['D'], { video: true })] }];
+  assert.deepEqual(toTag(more).map(g => [g.id, g.played_on]), [[5, '2026-10-27'], [1, '2026-11-10'], [4, '2026-10-27']]);
+  assert.deepEqual(toTag([]), []);
+});
