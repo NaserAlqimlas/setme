@@ -39,6 +39,8 @@ export function h(tag, attrs = {}, ...kids) {
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
   return el;
 }
+// Replaces an element's contents, leaving out empty slots (null, false) the way h() does; replaceChildren alone prints them.
+export const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter(k => k != null && k !== false));
 export const q = async p => { const { data, error } = await p; if (error) throw error; return data; };
 export const fmt = v => v == null ? 'U' : String(Math.round(v * 100) / 100).replace(/^0\./, '.').replace(/^-0\./, '-.');
 export const firstName = n => (n ?? '?').split(/[\s.@]/)[0];
