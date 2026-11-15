@@ -110,10 +110,18 @@ Organizers build teams, so they see everyone's ratings, rating history, leans an
 - What: the super uploads a game's video on its tag screen. A worker on Modal makes a 720p copy to watch and finds the rally times; the uploader is emailed (Resend) when it's done or has failed. The original is deleted 7 days after analysis; the copy is kept until its game is deleted. Organizers watch every game, players only games they played in (on published game days), on Videos. Tagging becomes the super's alone (it was organizers up to 3 days after the game day); organizers still see the tags.
 - Defaults chosen by Claude, not yet confirmed: players see only their own games; only the super uploads; a note on Videos says games may be filmed and anyone can ask an organizer to be left out.
 - Rejected: Supabase Storage (needs Pro at $25 a month); keeping originals (about 2 GB a game); a cut, rallies-only video (rally times with Next rally do the same without a second file).
-- Rests on: supabase/video.sql, netlify/functions/video*.mjs, netlify/lib/{r2,video,email}.mjs, vision/worker/, site/js/pages/videos.mjs, the tag screen in site/js/pages/scores.mjs.
+- Rests on: supabase/video.sql, netlify/functions/video*.mjs, netlify/lib/{r2,video,email}.mjs, vision/worker/, site/js/pages/games.mjs (was videos.mjs), the tag screen in site/js/pages/scores.mjs.
 
 ## 2026-11-15 · Invites and password resets are emailed through Resend
 - Decided by: the designer
 - Why: The free plan's 3,000 emails a month is far more than the club needs, and sending links by hand is a chore.
 - What: Invite and Reset link email the person when RESEND_API_KEY is set. The link still shows on the Users page, so it can be sent by hand if the email doesn't arrive or can't be sent (Resend only delivers to other people once a domain is verified).
 - Rests on: admin.mjs, accountEmail in netlify/lib/email.mjs.
+
+## 2026-11-15 · Games page: each game's video and stats on one page, and players see everyone in their game
+- Decided by: the designer
+- Why: Watching a game and reading its numbers belong together, and players wanted their games, not just a video list.
+- What: Games replaces Videos for players, organizers and the super: game days, newest first, and per game the video (Next rally), the tagged rallies (tap to watch), team numbers (side-out, aces, kills, blocks, errors), a box score with every player's line, and "Your game". Organizers and the super see every game; a player sees games they played in on published days, and in those games everyone's line.
+- Changes: players used to see only their own match stats. Now the players in a game see each other's lines for that game. Season totals on Me stay private to the player and the organizers.
+- Rejected: Team totals and own line only (keeps the old rule, asked and declined); putting games inside Me (organizers and the super need a way in too).
+- Rests on: netlify/functions/game-view.mjs, buildDays in netlify/lib/gamedays.mjs (tests/test_gamedays.mjs), site/js/pages/games.mjs.

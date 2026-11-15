@@ -1,4 +1,4 @@
-// Bulk upload on Videos (super): which game each picked video file belongs to. Kept apart so it can be tested.
+// Bulk upload on Games (super): which game each picked video file belongs to. Kept apart so it can be tested.
 // games: [{ id, session_id, created_at, played_on, video_kind, video_ref, score_a, score_b }]
 
 // The calendar day a file was last changed, on this device's clock: for phone videos, usually the day it was filmed.
