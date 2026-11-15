@@ -1,5 +1,6 @@
 import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
+import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
 import { ACTIONS, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
@@ -11,9 +12,10 @@ import { signed, svg } from './ratings.mjs';
 // Scores page (organizers): games and rounds, match stats tagging, insights, attendance, season recap.
 
 // ---------- scores (organizers) ----------
-// Tagging closes this many days after a game day, except for the super (the database enforces it too: tag_window.sql).
-export const TAG_DAYS = 3;
-export const tagClosed = (playedOn, now = today()) => me.role !== 'super' && (Date.parse(now) - Date.parse(playedOn)) / 864e5 > TAG_DAYS;
+// Only the super tags (the database enforces it too: tag_window.sql, video.sql). Organizers see the tags and the video.
+export const tagClosed = () => me.role !== 'super';
+// Opens a game's tag screen from another page (Videos): Scores comes up on that day, on that game.
+export function openTagging(playedOn, gameId) { scoresTab = 'games'; scoresDay = playedOn; taggingGame = gameId; location.hash = '#scores'; render(); }
 
 let scoresTab = 'games', scoresDay = null;
 // Set when a new round starts on Scores with the same teams, so the page comes back with Change players open.
@@ -259,8 +261,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
         h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
-        tagClosed(ses.played_on) ? h('button', { class: 'ghost sm', disabled: !tags?.get(g.id), title: `Tagging closes ${TAG_DAYS} days after the game day${tags?.get(g.id) ? '; the tags can still be viewed' : ''}`,
-          onclick: () => { taggingGame = g.id; render(); } }, tags?.get(g.id) ? `View tags (${tags.get(g.id)})` : 'Tagging closed') :
+        tagClosed(ses.played_on) ? h('button', { class: 'ghost sm', disabled: !tags?.get(g.id) && g.video_kind !== 'upload', title: 'Only the super tags; you can see the tags and the video',
+          onclick: () => { taggingGame = g.id; render(); } }, tags?.get(g.id) ? `View tags (${tags.get(g.id)})` : g.video_kind === 'upload' ? 'Watch' : 'Not tagged') :
         h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
           if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
           taggingGame = g.id; render();
@@ -333,7 +335,12 @@ const loadYouTube = () => ytReady ??= new Promise((res, rej) => {
   s.onerror = () => { ytReady = null; rej(new Error('Could not load YouTube')); };
   document.head.append(s);
 });
-// One interface for a local file or a YouTube embed. Both are put in `box` before use.
+// One interface for a local file, an uploaded video or a YouTube embed. Each is put in `box` before use.
+function urlVideo(box, url) {
+  const v = h('video', { controls: true, playsinline: true, preload: 'metadata', src: url });
+  box.replaceChildren(v);
+  return { uploaded: true, now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); } };
+}
 function fileVideo(box, file) {
   const v = h('video', { controls: true, playsinline: true, preload: 'auto' });
   v.src = URL.createObjectURL(file);
@@ -360,7 +367,8 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const hasEnd = 'tags_end' in g;
   let end = g.tags_end ?? null;
   const videoOf = () => ({ ...(video ? { video_kind: video.kind, video_ref: video.kind === 'file' ? video.name : video.id } : { video_kind: null, video_ref: null }), ...(hasEnd ? { tags_end: end } : {}) });
-  let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : null;
+  // An uploaded video (video.sql): video.id is its video_jobs id.
+  let video = g.video_kind === 'file' ? { kind: 'file', name: g.video_ref } : g.video_kind === 'youtube' ? { kind: 'youtube', id: g.video_ref } : g.video_kind === 'upload' ? { kind: 'upload', id: g.video_ref } : null;
   let savedVideo = JSON.stringify(videoOf());
   const draftKey = `setme-tags-${g.id}`;
   // Rally times found by the vision tool (rallytimes.mjs), kept on this device like the video.
@@ -392,7 +400,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
 
   // ----- saving -----
-  const status = h('span', { class: 'muted small tag-status' }, ro ? `Read only: tagging closes ${TAG_DAYS} days after the game day` : stored.length ? 'Saved' : '');
+  const status = h('span', { class: 'muted small tag-status' }, ro ? 'Read only: only the super tags' : stored.length ? 'Saved' : '');
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
     await saving;
@@ -458,6 +466,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const videoBox = h('div', { class: 'tag-video' });
   const sourceRow = h('div', { class: 'row tag-source' });
   const foundBar = h('div', { class: 'row tag-found' });
+  const jobBar = h('div', { class: 'tag-job' });
   const keyHint = h('p', { class: 'muted small' });
   const pad = h('div', { class: 'tag-pad' });
   const list = h('ol', { class: 'rally-list' });
@@ -524,13 +533,15 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     file.onchange = () => {
       const f = file.files[0]; if (!f) return;
       player?.dispose(); player = fileVideo(videoBox, f);
-      if (video?.kind !== 'file' || video.name !== f.name) { video = { kind: 'file', name: f.name }; changed(); }
+      // With an uploaded video, a file opened here only plays on this device; the upload stays the game's video.
+      if (video?.kind !== 'upload' && (video?.kind !== 'file' || video.name !== f.name)) { video = { kind: 'file', name: f.name }; changed(); }
       paintSource();
     };
     const yt = h('input', { type: 'url', placeholder: 'YouTube link', 'aria-label': 'YouTube link', value: video?.kind === 'youtube' ? `https://youtu.be/${video.id}` : '' });
     const loadYt = async () => {
       const id = ytId(yt.value); if (!id) return toast('That doesn\'t look like a YouTube link');
       try { player?.dispose(); player = null; player = await youtubeVideo(videoBox, id); } catch (e) { return toast(e.message); }
+      if (video?.kind === 'upload' && !await ask('Use the YouTube video instead?', 'The uploaded video stays in storage, but this game would point at YouTube instead, and players couldn\'t watch it on Videos.', 'Use YouTube', '')) return;
       if (video?.kind !== 'youtube' || video.id !== id) { video = { kind: 'youtube', id }; changed(); }
       paintFound();
     };
@@ -543,14 +554,77 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       paintFound();
     };
     yt.onkeydown = e => { if (e.key === 'Enter') loadYt(); };
+    const up = h('input', { type: 'file', accept: 'video/*', hidden: true });
+    up.onchange = () => { const f = up.files[0]; up.value = ''; if (f) startUpload(f); };
+    pickUpload = () => up.click();
     sourceRow.replaceChildren(
+      me.role === 'super' && !ro && h('button', { class: 'sm', onclick: () => up.click(), disabled: !!activeUpload(g.id),
+        title: 'Sends the video to SetMe: it finds the rally times, and organizers and the game\'s players can watch it' },
+        video?.kind === 'upload' ? 'Upload again' : 'Upload for analysis'), up,
       h('button', { class: 'ghost sm', onclick: () => file.click() }, video?.kind === 'file' ? `Open ${video.name}` : 'Open video file'), file,
       h('span', { class: 'muted small' }, 'or'), yt, h('button', { class: 'ghost sm', onclick: loadYt }, 'Load'),
       h('button', { class: 'ghost sm', onclick: () => times.click(), title: 'The game.rallies.json file the vision tool made' }, found ? 'Other rally times' : 'Load rally times'), times);
     paintFound();
     if (!player && !videoBox.children.length) videoBox.replaceChildren(h('p', { class: 'muted small' },
-      video?.kind === 'file' ? `Open ${video.name} again to see the video. It never leaves this device.` : 'Open the game\'s video, or tag live without one. Files stay on this device.'));
+      video?.kind === 'file' ? `Open ${video.name} again to see the video. It never leaves this device.`
+      : video?.kind === 'upload' ? 'Loading the uploaded video…'
+      : 'Open the game\'s video, or tag live without one. Opened files stay on this device; uploaded ones are kept for watching.'));
     return loadYt;
+  };
+
+  // ----- uploaded video (video.sql): sending it, its analysis, and watching it -----
+  let job = null, pickUpload = null, polling = null;
+  const pctOf = v => `${Math.round((v ?? 0) * 100)}%`;
+  const paintJob = () => {
+    const live = activeUpload(g.id), left = !live && me.role === 'super' && savedUpload(g.id);
+    const bar = v => h('progress', { max: 1, value: v ?? 0 });
+    const parts = live ? [h('b', {}, `Uploading ${live.file}`), bar(live.progress), h('span', { class: 'small' }, `${pctOf(live.progress)} · keep this page open`),
+        h('button', { class: 'ghost sm', onclick: async () => { if (await ask('Stop the upload?', 'What was sent so far is thrown away.', 'Stop upload')) live.cancel(); } }, 'Stop')]
+      : left ? [h('span', { class: 'small' }, `The upload of ${left.name} stopped at ${pctOf(sentShare(left))}. Pick the same file to carry on from there.`),
+        h('button', { class: 'sm', onclick: () => pickUpload?.() }, 'Resume')]
+      : !job ? []
+      : job.status === 'queued' ? [h('span', { class: 'small' }, 'Uploaded. The analysis starts in a moment…')]
+      : job.status === 'processing' ? [h('b', { class: 'small' }, 'Analysing'), bar(job.progress), h('span', { class: 'small' }, `${pctOf(job.progress)} · ${me.role === 'super' ? 'you\'ll get an email when it\'s ready' : 'ready soon'}`)]
+      : job.status === 'failed' ? [h('span', { class: 'small warn-text' }, job.error || 'The analysis failed.'),
+        me.role === 'super' && !ro && job.original_key && h('button', { class: 'sm', onclick: retry }, 'Try again')]
+      : job.status === 'done' ? [h('span', { class: 'muted small' }, 'Uploaded video · organizers and the players in this game can watch it on Videos')]
+      : [];
+    jobBar.replaceChildren(...(parts.length ? [h('div', { class: 'row' }, ...parts)] : []));
+  };
+  const loadUpload = async () => {
+    clearTimeout(polling);
+    if (!videoBox.isConnected && job) return;   // left the tag screen
+    if (video?.kind !== 'upload') { job = null; return paintJob(); }
+    let w;
+    try { w = await callFn('video', { action: 'watch', game: g.id }); }
+    catch (e) { jobBar.replaceChildren(h('p', { class: 'warn small' }, e.message)); return; }
+    job = w.job;
+    if (w.url && !player) player = urlVideo(videoBox, w.url);   // a file being tagged from this device keeps playing
+    if (w.rallies?.length) found = { video: job?.file_name ?? null, rallies: w.rallies.map(r => ({ start: r.start, end: r.end })).sort((a, b) => a.start - b.start) };
+    paintJob(); paintSource();
+    if (['queued', 'processing'].includes(job?.status)) polling = setTimeout(loadUpload, 8000);
+  };
+  const retry = async () => {
+    try { job = (await callFn('video', { action: 'retry', job: job.id })).job; } catch (e) { return toast(e.message); }
+    paintJob(); polling = setTimeout(loadUpload, 8000);
+  };
+  const follow = live => {
+    const off = live.on(paintJob);
+    paintJob();
+    live.done.then(done => {
+      video = { kind: 'upload', id: done.id }; changed();
+      toast('Uploaded. It\'s being analysed now.');
+      return loadUpload();
+    }, e => { if (!e.cancelled) toast(savedUpload(g.id) ? `Upload stopped: ${e.message}. Pick the same file to resume.` : e.message); })
+      .finally(() => { off(); paintJob(); paintSource(); });
+  };
+  const startUpload = async f => {
+    if (video?.kind === 'upload' && savedUpload(g.id)?.name !== f.name
+      && !await ask('Replace the uploaded video?', 'The video uploaded for this game is deleted once the new one has finished uploading. Tags stay, so upload the same game.', 'Replace', '')) return;
+    // Tagging can start straight away from the file on this device while it uploads.
+    if (!player) { player = fileVideo(videoBox, f); }
+    follow(uploadVideo(g.id, f));
+    paintSource();
   };
 
   const paintPad = () => {
@@ -608,6 +682,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const loadYt = paintSource();
   paint();
   if (video?.kind === 'youtube') loadYt();
+  if (activeUpload(g.id)) follow(activeUpload(g.id)); else loadUpload();
 
   // Keys: space play/pause, ←/→ 2 s (shift 5 s), 0–3 grade, s/p/t/a/b/d action, Esc clear, u undo.
   const keys = e => {
@@ -661,7 +736,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     // Wide screens: the video stays on the left while the panels scroll on the right.
     h('div', { class: 'tag-cols' },
       h('div', { class: 'tag-left' },
-        h('div', { class: 'card' }, videoBox, sourceRow, foundBar,
+        h('div', { class: 'card' }, videoBox, sourceRow, jobBar, foundBar,
           keyHint)),
       h('div', { class: 'tag-right' },
         !ro && h('div', { class: 'card' }, pad),

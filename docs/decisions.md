@@ -103,3 +103,17 @@ Organizers build teams, so they see everyone's ratings, rating history, leans an
 - For them: "Their teams do 1.5 points a game worse than rated (won 3 of 10): maybe rated too high", the same numbers as Insights.
 - Raters still get only the name and "Results don't match their ratings": the server never sends them which way, so their ratings aren't steered and they learn nothing about anyone's ratings.
 - Rests on: how in netlify/functions/rate-queue.mjs (organizer and super only), resultsWhy in site/js/pages/rate.mjs.
+
+## 2026-11-15 · Game videos are uploaded, kept to watch, and only the super tags
+- Decided by: the designer
+- Why: Analysing in the background and letting organizers and players watch their games needs the video off the device. Keeping a 720p copy costs little (R2, about 0.4 GB a game, about $0.80 a month after a year); keeping originals doesn't.
+- What: the super uploads a game's video on its tag screen. A worker on Modal makes a 720p copy to watch and finds the rally times; the uploader is emailed (Resend) when it's done or has failed. The original is deleted 7 days after analysis; the copy is kept until its game is deleted. Organizers watch every game, players only games they played in (on published game days), on Videos. Tagging becomes the super's alone (it was organizers up to 3 days after the game day); organizers still see the tags.
+- Defaults chosen by Claude, not yet confirmed: players see only their own games; only the super uploads; a note on Videos says games may be filmed and anyone can ask an organizer to be left out.
+- Rejected: Supabase Storage (needs Pro at $25 a month); keeping originals (about 2 GB a game); a cut, rallies-only video (rally times with Next rally do the same without a second file).
+- Rests on: supabase/video.sql, netlify/functions/video*.mjs, netlify/lib/{r2,video,email}.mjs, vision/worker/, site/js/pages/videos.mjs, the tag screen in site/js/pages/scores.mjs.
+
+## 2026-11-15 · Invites and password resets are emailed through Resend
+- Decided by: the designer
+- Why: The free plan's 3,000 emails a month is far more than the club needs, and sending links by hand is a chore.
+- What: Invite and Reset link email the person when RESEND_API_KEY is set. The link still shows on the Users page, so it can be sent by hand if the email doesn't arrive or can't be sent (Resend only delivers to other people once a domain is verified).
+- Rests on: admin.mjs, accountEmail in netlify/lib/email.mjs.

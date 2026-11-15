@@ -181,7 +181,7 @@ create policy sessions_organizers on public.sessions for all to authenticated
 create policy games_organizers on public.games for all to authenticated
   using (public.my_role() in ('organizer', 'super')) with check (public.my_role() in ('organizer', 'super'));
 
--- Match stats: tags entered while watching a game's video (same as match_stats.sql). The video is never uploaded.
+-- Match stats: tags entered while watching a game's video (same as match_stats.sql).
 alter table public.games add column if not exists video_kind text check (video_kind in ('file', 'youtube'));
 alter table public.games add column if not exists video_ref text;  -- file name, or YouTube video id
 alter table public.games add column if not exists tags_end double precision;  -- seq of the last rally that counts for the score; later ones were played on after the game ended
@@ -213,13 +213,10 @@ create index if not exists touches_player on public.touches (player_id, action);
 
 alter table public.rallies enable row level security;
 alter table public.touches enable row level security;
--- Tagging window (also supabase/tag_window.sql): organizers edit tags up to 3 days after the game day, super any time.
+-- Who can tag (also supabase/tag_window.sql): the super only; organizers read the tags.
 create or replace function public.tag_open(p_game bigint) returns boolean
 language sql stable security definer set search_path = public as $$
-  select public.my_role() = 'super'
-      or (public.my_role() = 'organizer' and exists (
-            select 1 from public.games g join public.sessions s on s.id = g.session_id
-            where g.id = p_game and s.played_on >= current_date - 3));
+  select public.my_role() = 'super';
 $$;
 
 drop policy if exists rallies_organizers on public.rallies;
@@ -676,3 +673,40 @@ language sql stable security definer set search_path = public as $$
   where public.my_role() in ('organizer', 'super');
 $$;
 grant execute on function public.rater_names() to authenticated;
+
+-- Game videos (same as video.sql): uploads, the copy to watch, and the analysis of each.
+create table if not exists public.video_jobs (
+  id uuid primary key default gen_random_uuid(),
+  game_id bigint references public.games on delete set null,   -- null once the game is deleted; clean-up removes the files
+  uploaded_by uuid default auth.uid(),
+  file_name text not null,
+  size_bytes bigint not null,
+  original_key text,                 -- R2 key of the upload; null once deleted
+  upload_id text,                    -- R2 multipart upload, while uploading
+  viewing_key text,                  -- R2 key of the 720p copy, once made
+  status text not null default 'uploading'
+    check (status in ('uploading', 'queued', 'processing', 'done', 'failed', 'cancelled')),
+  progress real,                     -- 0 to 1 while processing
+  result jsonb,                      -- { version, video, duration, rallies: [{ start, end, confidence }] }, as game.rallies.json
+  error text,                        -- for people: what went wrong and what to try
+  attempts smallint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz,
+  original_deleted_at timestamptz
+);
+create index if not exists video_jobs_game on public.video_jobs (game_id, created_at desc);
+create index if not exists video_jobs_status on public.video_jobs (status, updated_at);
+
+drop trigger if exists video_jobs_touch on public.video_jobs;
+create trigger video_jobs_touch before update on public.video_jobs
+  for each row execute function public.touch_updated_at();
+
+alter table public.video_jobs enable row level security;
+drop policy if exists video_jobs_read on public.video_jobs;
+create policy video_jobs_read on public.video_jobs for select to authenticated
+  using (public.my_role() in ('organizer', 'super'));
+
+-- A game's video can now be an upload: video_ref is then the video_jobs id.
+alter table public.games drop constraint if exists games_video_kind_check;
+alter table public.games add constraint games_video_kind_check check (video_kind in ('file', 'youtube', 'upload'));

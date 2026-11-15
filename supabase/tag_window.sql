@@ -1,13 +1,10 @@
--- Tagging window: organizers can add, change or delete a game's tags only up to 3 days after its game day; the super
--- any time. Everyone who could read tags still can. Run once in the SQL Editor after match_stats.sql (also in
--- schema.sql for new projects). Safe to run again. Keep the 3 in step with TAG_DAYS in site/js/pages/scores.mjs.
+-- Who can tag: only the super adds, changes or deletes a game's tags (organizers could, up to 3 days after the game
+-- day, until video.sql changed it). Organizers and the super read them. Run once in the SQL Editor after
+-- match_stats.sql (also in schema.sql for new projects). Safe to run again.
 
 create or replace function public.tag_open(p_game bigint) returns boolean
 language sql stable security definer set search_path = public as $$
-  select public.my_role() = 'super'
-      or (public.my_role() = 'organizer' and exists (
-            select 1 from public.games g join public.sessions s on s.id = g.session_id
-            where g.id = p_game and s.played_on >= current_date - 3));
+  select public.my_role() = 'super';
 $$;
 
 drop policy if exists rallies_organizers on public.rallies;

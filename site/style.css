@@ -789,3 +789,17 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
 .compare-team ul { list-style: none; margin: 6px 0 0; padding: 0; }
 .compare-team li { padding: 2px 0 2px 8px; border-left: 3px solid transparent; overflow-wrap: anywhere; }
 .compare-team li.moving { border-left-color: var(--warn-fg); font-weight: 600; }
+
+/* Uploaded game videos: upload and analysis status on the tag screen, and the Videos page. */
+.tag-job:not(:empty) { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.tag-job .row { flex-wrap: wrap; gap: 8px 12px; }
+.tag-job progress, .video-watch progress { flex: 1 1 160px; min-width: 120px; height: 8px; accent-color: var(--primary); }
+.video-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.video-list button { display: flex; width: 100%; gap: 4px 14px; flex-wrap: wrap; align-items: baseline; text-align: left; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; color: var(--fg); font: inherit; cursor: pointer; }
+.video-list button:hover { border-color: var(--line-strong); }
+.video-list button[aria-current=true] { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
+.video-list .vs { flex: 1 1 100%; color: var(--muted); font-size: .875rem; }
+.video-watch video { display: block; width: 100%; max-height: 70vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; }
+.video-rallies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.video-rallies button[aria-current=true] { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }

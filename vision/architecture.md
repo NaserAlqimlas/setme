@@ -1,10 +1,49 @@
 # Video analysis in SetMe: architecture
 
-An organizer uploads a game's video in SetMe. It's analysed in the background (rally times now; ball positions,
+The super uploads a game's video in SetMe. It's analysed in the background (rally times now; ball positions,
 who won each point and in/out calls later), and the person who uploaded it is told when the results are ready. The
 results then appear on that game's tag screen without anyone loading a file.
 
-Status: proposal. Nothing here is built yet. The analysis itself exists (`vision/`, run by hand on a laptop).
+Status: built (November 2026), waiting on the accounts below. What changed from the proposal: the 720p viewing copy is
+kept so organizers and players can watch (originals are still deleted after 7 days), only the super uploads and tags,
+and the worker also makes the viewing copy. The decision is in `docs/decisions.md` (2026-11-15).
+
+| Part | Where |
+|---|---|
+| Job record, super-only tagging | `supabase/video.sql` |
+| Storage signing (no packages) | `netlify/lib/r2.mjs` |
+| Rules: who watches, parts, signatures, clean-up, emails | `netlify/lib/video.mjs`, `netlify/lib/email.mjs` |
+| Browser-facing actions (list, watch, start, resume, finish, retry, cancel) | `netlify/functions/video.mjs` |
+| Worker callbacks; daily clean-up | `netlify/functions/video-worker.mjs`, `video-cleanup.mjs` |
+| Worker | `vision/worker/job.py` (the job), `vision/worker/modal_app.py` (Modal) |
+| Upload in parts, resumable | `site/js/upload.mjs` |
+| Tag screen (upload, status, play the copy, rally times) and Videos page | `site/js/pages/scores.mjs`, `site/js/pages/videos.mjs` |
+
+## Setting it up
+
+Until these are done the site works as before; Upload for analysis says it isn't set up yet.
+
+1. **Database:** run `supabase/video.sql` in the Supabase SQL Editor.
+2. **Cloudflare R2:** create a bucket (e.g. `setme-video`), not public. Then:
+   - an R2 API token with Object Read & Write on that bucket only;
+   - CORS on the bucket (Settings → CORS policy), with your site's address:
+     ```json
+     [{ "AllowedOrigins": ["https://YOUR-SITE.netlify.app"], "AllowedMethods": ["GET", "PUT"],
+        "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600 }]
+     ```
+   - a lifecycle rule: abort incomplete multipart uploads after 1 day;
+   - a billing notification in Cloudflare, so a surprise can't build up.
+3. **Modal:** sign up, set a monthly spending limit (Settings → Usage), then from the `vision` folder:
+   `pip install modal`, `modal setup`, `modal secret create setme-video VIDEO_WORKER_SECRET=<a long random string>`,
+   `modal deploy worker/modal_app.py`. It prints the URL of `start`.
+4. **Resend:** sign up, create an API key. To email anyone but yourself, add and verify a domain you own (a few DNS
+   records), then send from an address on it.
+5. **Netlify → Site configuration → Environment variables:**
+   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `MODAL_VIDEO_URL` (the start URL),
+   `VIDEO_WORKER_SECRET` (the same string as in Modal), `RESEND_API_KEY`, `RESEND_FROM` (`SetMe <hello@setme.club>`).
+   Then redeploy.
+
+The rest of this page is the original proposal, kept for its reasoning and costs.
 
 ## The decision this needs first
 
@@ -14,7 +53,7 @@ SetMe's rule so far is that **game video never leaves the device** (`supabase/ma
 - **Consent:** players are told games may be filmed and analysed; anyone can ask to be left out of filmed games.
 - **Retention:** the video is deleted a set time after analysis (proposed: 7 days); only the results (rally times,
   later ball positions) are kept. Nobody can download another person's upload.
-- **Who can upload:** organizers and the super only, as with tagging.
+- **Who can upload:** the super only (decided 2026-11-15).
 
 Record the choice in `docs/decisions.md` either way.
 
