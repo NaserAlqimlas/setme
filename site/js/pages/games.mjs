@@ -2,7 +2,7 @@
 // and a box score with everyone's line) and your own. Organizers and the super see every game; a player sees the
 // games they played in, on published game days (netlify/functions/game-view.mjs). The super also uploads videos
 // here (Upload several) and can go from a game to tagging it.
-import { ask, callFn, fill, h, me, pageHead, q, sb, TEAM_COLORS, toast } from '../ui.mjs';
+import { ask, callFn, fill, h, me, pageHead, q, sb, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, rallyAt } from '../rallytimes.mjs';
 import { ACTIONS, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
@@ -91,7 +91,7 @@ function dayCard(d, open) {
 
 // One game: video and rallies on the left, the numbers on the right (stacked on a phone).
 function gameView(g, back) {
-  const left = h('div', { class: 'gd-left' }, h('div', { class: 'card' }, h('p', { class: 'empty' }, 'Loading…')));
+  const left = h('div', { class: 'gd-left' }, h('div', { class: 'card' }, spinner('Loading the game…')));
   const right = h('div', { class: 'gd-right' });
   const view = h('div', { class: 'gd-view' },
     h('div', { class: 'card gd-top' },
@@ -130,7 +130,7 @@ function gameView(g, back) {
         if (e.key.toLowerCase() === 'n' && times.length && !e.metaKey && !e.ctrlKey && !e.target.closest('input, select, textarea')) { e.preventDefault(); go(e.shiftKey ? -1 : 1); }
       };
       document.addEventListener('keydown', keys);
-      fill(videoCard, video, times.length && h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:10px' },
+      fill(videoCard, withSpinner(video), times.length && h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:10px' },
         h('button', { class: 'ghost sm', onclick: () => go(-1) }, '◀ Previous rally'), h('button', { class: 'ghost sm', onclick: () => go(1) }, 'Next rally ▶'), where,
         h('span', { class: 'muted small grow', style: 'text-align:right' }, 'N next rally · Shift N back')));
     } else fill(videoCard, h('p', { class: 'muted' }, 'No video of this game.'));

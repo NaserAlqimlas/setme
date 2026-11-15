@@ -851,3 +851,27 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
 .gd-table tr.mine { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .gd-gap td { border: 0; padding: 4px; }
 .gd-search { width: 100%; margin: 0 0 14px; }
+
+/* Loading: a volleyball that bounces and spins (ui.mjs spinner) */
+.vb-spin { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 12px; }
+.vb-stage { position: relative; width: 48px; height: 64px; display: block; }
+.vb-ball { position: absolute; left: 4px; top: 0; width: 40px; height: 40px; animation: vb-bounce .9s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
+.vb-ball svg { width: 100%; height: 100%; display: block; animation: vb-spin 1.2s linear infinite; }
+.vb-fill { fill: var(--ball); }
+.vb-seam path { fill: none; stroke: var(--ball-fg); stroke-width: 1.6; stroke-linecap: round; opacity: .7; }
+.vb-edge { fill: none; stroke: var(--ball-fg); stroke-width: 1.6; opacity: .8; }
+.vb-shadow { position: absolute; left: 10px; bottom: 0; width: 28px; height: 6px; border-radius: 50%; background: var(--fg); opacity: .18;
+  animation: vb-shadow .9s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
+@keyframes vb-bounce { from { transform: translateY(0); } 85% { transform: translateY(17px) scale(1, 1); } to { transform: translateY(18px) scale(1.08, .9); } }
+@keyframes vb-spin { to { transform: rotate(360deg); } }
+@keyframes vb-shadow { from { transform: scale(.55); opacity: .08; } to { transform: scale(1); opacity: .22; } }
+.vb-video { position: relative; }
+.vb-video video { display: block; width: 100%; }
+.vb-over { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, #000 55%, transparent); border-radius: inherit;
+  pointer-events: none; transition: opacity .25s; }
+.vb-over .muted { color: #fff; opacity: .85; }
+.vb-over.hide { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .vb-ball, .vb-shadow { animation: none; }
+  .vb-ball svg { animation: vb-spin 3s linear infinite; }
+}

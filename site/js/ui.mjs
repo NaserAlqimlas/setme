@@ -204,3 +204,25 @@ export function datePicker(value = '', label = 'Date') {
   paintBtn();
   return el;
 }
+
+// A bouncing, spinning volleyball while something loads. label is read out to screen readers and shown under it.
+const SEAMS = '<path d="M20 20C28 20 34 15 37 8"/><path d="M22 26C31 27 37 22 40 15"/>';
+const BALL = '<svg viewBox="0 0 40 40" aria-hidden="true"><defs><clipPath id="vb-clip"><circle cx="20" cy="20" r="17"/></clipPath></defs>'
+  + '<circle cx="20" cy="20" r="17" class="vb-fill"/><g class="vb-seam" clip-path="url(#vb-clip)">'
+  + [0, 120, 240].map(a => `<g transform="rotate(${a} 20 20)">${SEAMS}</g>`).join('')
+  + '</g><circle cx="20" cy="20" r="17" class="vb-edge"/></svg>';
+export function spinner(label = 'Loading…') {
+  const ball = h('span', { class: 'vb-ball' });
+  ball.innerHTML = BALL;
+  return h('div', { class: 'vb-spin', role: 'status' }, h('span', { class: 'vb-stage' }, ball, h('span', { class: 'vb-shadow' })), h('span', { class: 'muted small' }, label));
+}
+
+// A video with the spinner over it while it loads or buffers -> the wrapper to put on the page.
+export function withSpinner(video, label = 'Loading the video…') {
+  const over = h('div', { class: 'vb-over' }, spinner(label));
+  const wrap = h('div', { class: 'vb-video' }, video, over);
+  const on = () => over.classList.remove('hide'), off = () => over.classList.add('hide');
+  ['loadstart', 'waiting', 'seeking'].forEach(e => video.addEventListener(e, on));
+  ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'seeked', 'suspend', 'error', 'pause'].forEach(e => video.addEventListener(e, off));
+  return wrap;
+}
