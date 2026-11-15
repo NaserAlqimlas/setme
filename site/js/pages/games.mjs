@@ -131,10 +131,10 @@ function gameView(g, back) {
       };
       document.addEventListener('keydown', keys);
       const full = () => (video.requestFullscreen?.() ?? video.webkitRequestFullscreen?.() ?? video.webkitEnterFullscreen?.())?.catch?.(() => {});
-      fill(videoCard, withSpinner(video), h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:10px' },
+      fill(videoCard, h('div', { class: 'video-frame' }, withSpinner(video), bigVideoButton(view)), h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-top:10px' },
         times.length && h('button', { class: 'ghost sm', onclick: () => go(-1) }, '◀ Previous rally'), times.length && h('button', { class: 'ghost sm', onclick: () => go(1) }, 'Next rally ▶'), times.length && where,
         h('span', { class: 'grow' }),
-        bigVideoButton(view), h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
+        h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
         times.length && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Keys: N next rally · Shift N back'));
     } else fill(videoCard, h('p', { class: 'muted' }, 'No video of this game.'));
     const seek = t => { if (!video || t == null) return; playAt(video, t - 2); video.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };

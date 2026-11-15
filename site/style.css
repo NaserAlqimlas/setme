@@ -503,8 +503,12 @@ tr.dim td { color: var(--muted); }
   .tagger.big { --tag-w: calc(100vw - 32px); }
   .tagger.big .tag-cols { grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); }
 }
-.tag-keys { justify-content: space-between; gap: 8px; margin-top: 10px; }
-.tag-keys > p { margin: 0; flex: 1 1 200px; }
+.video-frame { position: relative; }
+/* Bigger video: on the video's top-right corner, only once there is a video, and only on wide screens */
+.big-video-btn { position: absolute; top: 8px; right: 8px; z-index: 2; min-height: 32px; padding: 4px 10px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .25); background: rgba(10, 14, 28, .72); color: #fff; font-size: .85rem; font-weight: 600; }
+.big-video-btn:hover { background: rgba(10, 14, 28, .9); filter: none; }
+.video-frame:not(:has(video, iframe)) .big-video-btn { display: none; }
 @media (max-width: 999px) { .big-video-btn { display: none; } }
 .tag-video video, .tag-video .yt iframe { display: block; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; border: 0; }
 .tag-source { flex-wrap: wrap; gap: 8px; margin-top: 10px; }

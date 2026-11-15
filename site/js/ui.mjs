@@ -233,7 +233,7 @@ const BIG_KEY = 'setme-big-video';
 export const isBigVideo = () => { try { return localStorage.getItem(BIG_KEY) === '1'; } catch { return false; } };
 export function bigVideoButton(viewOf) {   // viewOf: the view, or a function giving it (when it's built after the button)
   const view = () => { try { return typeof viewOf === 'function' ? viewOf() : viewOf; } catch { return null; } };   // not built yet
-  const btn = h('button', { type: 'button', class: 'ghost sm big-video-btn', title: 'Wider screens only: phones already show the video full width' });
+  const btn = h('button', { type: 'button', class: 'big-video-btn', title: 'Wider screens only: phones already show the video full width' });
   const paint = () => { const big = view()?.classList.contains('big') ?? isBigVideo(); btn.textContent = big ? '⤡ Smaller video' : '⤢ Bigger video'; btn.setAttribute('aria-pressed', String(big)); };
   btn.onclick = () => {
     const big = view().classList.toggle('big');
