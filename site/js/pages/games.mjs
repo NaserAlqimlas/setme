@@ -10,9 +10,10 @@ import { uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
 import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
-import { searchDays } from '../gamesearch.mjs';
+import { searchDays, toTag } from '../gamesearch.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
+let showAllToTag = false;   // the super's to-tag list, opened past its first few
 let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
@@ -44,10 +45,33 @@ export async function gamesPage() {
     if (g) return fill(wrap, gameView(g, () => { openGame = null; show(); scrollTo(0, 0); }));
     if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
     paintList();
-    fill(wrap, head, bulkBox, search, list, consent);
+    fill(wrap, head, bulkBox, me.role === 'super' && toTagCard(data.days), search, list, consent);
   };
   show();
   return wrap;
+}
+
+// The super's list of games still to tag, to work through. Each opens the tag screen.
+function toTagCard(days) {
+  const games = toTag(days), FEW = 5;
+  if (!games.length) return h('div', { class: 'card' }, h('h3', {}, 'To tag'), h('p', { class: 'muted' }, 'Every game is tagged.'));
+  const card = h('div', { class: 'card' });
+  const paint = () => {
+    const shown = showAllToTag ? games : games.slice(0, FEW);
+    fill(card, h('div', { class: 'row', style: 'justify-content:space-between;align-items:baseline' },
+        h('h3', {}, 'To tag'), h('span', { class: 'muted small' }, `${games.length} game${games.length === 1 ? '' : 's'} left`)),
+      h('ul', { class: 'gd-games' }, shown.map(g => h('li', {}, h('button', { type: 'button', class: 'gd-game', onclick: () => openTagging(g.played_on, g.id) },
+        h('span', { class: 'muted small gd-n' }, `${day(g.played_on)} · Game ${g.n}`),
+        h('span', { class: 'gd-score' },
+          h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('b', {}, ` ${g.a.score}–${g.b.score} `),
+          h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name)),
+        h('span', { class: 'gd-tags' }, g.video ? h('span', { class: 'chip plain' }, '▶ Video') : h('span', { class: 'muted small' }, 'No video'),
+          h('span', { class: 'chip plain' }, 'Tag →')))))),
+      games.length > FEW && h('button', { class: 'ghost sm', style: 'margin-top:8px', onclick: () => { showAllToTag = !showAllToTag; paint(); } },
+        showAllToTag ? 'Show fewer' : `Show all ${games.length}`));
+  };
+  paint();
+  return card;
 }
 
 function dayCard(d, open) {

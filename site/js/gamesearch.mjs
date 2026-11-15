@@ -30,3 +30,10 @@ export function searchDays(days, query) {
   return days.map(d => ({ ...d, games: d.games.filter(g => { const w = gameWords(g, d.played_on); return terms.every(t => has(w, t)); }) }))
     .filter(d => d.games.length);
 }
+
+// The super's to-do list: games with no tags yet -> [{ ...game, played_on }]. Games with a video come first (they
+// can be tagged now), then the oldest day first, then by game number.
+export function toTag(days) {
+  return days.flatMap(d => d.games.filter(g => !g.tagged).map(g => ({ ...g, played_on: d.played_on })))
+    .sort((x, y) => (!!y.video - !!x.video) || x.played_on.localeCompare(y.played_on) || x.n - y.n);
+}
