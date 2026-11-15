@@ -837,6 +837,10 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
   .gd-view { --gd-w: min(1500px, calc(100vw - 48px)); width: var(--gd-w); margin-left: calc((100% - var(--gd-w)) / 2); }
   .gd-cols { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(400px, 1fr); align-items: start; }
   .gd-left { position: sticky; top: calc(var(--top-h, 60px) + 12px); max-height: calc(100vh - var(--top-h, 60px) - 24px); overflow-y: auto; }
+  /* Bigger video: still side by side, but the page as wide as the window and the video taking most of it */
+  .gd-view.big { --gd-w: calc(100vw - 32px); }
+  .gd-view.big .gd-cols { grid-template-columns: minmax(0, 1fr) minmax(340px, 380px); }
+  .gd-view.big .gd-left video { max-height: calc(100vh - var(--top-h, 60px) - 140px); }
 }
 .gd-rallies { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
 .gd-rallies button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 4px; background: none; border: 0; border-top: 1px solid var(--line);
