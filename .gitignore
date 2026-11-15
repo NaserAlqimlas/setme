@@ -12,3 +12,5 @@ vision/**/*.rallies.json
 vision/**/*.court.json
 vision/**/*.pkl
 .pytest_cache/
+vision/**/labels.json
+vision/**/*.pt

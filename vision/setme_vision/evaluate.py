@@ -19,24 +19,28 @@ import cv2
 
 from . import court
 from .__main__ import frames
-from .detect import COLOURS, ColourBallDetector, MotionBallDetector
+from .detect import COLOURS, make
 from .segment import Settings, segment
 from .track import TrackSettings, flights_of, track
+
+
+def camera_name(name):
+    """The camera's name for a recording (IMG_5276), without what was added when it was copied (_tag, _rallies)."""
+    stem = Path(name).stem
+    return (m.group(0) if (m := re.match(r'[A-Za-z]+_?\d+', stem)) else stem).lower()
 
 
 def read_tags(path, video=None):
     """Tagged rallies for one video: [(first_touch, last_touch)]. The CSV may hold several games (a video_ref
     column); then only the rows for this video count, matched by name: IMG_5276.MOV matches IMG_5276_tag.mp4."""
-    # The camera's name for the recording (IMG_5276), without what was added when it was copied (_tag, _rallies).
-    key = lambda name: (m.group(0) if (m := re.match(r'[A-Za-z]+_?\d+', Path(name).stem)) else Path(name).stem).lower()
-    stem = key(video) if video else None
+    stem = camera_name(video) if video else None
     out, refs = [], set()
     with open(path, newline='') as f:
         for r in csv.DictReader(f):
             ref = r.get('video_ref')
             if ref is not None:
                 refs.add(ref)
-                if stem and key(ref) != stem:
+                if stem and camera_name(ref) != stem:
                     continue
             a, b = r.get('first_touch'), r.get('last_touch')
             if a not in (None, ''):
@@ -68,7 +72,7 @@ def seen_in(video, truth, a):
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     area = None if not a.court else court.search_area(court.load(video) or court.pick(video), size)
-    det = MotionBallDetector(size, area) if a.ball == 'motion' else ColourBallDetector(size, area, a.ball)
+    det = make(a.ball, size, area, getattr(a, 'model', None) or Path(video).with_name('ball.pt'))
     print(f'Reading {Path(video).name}, {lo:.0f} s to {hi:.0f} s…', flush=True)
     seen = list(frames(cap, fps, det, max(1, round(fps / 30)), max(0, lo), hi))
     cap.release()
@@ -103,7 +107,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog='setme_vision.evaluate')
     ap.add_argument('video', help='a video, or a folder of them'); ap.add_argument('tags')
     ap.add_argument('--court', action='store_true', help='only look on and above the court')
-    ap.add_argument('--ball', default='yellow', choices=[*COLOURS, 'motion'])
+    ap.add_argument('--ball', default='yellow', choices=[*COLOURS, 'motion', 'yolo'])
+    ap.add_argument('--model', help='the trained detector for --ball yolo (default: ball.pt next to the video)')
     ap.add_argument('--fresh', action='store_true', help='read the video again even if it was read before')
     a = ap.parse_args(argv)
     if Path(a.video).is_dir():

@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 from . import court
-from .detect import COLOURS, ColourBallDetector, MotionBallDetector
+from .detect import COLOURS, make
 from .segment import Settings, segment
 from .track import TrackSettings, flights_of, track
 
@@ -48,8 +48,9 @@ def frames(cap, fps, detector, step, start, stop, on_frame=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='setme_vision', description='Find the rallies in a game video.')
     ap.add_argument('video')
-    ap.add_argument('--ball', default='yellow', choices=[*COLOURS, 'motion'],
-                    help="how to spot the ball: by its colour (the club's yellow ball), or anything small that moves")
+    ap.add_argument('--ball', default='yellow', choices=[*COLOURS, 'motion', 'yolo'],
+                    help="how to spot the ball: by its colour (the club's yellow ball), anything small that moves, or the trained detector")
+    ap.add_argument('--model', help='the trained detector for --ball yolo (default: ball.pt next to the video)')
     ap.add_argument('--court', action='store_true', help='only look on and above the court (asks for its corners the first time)')
     ap.add_argument('--pick-court', action='store_true', help='mark the court corners again (implies --court)')
     ap.add_argument('--out', help='where to write the rally times (default: next to the video)')
@@ -78,7 +79,7 @@ def main(argv=None):
             corners = court.pick(video, at=a.start + 5)
         area = court.search_area(corners, size)
 
-    detector = MotionBallDetector(size, area) if a.ball == 'motion' else ColourBallDetector(size, area, a.ball)
+    detector = make(a.ball, size, area, a.model or video.with_name('ball.pt'))
     writer, on_frame = None, None
     if a.preview:
         pv = video.with_suffix('.preview.mp4')

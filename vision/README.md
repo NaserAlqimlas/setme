@@ -93,5 +93,38 @@ settings and get the table above. The first run reads the video; later runs reus
 
 Tests: `.venv/bin/python -m pytest tests` (they make a short test video and check the rallies found in it).
 
-Next steps: more tagged games to check against (different days, light and camera spots), then in/out calls, which
+## Teaching it to see the ball (training data)
+
+The colour detector is the weak link (shirts, light, distance). The plan is to train a ball detector (YOLO) on frames
+from our own games. It needs a few thousand frames with the ball marked, and most of the marking can be guessed:
+
+```sh
+# 1. Pick about 400 frames per tagged game and guess where the ball is (a few minutes per game)
+.venv/bin/python -m setme_vision.labels propose ~/Documents/setme-test-video tags.csv
+
+# 2. Check the guesses in the browser (only this computer can open it; every answer saves straight away)
+.venv/bin/python -m setme_vision.review ~/Documents/setme-test-video/labels
+
+# 3. Write the checked frames as a YOLO dataset, keeping whole games aside to test on
+.venv/bin/python -m setme_vision.labels export ~/Documents/setme-test-video/labels --val IMG_5277,IMG_5290
+```
+
+Then train it. On a laptop it takes many hours, so use a free Colab GPU: zip the `yolo` folder as
+`setme-yolo.zip`, put it in Google Drive, open `colab_train.ipynb` in Colab and run it (about an hour). It saves
+`ball.pt`; put it next to the videos and use `--ball yolo`. (`python -m setme_vision.train` does the same on a
+computer with a fast GPU.)
+
+**First result (Nov 2026):** trained on 1,995 checked frames from five games, tested on two games it never saw
+(IMG_5277, IMG_5290). It finds 85% of the marked balls, and 86% of its boxes are the ball. For rally times it is level
+with the colour detector (74 against 73 of 89 rallies on the held-out games, 19 against 23 extra), so rally times
+keep the colour detector, which needs no GPU. The trained detector is for what needs the ball's exact position:
+where it lands, and in/out calls. Rally finding is now limited by framing (the ball above the top of the picture)
+and by the rule that joins flights into rallies, not by spotting the ball.
+
+The review page has two modes. **Quick check** shows 24 zoomed-in guesses at a time: tap the ones where the pink
+circle isn't on the ball, then confirm. **One by one** shows the whole frame for the ones you tapped and the frames
+where nothing was found: click the ball, or press N if there's no ball in shot. A ball held or on the floor still
+counts. Frames, answers (`labels.json`) and the dataset stay next to the videos, outside the repo.
+
+Next steps: train on the checked frames and compare with the colour detector on the held-out games, then more tagged games to check against (different days, light and camera spots), then in/out calls, which
 need the court lines mapped to real distances and the moment the ball touches the floor.

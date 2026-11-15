@@ -71,6 +71,12 @@ class ColourBallDetector:
         self.min_area, self.max_area = min_area * k, max_area * k
 
     def __call__(self, frame):
+        """frame: BGR image -> [(x, y)] in frame heights."""
+        return [(cx / self.height, cy / self.height) for cx, cy, _, _ in self.boxes(frame)]
+
+    def boxes(self, frame):
+        """frame: BGR image -> [(cx, cy, w, h)] in this detector's pixels (the frame's, at full resolution). The box is
+        the blob's, less the few pixels the dilation added."""
         small = frame if self.scale == 1.0 else cv2.resize(frame, self.size, interpolation=cv2.INTER_AREA)
         m = cv2.inRange(cv2.cvtColor(small, cv2.COLOR_BGR2HSV), self.lo, self.hi)
         if self.mask is not None:
@@ -90,5 +96,39 @@ class ColourBallDetector:
                 x, y, w, h = stats[i][:4]
                 if not fg[y:y + h, x:x + w][labels[y:y + h, x:x + w] == i].any():
                     continue
-            out.append((cents[i][0] / self.height, cents[i][1] / self.height))
+            grow = self.kernel.shape[0] - 1
+            out.append((float(cents[i][0]), float(cents[i][1]), float(max(4, stats[i][2] - grow)), float(max(4, stats[i][3] - grow))))
         return out
+
+
+class YoloBallDetector:
+    """The trained ball detector (see train.py). It knows the ball by its look, so it needn't move, and shirts or the
+    floor don't fool it the way they fool a colour range. Several low-confidence guesses are kept: track.py picks."""
+    def __init__(self, frame_size, area=None, model='ball.pt', conf=0.15, imgsz=1280, keep=5):
+        from ultralytics import YOLO
+        import torch
+        self.model = YOLO(str(model))
+        self.device = 'mps' if torch.backends.mps.is_available() else 0 if torch.cuda.is_available() else 'cpu'
+        self.height = frame_size[1]
+        self.area = None if area is None else np.asarray(area, np.float32)
+        self.conf, self.imgsz, self.keep = conf, imgsz, keep
+
+    def boxes(self, frame):
+        """frame: BGR image -> [(cx, cy, w, h, confidence)] in the frame's pixels, most confident first."""
+        r = self.model.predict(frame, imgsz=self.imgsz, conf=self.conf, device=self.device, verbose=False, max_det=self.keep)[0]
+        out = [(*map(float, b), float(c)) for b, c in zip(r.boxes.xywh.tolist(), r.boxes.conf.tolist())]
+        if self.area is not None:
+            out = [b for b in out if cv2.pointPolygonTest(self.area, (b[0], b[1]), False) >= 0]
+        return sorted(out, key=lambda b: -b[4])
+
+    def __call__(self, frame):
+        return [(cx / self.height, cy / self.height) for cx, cy, *_ in self.boxes(frame)]
+
+
+def make(kind, size, area=None, model=None):
+    """The detector named on the command line: a colour from COLOURS, 'motion' or 'yolo'."""
+    if kind == 'motion':
+        return MotionBallDetector(size, area)
+    if kind == 'yolo':
+        return YoloBallDetector(size, area, model or 'ball.pt')
+    return ColourBallDetector(size, area, kind)
