@@ -1,7 +1,7 @@
 // Videos page: watch uploaded game videos (supabase/video.sql, netlify/functions/video.mjs). Organizers and the super
 // see every game's; a player sees the games they played in. Each video has its rally times, so you can jump from rally
 // to rally and skip the time between. The super can go from here to tagging the game.
-import { ask, callFn, h, me, pageHead, q, sb, toast } from '../ui.mjs';
+import { ask, callFn, fill, h, me, pageHead, q, sb, toast } from '../ui.mjs';
 import { jumpTo, rallyAt } from '../rallytimes.mjs';
 import { openTagging } from './scores.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
@@ -65,7 +65,7 @@ export async function videosPage() {
     };
     document.addEventListener('keydown', keys);
     stop = () => { document.removeEventListener('keydown', keys); video.pause(); video.removeAttribute('src'); video.load(); };
-    watch.replaceChildren(
+    fill(watch,
       h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-bottom:10px' },
         h('h3', { class: 'grow', style: 'margin:0' }, `Game ${v.n} · ${day(v.played_on)} · ${v.score_a}–${v.score_b}`),
         me.role === 'super' && h('button', { class: 'ghost sm', onclick: () => { stop(); openTagging(v.played_on, v.game); } }, 'Tag this game')),
@@ -94,12 +94,18 @@ function bulkCard() {
   return bulk.card;
 }
 
-async function pickFiles(files) {
+// add: put these files on the list as well (a file already on it is left as it is), instead of starting again.
+async function pickFiles(files, add = false) {
   try {
     const gs = await q(sb.from('games').select('id,session_id,created_at,score_a,score_b,video_kind,video_ref,sessions(played_on)'));
     bulk.games = numbered(gs.map(g => ({ ...g, played_on: g.sessions?.played_on ?? '' })));
   } catch (e) { return toast(e.message); }
-  bulk.rows = matchFiles(files, bulk.games).map(m => ({ ...m, state: 'waiting', progress: 0, skip: false }));
+  const same = (a, b) => a.name === b.name && a.size === b.size;
+  const kept = add && bulk.rows ? bulk.rows : [];
+  const fresh = files.filter(f => !kept.some(r => same(r.file, f)));
+  const matched = matchFiles([...kept.map(r => r.file), ...fresh], bulk.games).slice(kept.length);
+  const taken = new Set(kept.filter(r => !r.skip).map(r => r.game));
+  bulk.rows = [...kept, ...matched.map(m => ({ ...(taken.has(m.game) ? { ...m, game: null, how: null } : m), state: 'waiting', progress: 0, skip: false }))];
   paintBulk();
 }
 
@@ -107,10 +113,10 @@ function paintBulk() {
   const card = bulk.card;
   if (!card) return;
   const picker = h('input', { type: 'file', accept: 'video/*', multiple: true, hidden: true });
-  picker.onchange = () => { const files = [...picker.files]; picker.value = ''; if (files.length) pickFiles(files); };
+  picker.onchange = () => { const files = [...picker.files]; picker.value = ''; if (files.length) pickFiles(files, !!bulk.rows); };
   if (!bulk.rows) return card.replaceChildren(h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px 14px' },
     h('div', { class: 'grow' }, h('b', {}, 'Upload several videos'),
-      h('p', { class: 'muted small', style: 'margin:4px 0 0' }, 'Pick them all at once. Videos of games you tagged from a file are matched to their game by name; pick the game for the rest. They upload one after another, and each is analysed as soon as it lands.')),
+      h('p', { class: 'muted small', style: 'margin:4px 0 0' }, 'Select several at once (hold Cmd and click, or Cmd+A for a whole folder). Videos of games you tagged from a file are matched to their game by name; pick the game for the rest. They upload one after another, and each is analysed as soon as it lands.')),
     h('button', { class: 'sm', onclick: () => picker.click() }, 'Pick videos'), picker));
 
   const byId = new Map(bulk.games.map(g => [g.id, g]));
@@ -168,7 +174,7 @@ function paintBulk() {
     if (!await ask('Stop uploading?', 'The video uploading now is cancelled; the ones already uploaded carry on being analysed.', 'Stop')) return;
     bulk.stop = true; bulk.current?.cancel();
   };
-  card.replaceChildren(
+  fill(card,
     h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;margin-bottom:10px' },
       h('b', { class: 'grow' }, 'Upload several videos'),
       bulk.running ? h('span', { class: 'muted small' }, 'Keep this page open and the computer awake') : null,
@@ -178,5 +184,5 @@ function paintBulk() {
     issues.length ? h('ul', { class: 'small warn-text bulk-issues' }, issues.map(t => h('li', {}, t))) : null,
     !bulk.running && h('div', { class: 'row', style: 'gap:8px;margin-top:10px' },
       h('button', { onclick: start, disabled: !!issues.length || !live.length }, live.length ? `Upload ${live.length} video${live.length === 1 ? '' : 's'}` : 'All uploaded'),
-      h('button', { class: 'ghost sm', onclick: () => picker.click() }, 'Pick other videos'), picker));
+      h('button', { class: 'ghost sm', onclick: () => picker.click() }, 'Add more videos'), picker));
 }

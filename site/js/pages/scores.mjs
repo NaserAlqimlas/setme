@@ -1,4 +1,4 @@
-import { ask, avatar, callFn, choose, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
+import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, rallyAt } from '../rallytimes.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
@@ -560,7 +560,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const up = h('input', { type: 'file', accept: 'video/*', hidden: true });
     up.onchange = () => { const f = up.files[0]; up.value = ''; if (f) startUpload(f); };
     pickUpload = () => up.click();
-    sourceRow.replaceChildren(
+    fill(sourceRow,
       me.role === 'super' && !ro && h('button', { class: 'sm', onclick: () => up.click(), disabled: !!activeUpload(g.id),
         title: 'Sends the video to SetMe: it finds the rally times, and organizers and the game\'s players can watch it' },
         video?.kind === 'upload' ? 'Upload again' : 'Upload for analysis'), up,
