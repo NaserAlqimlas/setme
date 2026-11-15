@@ -1,5 +1,5 @@
 // Team builder shared by the Netlify function (server) and the super's Ratings page (browser).
-// Ratings are 0..1 in .25 steps; null means unknown (U).
+// Ratings are 0..1 in .25 steps (SetMe's, from match stats, are exact to 2 decimals); null means unknown (U).
 
 export const SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking'];
 export const WEIGHTS = { receiving: 1.5, hitting: 1.25, hustle: .75, serve: 1, blocking: .5 };
@@ -25,7 +25,18 @@ export const VARIETY = [1, .5, .25];
 // Each rating is treated as the player's level plus the rater's lean (some rate high, some low). Leans are
 // fitted per skill from players that 2+ people rated, centred so the average rater has none, then taken out,
 // so a generous or harsh rater doesn't skew players only they have rated.
-export function combineRatings(players, ratings) {
+// round: whether to round exact numbers (SetMe's) to .25 first. By default, only when several raters are mixed, so
+// SetMe sits on the same steps as people; one rater alone keeps exact numbers. snapped: some numbers were rounded.
+export const snap = v => Math.round(v * 4) / 4;
+const offStep = v => v != null && snap(Number(v)) !== Number(v);
+export function combineRatings(players, ratings, { round } = {}) {
+  const several = new Set(ratings.map(r => r.rater_id)).size > 1;
+  let snapped = false;
+  if (round ?? several) ratings = ratings.map(r => {
+    if (!RATED.some(s => offStep(r[s]))) return r;
+    snapped = true;
+    return { ...r, ...Object.fromEntries(RATED.filter(s => offStep(r[s])).map(s => [s, snap(Number(r[s]))])) };
+  });
   const byPlayer = new Map(players.map(p => [p.id, []]));
   for (const r of ratings) byPlayer.get(r.player_id)?.push(r);
   const raterIds = [...new Set(ratings.filter(r => byPlayer.has(r.player_id)).map(r => r.rater_id))];
@@ -123,7 +134,7 @@ export function combineRatings(players, ratings) {
   }
   disagreements.sort((a, b) => b.gap - a.gap);
 
-  return { combined, offsets, raters, disagreements };
+  return { combined, offsets, raters, disagreements, snapped };
 }
 
 export const weightedTotal = sk => SKILLS.reduce((a, s) => a + sk[s] * WEIGHTS[s], 0);
