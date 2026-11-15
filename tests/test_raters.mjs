@@ -46,5 +46,17 @@ const few = combineRatings(players.slice(0, 3), [
 ]);
 check(few.offsets.get('X').receiving === 0 && !few.raters.get('X').applied.receiving, 'below 5 shared: not adjusted');
 
+
+// SetMe's exact numbers: kept when it's the only rater, rounded to .25 when mixed with people.
+{
+  const ps = [{ id: 1 }, { id: 2 }];
+  const setme = [{ rater_id: 'setme', player_id: 1, receiving: .14, hitting: .5, hustle: null, serve: .5, blocking: .5 }];
+  const alone = combineRatings(ps, setme);
+  check(alone.combined.get(1).skills.receiving === .14 && !alone.snapped, 'exact alone');
+  const mixed = combineRatings(ps, [...setme, { rater_id: 'ali', player_id: 2, receiving: .5, hitting: .5, hustle: .5, serve: .5, blocking: .5 }]);
+  check(mixed.combined.get(1).skills.receiving === .25 && mixed.snapped, 'rounded when mixed');
+  check(combineRatings(ps, setme, { round: true }).combined.get(1).skills.receiving === .25, 'rounded on request');
+}
+
 console.log(fail ? `${fail} checks failed` : 'all checks passed');
 process.exit(fail ? 1 : 0);

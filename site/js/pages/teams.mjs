@@ -769,6 +769,15 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
   const adjustedNote = () => res.adjusted != null && h('p', { class: 'muted small' }, res.adjusted
     ? `Adjusted for results: ${res.adjusted} player${res.adjusted === 1 ? '\'s' : 's\''} numbers moved by how their teams have done against their ratings.`
     : `Adjust for results is on, but there aren't enough games with scores yet (${ADJUST_MIN_GAMES} needed), so nothing moved.`);
+  // SetMe's exact numbers: which way they were used, and the team totals the other way (opt.exact from build-teams).
+  const exactNote = (opt, tn) => {
+    if (!opt.exact) return null;
+    const alt = opt.exact.totals, gap = t => Math.max(...t) - Math.min(...t);
+    const list = opt.teams.map((t, k) => `${tn[k]} ${num2(alt[k])} (now ${num2(t.weighted)})`).join(', ');
+    return h('p', { class: 'muted small' }, opt.exact.rounded
+      ? `SetMe's exact numbers are rounded to .25 here, to match people's ratings. With its exact numbers: ${list}. Gap ${num2(gap(alt))} instead of ${num2(gapOf(opt))}.`
+      : `Only SetMe: its exact numbers are used. Rounded to .25 like people's ratings: ${list}. Gap ${num2(gap(alt))} instead of ${num2(gapOf(opt))}.`);
+  };
   res.options.forEach((opt, i) => {
     const tn = teamNames(opt.teams.map(t => t.players));
     const text = opt.teams.map((t, k) => `${tn[k]}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
@@ -907,7 +916,7 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
           h('button', { type: 'button', role: 'menuitem', onclick: () => navigator.clipboard.writeText(text).then(() => toast('Copied')) }, 'Copy text'),
         ])),
       detail && h('details', { class: 'option-more' }, h('summary', {}, 'Details'),
-        gapStory, res.variety > 0 && repeatLine(opt.repeats, res.variety), adjustedNote(),
+        gapStory, res.variety > 0 && repeatLine(opt.repeats, res.variety), adjustedNote(), exactNote(opt, tn),
         chips && h('div', { class: 'field raters view' }, h('span', {}, 'Show numbers from'), chips)),
       canSwap && swapHint,
       typeof notice === 'function' ? notice(i) : notice,

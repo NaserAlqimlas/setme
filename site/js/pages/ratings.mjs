@@ -74,15 +74,20 @@ export async function ratingsPage() {
     if (all && sel?.length === 0) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'warn' }, 'Please select at least one rater.')));
     const rid = !all ? me.id : sel?.length === 1 ? sel[0] : '';
     const mine = new Map(ratings.filter(r => r.rater_id === rid).map(r => [r.player_id, r]));
+    // One rater who left some skills blank (SetMe never rates hustle): the total fills those in from the skills they
+    // did rate, as Teams does, and shows ≈. A player they rated nothing for has no total.
+    const filled = rid ? combineRatings(players, [...mine.values()]).combined : null;
     // Combined: nobody has rated them. One rater: that rater left a skill as U (consistency doesn't count).
     const rows = players.map(p => {
       const vals = rid ? RATED.map(s => mine.get(p.id)?.[s] ?? null).map(v => v == null ? null : Number(v)) : RATED.map(s => combined.get(p.id).skills[s]);
       const unknown = rid ? vals.slice(0, SKILLS.length).some(v => v == null) : !!combined.get(p.id).guess;
+      const approx = rid && unknown && vals.slice(0, SKILLS.length).some(v => v != null);
+      const sk = approx ? filled.get(p.id).skills : Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]));
       const key = { name: p.name, ...Object.fromEntries(RATED.map((s, i) => [s, vals[i]])),
-        total: unknown ? null : vals.slice(0, SKILLS.length).reduce((a, b) => a + b, 0),
-        weighted: unknown ? null : weightedTotal(Object.fromEntries(SKILLS.map((s, i) => [s, vals[i]]))),
+        total: unknown && !approx ? null : SKILLS.reduce((a, s) => a + sk[s], 0),
+        weighted: unknown && !approx ? null : weightedTotal(sk),
         raters: all && !rid ? combined.get(p.id).raters : null };
-      return { p, vals, unknown, key };
+      return { p, vals, unknown, approx, key };
     }).filter(r => show === 'all' || (show === 'unrated') === r.unknown);
     // U (unknown) always sorts last, whichever way.
     rows.sort((a, b) => {
@@ -100,14 +105,15 @@ export async function ratingsPage() {
       th.replaceChildren(k === 'name' || k === 'total' || k === 'weighted' || k === 'raters' ? label : SHORT[k], h('span', { class: 'arrow' }, k === sortKey ? (desc ? ' ↓' : ' ↑') : ''));
     }
     if (!rows.length) return body.replaceChildren(h('tr', {}, h('td', { colspan: COLS.length, class: 'muted' }, show === 'rated' ? 'Nobody is rated yet.' : all ? 'Everyone is rated.' : 'You\'ve rated everyone.')));
-    body.replaceChildren(...rows.map(({ p, vals, key }) => {
+    const near = (v, approx) => approx ? h('span', { title: 'Some skills weren\'t rated by them; filled in from the ones they did rate' }, `≈${fmt(v)}`) : fmt(v);
+    body.replaceChildren(...rows.map(({ p, vals, key, approx }) => {
       const guess = all && !rid && combined.get(p.id).guess;
       return h('tr', {}, h('td', {}, h('button', { type: 'button', class: 'name-link', title: 'Show rating history', onclick: () => hist.show(p.id) }, p.name),
         all && ' ', all && h('a', { href: `#player/${p.id}`, class: 'profile-link', title: `${p.name}'s profile`, 'aria-label': `${p.name}'s profile` }, '↗'),
         p.playing && ' ', p.playing && h('span', { class: 'badge on' }, 'Playing'),
         guess && ' ', guess && h('span', { class: 'badge' }, `${guess[0].toUpperCase()}${guess.slice(1)} (guess)`)), vals.map((v, i) => h('td', { class: 'num' }, forPlayer(RATED[i], p) ? fmt(v) : '–')),
-        h('td', { class: 'num' }, h('b', {}, fmt(key.total))),
-        h('td', { class: 'num' }, fmt(key.weighted)),
+        h('td', { class: 'num' }, h('b', {}, near(key.total, approx))),
+        h('td', { class: 'num' }, near(key.weighted, approx)),
         all && h('td', { class: 'num' }, rid ? '' : `${key.raters}`));
     }));
   };
@@ -245,7 +251,10 @@ function matchStatsCard(players, ratings, setmeId, canSave) {
             ...Object.fromEntries(SETME_CLEARS.map(s => [s, null])) }; });
           await q(sb.from('ratings').upsert(body));
           toast('SetMe\'s ratings saved'); render();
-        } catch (e) { toast(e.message); apply.disabled = false; apply.textContent = 'Try again'; }
+        } catch (e) {
+          toast(/check constraint/i.test(e.message) ? 'SetMe\'s exact numbers need an upgrade: run supabase/setme_exact.sql in Supabase, then save again.' : e.message);
+          apply.disabled = false; apply.textContent = 'Try again';
+        }
       };
       const name = new Map(players.map(p => [p.id, p.name]));
       out.replaceChildren(
@@ -261,7 +270,7 @@ function matchStatsCard(players, ratings, setmeId, canSave) {
       h('h3', { style: 'margin-top:18px' }, 'SetMe\'s ratings'),
       h('p', { class: 'muted small' }, 'SetMe rates players from these stats as a rater of its own: ',
         Object.entries(SKILL_STATS).map(([s, d]) => `${LABEL[s]} from ${d.label.toLowerCase()}`).join(', '),
-        '. Consistency is how much their game score (points, minus errors, plus half for each good pass, dig or set, per game) moves from one game day to the next. Hustle is left to people. Each player is rated from their own stats against fixed steps, so tagging other games never moves their number. Small samples are pulled toward .5. Pick SetMe in Ratings from to see or use them.'),
+        '. Consistency is how much their game score (points, minus errors, plus half for each good pass, dig or set, per game) moves from one game day to the next. Hustle is left to people. Each player is rated from their own stats against fixed steps, so tagging other games never moves their number. Small samples are pulled toward .5. SetMe keeps exact numbers (.14, not .25): Teams uses them as they are when you pick only SetMe, and rounds them to .25 when SetMe is mixed with people. Pick SetMe in Ratings from to see or use them.'),
       stepsKey(),
       h('button', { class: 'ghost sm', onclick: preview }, 'Preview changes'), out);
   })().catch(e => el.body.replaceChildren(h('p', { class: 'warn' }, e.message)));

@@ -187,7 +187,8 @@ export function levelOf(steps, v) {
 
 // SetMe's ratings. Each player's number comes from their own stats only: a small sample is pulled toward the middle
 // step (.5) by how few attempts it rests on (a player with `min` attempts lands halfway), then read off the fixed
-// steps and rounded to .25. Tagging other people's games never moves it.
+// steps, kept exact (to 2 decimals). Mixed with people's ratings it's rounded to .25 (combineRatings); on its own it
+// isn't. Tagging other people's games never moves it.
 // A skill is left out while nobody has a single tag of its action (blocks often aren't tagged at first), and
 // consistency while there are no game-day tallies (before consistency.sql).
 // players: [{ id, setting }]. Returns Map player id -> { skill: rating }, and per skill the numbers behind it.
@@ -203,7 +204,7 @@ export function statRatings(tallies, players) {
     const middle = def.steps[2];
     for (const r of rows) {
       r.adj = (r.v * r.n + middle * def.min) / (r.n + def.min);
-      r.rating = Math.round(levelOf(def.steps, r.adj) * 4) / 4;
+      r.rating = Math.round(levelOf(def.steps, r.adj) * 100) / 100;
       if (!ratings.has(r.id)) ratings.set(r.id, {});
       ratings.get(r.id)[skill] = r.rating;
     }

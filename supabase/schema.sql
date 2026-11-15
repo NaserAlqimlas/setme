@@ -27,15 +27,15 @@ create table public.players (
 create table public.ratings (
   rater_id uuid not null references public.profiles on delete cascade,
   player_id bigint not null references public.players on delete cascade,
-  receiving numeric(3,2) check (receiving in (0, .25, .5, .75, 1)),
-  hitting   numeric(3,2) check (hitting   in (0, .25, .5, .75, 1)),
-  hustle    numeric(3,2) check (hustle    in (0, .25, .5, .75, 1)),
-  serve     numeric(3,2) check (serve     in (0, .25, .5, .75, 1)),
-  blocking  numeric(3,2) check (blocking  in (0, .25, .5, .75, 1)),
+  receiving numeric(3,2) check (receiving between 0 and 1),
+  hitting   numeric(3,2) check (hitting between 0 and 1),
+  hustle    numeric(3,2) check (hustle between 0 and 1),
+  serve     numeric(3,2) check (serve between 0 and 1),
+  blocking  numeric(3,2) check (blocking between 0 and 1),
   -- How well they set. Rated for setters only; counts only while they set all game.
-  setting_skill numeric(3,2) check (setting_skill in (0, .25, .5, .75, 1)),
+  setting_skill numeric(3,2) check (setting_skill between 0 and 1),
   -- How steady they are day to day. Not part of strength; the team builder spreads low ones out.
-  consistency numeric(3,2) check (consistency in (0, .25, .5, .75, 1)),
+  consistency numeric(3,2) check (consistency between 0 and 1),
   -- Skills the rater marked U (don't know). A blank skill not listed here hasn't been answered yet.
   unknown text[] not null default '{}',
   updated_at timestamptz not null default now(),

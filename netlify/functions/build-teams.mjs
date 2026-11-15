@@ -13,7 +13,7 @@
 // spreadWomen (default on): split women evenly across teams (and flag it when they aren't); false ignores gender.
 // resultsAdjust: shift each player's numbers by how their teams have done against the ratings (resultAdjustments in
 // scores.mjs) before building or checking. Never used for predict, so stored predictions stay ratings-only.
-import { SKILLS, buildTeams, combineRatings, describeTeam, strength, teamSkills, teamProblems, suggestSwaps, adjustSkills, repeatPairs, VARIETY } from '../../site/js/teams.mjs';
+import { RATED, SKILLS, buildTeams, combineRatings, snap, describeTeam, strength, teamSkills, teamProblems, suggestSwaps, adjustSkills, repeatPairs, VARIETY } from '../../site/js/teams.mjs';
 import { resultAdjustments } from '../../site/js/scores.mjs';
 import { caller, json, rest } from '../lib/supabase.mjs';
 
@@ -76,11 +76,12 @@ export default async (req) => {
   const pairs = (Array.isArray(sent) ? sent : [])
     .filter(c => Number.isInteger(c?.player_a) && Number.isInteger(c?.player_b) && c.player_a !== c.player_b)
     .map(c => ({ player_a: c.player_a, player_b: c.player_b, kind: c.kind === 'apart' ? 'apart' : 'together' }));
-  const { combined } = combineRatings(players, pick ? ratings.filter(r => pick.has(r.rater_id)) : ratings);
+  const used = pick ? ratings.filter(r => pick.has(r.rater_id)) : ratings;
+  const { combined, snapped } = combineRatings(players, used);
   // Results-adjusted numbers (not for predictions, which must stay what the ratings alone said).
-  let adjusted = 0;
+  let adjusted = 0, adj = null;
   if (resultsAdjust && !predict) {
-    const adj = resultAdjustments(await rest('games?select=session_id,players_a,players_b,score_a,score_b,predicted').catch(() => []));
+    adj = resultAdjustments(await rest('games?select=session_id,players_a,players_b,score_a,score_b,predicted').catch(() => []));
     adjustSkills(combined, adj);
     adjusted = [...adj.values()].filter(v => Math.abs(v) >= .005).length;
   }
@@ -200,6 +201,15 @@ export default async (req) => {
   const pname = new Map(players.map(p => [p.id, p.name]));
   for (const opt of result.options) {
     opt.repeats = repeatPairs(opt.teams.map(t => t.players.map(p => p.id)), history).map(r => ({ a: pname.get(r.a), b: pname.get(r.b), ago: r.ago }));
+  }
+  // SetMe's exact numbers (match stats): rounded to .25 when mixed with people's ratings, exact when it's the only rater.
+  // Each option says which, and what its team totals would be the other way.
+  const several = new Set(used.map(r => r.rater_id)).size > 1;
+  if (several ? snapped : used.some(r => RATED.some(k => r[k] != null && snap(Number(r[k])) !== Number(r[k])))) {
+    const alt = combineRatings(players, used, { round: !several }).combined;
+    if (adj) adjustSkills(alt, adj);
+    const altSk = teamSkills(players, alt, allGame);
+    for (const opt of result.options) opt.exact = { rounded: several, totals: opt.teams.map(t => t.players.reduce((a, p) => a + strength(altSk.get(p.id)), 0)) };
   }
   result.variety = history.length;
   result.adjusted = resultsAdjust ? adjusted : null;
