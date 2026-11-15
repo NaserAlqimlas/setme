@@ -54,7 +54,7 @@ export async function scoresPage() {
   const views = { games: () => gamesView(sessions, players, pname, tname, rounds), insights: () => insightsView(sessions, pname, tname, rounds),
     attendance: () => attendanceView(withEarlier(sessions, rounds), players, pname), season: () => seasonView(withEarlier(sessions, rounds), pname, tname) };
   const draw = async () => {
-    body.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
+    body.replaceChildren(spinner());
     try { body.replaceChildren(...await views[scoresTab]()); }
     catch (e) { body.replaceChildren(h('p', { class: 'warn' }, e.message)); }
   };

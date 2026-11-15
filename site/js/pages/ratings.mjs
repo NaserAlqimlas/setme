@@ -1,4 +1,4 @@
-import { callFn, fmt, forPlayer, h, LABEL, me, pageHead, q, render, sb, seg, SHORT, stacked, toast, today } from '../ui.mjs';
+import { callFn, fmt, forPlayer, h, LABEL, me, pageHead, q, render, sb, seg, SHORT, spinner, stacked, toast, today } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, weightedTotal } from '../teams.mjs';
 import { metrics, MIN_PLAYERS, SKILL_STATS, statRatings, tallyFromCounts } from '../stats.mjs';
 import { raterPicker } from './teams.mjs';
@@ -163,7 +163,7 @@ function coverageCard(players, ratings, short) {
 // stats.mjs). SetMe is a rater account of its own, so its ratings are combined, picked and charted like anyone's.
 // setmeId: SetMe's account (null before the first save). canSave: only the super writes SetMe's ratings.
 function matchStatsCard(players, ratings, setmeId, canSave) {
-  const el = foldCard('match-stats', 'Match stats', h('p', { class: 'muted' }, 'Loading…'));
+  const el = foldCard('match-stats', 'Match stats', spinner());
   (async () => {
     let rows, tagged;
     try {

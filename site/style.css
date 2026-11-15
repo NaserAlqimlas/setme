@@ -858,6 +858,7 @@ select.draft-actions { min-height: 36px; padding: 4px 10px; font-weight: 600; } 
 
 /* Loading: a volleyball that bounces and spins (ui.mjs spinner) */
 .vb-spin { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 12px; }
+main > .vb-spin { padding: 12vh 12px; }
 .vb-stage { position: relative; width: 48px; height: 64px; display: block; }
 .vb-ball { position: absolute; left: 4px; top: 0; width: 40px; height: 40px; animation: vb-bounce .9s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
 .vb-ball svg { width: 100%; height: 100%; display: block; animation: vb-spin 1.2s linear infinite; }
