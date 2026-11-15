@@ -75,9 +75,10 @@ test('clean-up: originals go after 7 days, viewing copies stay, stuck and abando
 test('the email to the uploader', () => {
   assert.equal(gameLabel(2, '2026-11-10'), 'Game 2 on Tue, Nov 10');
   const ok = doneEmail({ status: 'done', label: 'Game 2 on Tue, Nov 10', rallies: 41, link: 'https://x/#videos' });
-  assert.match(ok.subject, /ready/); assert.match(ok.text, /41 rallies found/); assert.match(ok.html, /href="https:\/\/x\/#videos"/);
-  const bad = doneEmail({ status: 'failed', label: 'G', error: 'It <b>broke</b>', link: 'l' });
-  assert.match(bad.subject, /couldn't/); assert.match(bad.html, /&lt;b&gt;broke/);
+  assert.match(ok.subject, /ready/); assert.match(ok.text, /41 rallies found/); assert.match(ok.text, /^https:\/\/x\/#videos$/m);
+  assert.equal(ok.html, undefined);                       // plain text, so it lands in the inbox, not Promotions
+  const bad = doneEmail({ status: 'failed', label: 'G', error: 'It broke', link: 'l' });
+  assert.match(bad.subject, /couldn't/); assert.match(bad.text, /It broke/);
 });
 
 test('sending email: through Resend, or quietly not at all when it isn\'t set up', async () => {
@@ -98,7 +99,8 @@ test('invite and reset emails', async () => {
   const inv = accountEmail({ kind: 'invite', name: 'Sara', role: 'player', link: 'https://s/?token_hash=a&type=invite' });
   assert.equal(inv.subject, 'You\'re invited to SetMe');
   assert.match(inv.text, /^Hi Sara,/); assert.match(inv.text, /watch videos of the games you played in/);
-  assert.match(inv.html, /href="https:\/\/s\/\?token_hash=a&amp;type=invite"/);
-  const reset = accountEmail({ kind: 'reset', name: '<b>', link: 'l' });
-  assert.match(reset.subject, /password reset/); assert.match(reset.html, /Hi &lt;b&gt;,/);
+  assert.match(inv.text, /^https:\/\/s\/\?token_hash=a&type=invite$/m);
+  assert.equal(inv.html, undefined);
+  const reset = accountEmail({ kind: 'reset', name: 'Sara', link: 'l' });
+  assert.match(reset.subject, /password reset/); assert.match(reset.text, /^l$/m);
 });

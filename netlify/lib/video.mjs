@@ -89,17 +89,14 @@ export function gameLabel(n, playedOn) {
   return `Game ${n} on ${d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}`;
 }
 
-// The email to the person who uploaded, when the analysis is done or has failed -> { subject, text, html }.
+// The email to the person who uploaded, when the analysis is done or has failed -> { subject, text }. Plain text on
+// purpose: Gmail files styled, button-led mail under Promotions, and this should reach the inbox.
 export function doneEmail({ status, label, rallies, error, link }) {
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const ok = status === 'done';
-  const subject = ok ? `${label}: ready to watch and tag` : `${label}: the video couldn't be analysed`;
+  const subject = ok ? `${label} is ready to watch` : `${label}: the video couldn't be analysed`;
   const lines = ok
     ? [`${label} is ready. ${rallies ? `${rallies} rall${rallies === 1 ? 'y' : 'ies'} found, so Next rally skips the time between them.` : 'No rallies were found, but the video is ready to watch.'}`,
       'Organizers and the players in the game can watch it now.']
     : [`${label} couldn't be analysed: ${error}`, 'You can try again from the game\'s tag screen. The upload is kept for 7 days.'];
-  const text = [...lines, '', `Open it: ${link}`, '', 'SetMe'].join('\n');
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#18182b">${lines.map(l => `<p>${esc(l)}</p>`).join('')}`
-    + `<p><a href="${esc(link)}" style="display:inline-block;padding:10px 16px;background:#18182b;color:#fff;border-radius:6px;text-decoration:none">${ok ? 'Open the game' : 'Open the tag screen'}</a></p><p style="color:#65657a">SetMe</p></div>`;
-  return { subject, text, html };
+  return { subject, text: [...lines, '', link, '', 'SetMe'].join('\n') };
 }
