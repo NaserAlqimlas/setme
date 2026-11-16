@@ -965,3 +965,4 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .gd-pos tr.empty td, .gd-pos tr.empty th { opacity: .55; }
 .gd-pos-sum th { text-align: left; font-weight: 650; }
 .gd-pos-sum tr:first-child th, .gd-pos-sum tr:first-child td { border-top: 2px solid var(--line-strong); }
+.gd-fixed { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }

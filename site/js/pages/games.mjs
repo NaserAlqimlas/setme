@@ -4,7 +4,7 @@
 // here (Upload several) and can go from a game to tagging it.
 import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
-import { ACTIONS, bestPlayers, FRONT_ROW, fromRows, gameDetail, gradeLabel, POSITIONS, positions, recap, rotations, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, bestPlayers, FRONT_ROW, fromRows, gameDetail, gradeLabel, POSITIONS, positions, recap, rotations, serveCycle, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
 import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
@@ -231,6 +231,7 @@ function gameView(g, back) {
       h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
         h('thead', {}, h('tr', {}, h('th', {}, 'Rotation'), ...['Rallies', 'Won–lost', '+/−', 'Serving', 'Receiving'].map(t => h('th', { class: 'num' }, t)))),
         h('tbody', {}, rot.a.length ? [rotHead('a'), ...rotRows('a')] : null, rot.b.length ? [rotHead('b'), ...rotRows('b')] : null))),
+      ['a', 'b'].map(s => serveCycle(rallies, game, s)).map((c, i) => c.fixed != null && h('p', { class: 'small gd-fixed' }, h('b', {}, name.get(c.fixed) ?? 'Someone'), ` stayed front middle for ${side['ab'[i]].name}, so it had five rotations.`)),
       h('p', { class: 'muted small' }, 'A rotation is named by the player serving in it, in serving order. It counts the points the team played there, serving and receiving until it won the serve back. ',
         'Serving: points won on its own serve. Receiving: side-outs. Best and weakest: the most and fewest points won over lost, among rotations with 3 or more rallies. One game is a small sample, so read it as a hint.')) : null;
 
@@ -309,6 +310,8 @@ function gameView(g, back) {
       fill(posPanel, h('label', { class: 'gd-pos-pick' }, h('span', { class: 'muted small' }, 'Player'), sel), body,
         h('p', { class: 'muted small' }, 'Where a player stood comes from the serving order: the server is in 1, the next to serve in 2, and so on round the court (2, 3 and 4 are the front row). ',
           'Each row counts the rallies they played there and what they did. Serves in: out of serves. Good passes: 2 or 3, out of passes. Kills, blocks (stuffs) and digs: out of attempts.'),
+        ['a', 'b'].filter(s => pos[s].fixed != null).map(s => h('p', { class: 'small gd-fixed' }, h('b', {}, name.get(pos[s].fixed) ?? 'Someone'), ` stayed front middle (3) for ${side[s].name}, and the other five rotated round them`,
+          pos[s].guessed ? ': they never served and did most of the setting. The serving order hadn\'t come round yet to be sure.' : ': the serve came back round after five servers.')),
         unplaced.length > 0 && h('p', { class: 'muted small' }, `${unplaced.map(p => name.get(p) ?? 'Someone').join(', ')} never served, so where they stood isn't known.`),
         ['a', 'b'].filter(s => !pos[s].ok && pos[s].why === 'size').map(s => h('p', { class: 'muted small' }, `${side[s].name} didn't play six with a fixed rotation, so positions aren't worked out for it.`)));
     }

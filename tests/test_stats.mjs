@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -205,6 +205,27 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('not six', positions(rs, { players_a: [1, 2, 3], players_b: g.players_b }).a.why === 'size');
   const few = positions([S('a', 'b', 1), S('b', 'a', 7), S('a', 'b', 2)], g);
   ok('unplaced', few.a.ok && few.a.players.size === 2 && few.a.unplaced.length === 4 && few.b.players.size === 1, few.a);
+}
+
+// A setter who stays front middle: the other five rotate round 1, 2, 4, 5, 6 and serve; the order comes round after five.
+{
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12] };
+  const S = (serve, won, p, ...more) => ({ serve, won, touches: [T(p, 'serve', 1), ...more] });
+  const lap = [1, 2, 3, 4, 5, 1].flatMap((p, i) => [S('a', 'b', p, T(6, 'set', 2)), S('b', 'a', 7 + (i % 6), T(6, 'set', 2))]);
+  const c = serveCycle(lap, g, 'a');
+  ok('fixed setter found', c.fixed === 6 && c.size === 5 && !c.guessed, c);
+  const p = positions(lap, g);
+  ok('fixed in 3 every rally', p.a.fixed === 6 && p.a.players.get(6)[2].rallies === lap.length && p.a.players.get(6)[2].counts.set[2] === 12, p.a.players.get(6)[2]);
+  ok('the rest skip 3', [1, 2, 3, 4, 5].every(pid => p.a.players.get(pid)[2].rallies === 0), p.a);
+  // 1 serves in 1; next rally (b serves) a is still in that rotation: 2 in 2, 3 in 4, 4 in 5, 5 in 6.
+  ok('five spots', p.a.players.get(2)[1].rallies === 4 && p.a.players.get(3)[3].rallies === 4 && p.a.players.get(5)[5].rallies === 4, p.a.players.get(2));
+  ok('five rotations', rotations(lap, g, 1).a.length === 5 && rotations(lap, g, 1).a.reduce((t, r) => t + r.rallies, 0) === lap.length);
+  ok('six rotate normally', serveCycle(lap, g, 'b').fixed === null);
+  // Order not round yet: the one left to serve did most of the setting -> guessed fixed; otherwise all six rotate.
+  const short = lap.slice(0, 10);
+  ok('guessed from sets', serveCycle(short, g, 'a').fixed === 6 && serveCycle(short, g, 'a').guessed);
+  const noSets = short.map(r => ({ ...r, touches: r.touches.filter(t => t.a !== 'set') }));
+  ok('no setting, assume six', serveCycle(noSets, g, 'a').fixed === null && positions(noSets, g).a.players.size === 6);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');
