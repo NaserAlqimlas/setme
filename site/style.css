@@ -959,3 +959,9 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .gd-tabs button[aria-selected=true] { color: var(--fg); border-bottom-color: var(--primary); }
 .gd-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .gd-stats [role=tabpanel] > .scroll:first-child, .gd-stats [role=tabpanel] > .gd-from:first-child { margin-top: 0; }
+.gd-pos-pick { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.gd-pos-pick select { width: auto; margin: 0; }
+.gd-pos tr.front { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.gd-pos tr.empty td, .gd-pos tr.empty th { opacity: .55; }
+.gd-pos-sum th { text-align: left; font-weight: 650; }
+.gd-pos-sum tr:first-child th, .gd-pos-sum tr:first-child td { border-top: 2px solid var(--line-strong); }

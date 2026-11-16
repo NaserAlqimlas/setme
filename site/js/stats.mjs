@@ -125,6 +125,46 @@ export function rotations(rallies, game, min = 3) {
   return out;
 }
 
+// Where each player stood, rally by rally, and their numbers in each court position. Positions aren't tagged; they
+// follow from the serving order, which goes round the court: the server is in position 1 (back right), the next
+// player to serve in 2 (front right), then 3 (front middle), 4 (front left), 5 (back left) and 6 (back middle).
+// So with six a side, a player who has served has a known position in every rally once the team's rotation is
+// known, including rallies received before the team first served (the rotation before its first server's). With
+// five servers seen, the sixth player fills the last spot. Players who never served have no position.
+// -> { a: side, b: side }, side = { ok, why?: 'size' | 'none', players: Map pid -> [6 rows, position 1 first],
+// unplaced: [pid] }, row = { rallies, won, lost, counts: { action: { grade: n } } } (counts as in tally()).
+export const POSITIONS = [[1, 'Back right'], [2, 'Front right'], [3, 'Front middle'], [4, 'Front left'], [5, 'Back left'], [6, 'Back middle']];
+export const FRONT_ROW = [2, 3, 4];
+export function positions(rallies, game) {
+  const out = {};
+  const done = rallies.filter(r => r.won);
+  const blank = () => Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, 0]))]));
+  for (const s of ['a', 'b']) {
+    const lineup = game[`players_${s}`] ?? [];
+    const serverOf = r => r.serve === s ? r.touches.find(t => t.a === 'serve' && sideOf(game, t.p) === s)?.p ?? null : null;
+    const order = [];
+    for (const r of done) { const p = serverOf(r); if (p != null && !order.includes(p)) order.push(p); }
+    if (lineup.length !== 6 || order.length > 6) { out[s] = { ok: false, why: 'size', players: new Map(), unplaced: [] }; continue; }
+    if (!order.length) { out[s] = { ok: false, why: 'none', players: new Map(), unplaced: [...lineup] }; continue; }
+    if (order.length === 5) order.push(lineup.find(p => !order.includes(p)));
+    const players = new Map(order.map(p => [p, POSITIONS.map(() => ({ rallies: 0, won: 0, lost: 0, counts: blank() }))]));
+    let slot = null;
+    for (const r of done) {
+      if (r.serve === s) { const p = serverOf(r); if (p != null) slot = order.indexOf(p); }
+      const at = slot ?? (r.serve === s ? null : 5);   // received before its first serve: the rotation before slot 0
+      if (at == null) continue;
+      for (const [i, p] of order.entries()) {
+        const row = players.get(p)[(i - at + 6) % 6];
+        row.rallies++;
+        r.won === s ? row.won++ : row.lost++;
+        for (const t of r.touches) if (t.p === p && row.counts[t.a]?.[t.g] != null) row.counts[t.a][t.g]++;
+      }
+    }
+    out[s] = { ok: true, players, unplaced: lineup.filter(p => !order.includes(p)) };
+  }
+  return out;
+}
+
 // More team numbers for one game, per side:
 //   from: how its points came: kills, aces, blocks, the other team's errors, and other (the rally's end wasn't tagged)
 //   run: its longest streak of points in a row
