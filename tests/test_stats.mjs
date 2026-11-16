@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -142,6 +142,44 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   const sets = Array.from({ length: 8 }, () => R(T(3, 'set', 3)));
   ok('setter: mostly sets', isSetter({ set: { 3: 8 } }) && !isSetter({ set: { 3: 2 } }) && !isSetter({ set: { 2: 3 }, attack: { 3: 4 } }));
   ok('no star for the setter', bestPlayers(g, [...rs, ...sets]).a.join() === '1', bestPlayers(g, [...rs, ...sets]));
+}
+
+// Rotations: named by who serves; a team stays in one while serving and after losing the serve, until its side-out.
+{
+  const g = { players_a: [1, 2], players_b: [4, 5] };
+  const S = (serve, won, p, ...more) => ({ serve, won, touches: [T(p, 'serve', 1), ...more] });
+  const rs = [
+    S('b', 'b', 4),   // a receives before it has served: a's rotation before 1 (2, once the order is known); b holds in 4
+    S('b', 'a', 4),   // a sides out, still in 2's rotation; b loses in 4
+    S('a', 'a', 1),   // a in 1, holds
+    S('a', 'a', 1),
+    S('a', 'b', 1),   // a loses the serve in 1
+    S('b', 'b', 5),   // b sides out (counted for b's rotation 4 above), now 5 serves and holds; a still in 1
+    S('b', 'a', 5),   // a sides out in 1
+    S('a', 'b', 2),   // a in 2, loses
+  ];
+  const rot = rotations(rs, g, 1);
+  const by = (s, p) => rot[s].find(r => r.server === p);
+  ok('rotation order', rot.a.map(r => r.server).join() === '1,2' && rot.b.map(r => r.server).join() === '4,5', rot);
+  ok('a in 1', by('a', 1).won === 3 && by('a', 1).lost === 2 && by('a', 1).held === 2 && by('a', 1).served === 3 && by('a', 1).sideOut === 1, by('a', 1));
+  ok('a before first serve counts for the last server', by('a', 2).rallies === 3 && by('a', 2).won === 1 && by('a', 2).received === 2, by('a', 2));
+  ok('b in 4', by('b', 4).rallies === 5 && by('b', 4).won === 2 && by('b', 4).sideOut === 1, by('b', 4));
+  ok('every rally counted once per team', rot.a.reduce((t, r) => t + r.rallies, 0) === rs.length && rot.b.reduce((t, r) => t + r.rallies, 0) === rs.length);
+  ok('best and worst', rot.a.best.join() === '1' && rot.a.worst.join() === '2', rot.a.best, rot.a.worst);
+  ok('min rallies', rotations(rs, g, 4).a.best.length === 0);
+  // Order not known yet: rallies received before the team's first serve aren't counted.
+  const part = rotations([S('b', 'b', 4), S('b', 'a', 4), S('a', 'a', 1)], g, 1);
+  ok('partial order skips', part.a.length === 1 && part.a[0].rallies === 1, part.a);
+}
+
+// Game detail: where points came from, runs, serve receive, attack efficiency.
+{
+  const d = gameDetail(rallies, game);
+  ok('from', d.a.from.aces === 1 && d.a.from.errors === 1 && d.b.from.kills === 1 && d.b.from.errors === 1, d.a.from, d.b.from);
+  ok('runs', d.a.run === 1 && d.b.run === 2, d.a.run, d.b.run);
+  // a received twice: a 0 pass (lost) and a serve error (no pass); b received an ace (0) and a 2 pass (won).
+  ok('pass', d.a.pass.n === 1 && d.a.pass.avg === 0 && d.b.pass.n === 2 && d.b.pass.avg === 1 && d.b.pass.goodRate === 1 && d.b.pass.poorRate === 0, d.a.pass, d.b.pass);
+  ok('attack eff', d.b.attackEff === 1 && d.a.attackEff === null, d.b);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

@@ -4,7 +4,7 @@
 // here (Upload several) and can go from a game to tagging it.
 import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
-import { ACTIONS, bestPlayers, fromRows, gradeLabel, recap, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, bestPlayers, fromRows, gameDetail, gradeLabel, recap, rotations, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
 import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
@@ -15,6 +15,7 @@ import { searchDays, toTag } from '../gamesearch.mjs';
 let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
 let videoOnly = false;   // Games: only games with a video
+let statsTab = 'teams';   // the team stats tab open on a game
 let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
@@ -174,15 +175,63 @@ function gameView(g, back) {
 
     // ----- the numbers -----
     if (!done.length) return fill(right, h('div', { class: 'card' }, h('h3', {}, 'Stats'), h('p', { class: 'muted' }, 'This game hasn\'t been tagged yet, so there are no stats for it.')));
-    const ts = teamSummary(rallies, game);
+    const ts = teamSummary(rallies, game), gd = gameDetail(rallies, game);
+    const pc = v => v == null ? '—' : `${Math.round(v * 100)}%`;
+    const signed = v => v > 0 ? `+${v}` : v < 0 ? `−${-v}` : '0';
     const teamRow = s => h('tr', {}, h('th', { scope: 'row', style: `--tc:${color(side[s].k)}`, class: 'gd-team' }, side[s].name),
-      h('td', { class: 'num' }, ts[s].sideOutRate == null ? '—' : `${Math.round(ts[s].sideOutRate * 100)}%`),
-      ...['aces', 'kills', 'stuffs', 'errors'].map(k => h('td', { class: 'num' }, String(ts[s][k]))));
-    const teams = h('div', { class: 'card' }, h('h3', {}, 'Teams'),
+      h('td', { class: 'num' }, pc(ts[s].sideOutRate)),
+      h('td', { class: 'num' }, gd[s].pass.avg == null ? '—' : gd[s].pass.avg.toFixed(1)),
+      h('td', { class: 'num' }, gd[s].attackEff == null ? '—' : gd[s].attackEff.toFixed(2).replace(/^(-?)0/, '$1')),
+      ...['aces', 'kills', 'stuffs', 'errors'].map(k => h('td', { class: 'num' }, String(ts[s][k]))),
+      h('td', { class: 'num' }, String(gd[s].run)));
+    const teams = h('div', {},
       h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
-        h('thead', {}, h('tr', {}, h('th', {}, ''), ...['Side-out', 'Aces', 'Kills', 'Blocks', 'Errors'].map(t => h('th', { class: 'num' }, t)))),
+        h('thead', {}, h('tr', {}, h('th', {}, ''), ...['Side-out', 'Pass avg', 'Attack eff', 'Aces', 'Kills', 'Blocks', 'Errors', 'Best run'].map(t => h('th', { class: 'num' }, t)))),
         h('tbody', {}, teamRow('a'), teamRow('b')))),
-      h('p', { class: 'muted small' }, 'Side-out: how often a team won the point when the other team served. Errors: points given away.'));
+      h('p', { class: 'muted small' }, 'Side-out: how often a team won the point when the other team served. Pass avg: serve receive, 0 to 3. ',
+        'Attack eff: kills minus errors and blocked attacks, per attack. Errors: points given away. Best run: most points in a row.'));
+
+    // Where each team's points came from, as a bar split by kind.
+    const KINDS = [['kills', 'Kills'], ['aces', 'Aces'], ['blocks', 'Blocks'], ['errors', 'Their errors'], ['other', 'Not tagged']];
+    const fromRow = s => {
+      const f = gd[s].from, n = KINDS.reduce((t, [k]) => t + f[k], 0);
+      return h('div', { class: 'gd-from' }, h('div', { class: 'gd-from-head' }, h('span', { class: 'gd-teamname', style: `--tc:${color(side[s].k)}` }, side[s].name), h('span', { class: 'muted small' }, `${n} point${n === 1 ? '' : 's'}`)),
+        h('div', { class: 'gd-bar', role: 'img', 'aria-label': KINDS.filter(([k]) => f[k]).map(([k, l]) => `${l} ${f[k]}`).join(', ') },
+          KINDS.filter(([k]) => f[k]).map(([k, l]) => h('span', { class: `gd-seg ${k}`, style: `flex:${f[k]}`, title: `${l}: ${f[k]}` }, String(f[k])))));
+    };
+    const used = KINDS.filter(([k]) => gd.a.from[k] || gd.b.from[k]);
+    const points = h('div', {}, fromRow('a'), fromRow('b'),
+      h('ul', { class: 'gd-legend small' }, used.map(([k, l]) => h('li', {}, h('i', { class: `gd-seg ${k}` }), l))));
+
+    // Serve receive: does a good pass turn into the point?
+    const recvRow = s => { const p = gd[s].pass; return h('tr', {}, h('th', { scope: 'row', style: `--tc:${color(side[s].k)}`, class: 'gd-team' }, side[s].name),
+      h('td', { class: 'num' }, String(p.n)), h('td', { class: 'num' }, p.good ? `${pc(p.goodRate)} (${p.goodWon}/${p.good})` : '—'),
+      h('td', { class: 'num' }, p.poor ? `${pc(p.poorRate)} (${p.poorWon}/${p.poor})` : '—')); };
+    const receive = (gd.a.pass.n || gd.b.pass.n) ? h('div', {},
+      h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, ''), ...['Passes', 'Side-out after a good pass', 'After a poor pass'].map(t => h('th', { class: 'num' }, t)))),
+        h('tbody', {}, recvRow('a'), recvRow('b')))),
+      h('p', { class: 'muted small' }, 'Good: a pass graded 2 or 3. Poor: 0 or 1, and aces count as a 0. Side-out: the receiving team won the point.')) : null;
+
+    // Rotations: each team's points won and lost in each rotation, named by who serves in it.
+    const rot = rotations(rallies, game);
+    const rotHead = s => h('tr', { class: 'gd-teamhead', style: `--tc:${color(side[s].k)}` },
+      h('th', { colspan: 6, scope: 'rowgroup' }, h('span', { class: 'gd-teamname' }, side[s].name)));
+    const rotRows = s => rot[s].map(r => {
+      const best = rot[s].best.includes(r.server), worst = rot[s].worst.includes(r.server);
+      return h('tr', { class: best ? 'gd-best' : worst ? 'gd-worst' : null },
+        h('th', { scope: 'row', style: `--tc:${color(side[s].k)}`, class: 'gd-team' }, name.get(r.server) ?? 'Someone', h('span', { class: 'muted small' }, ' serving'),
+          best ? h('span', { class: 'chip plain gd-rot best' }, 'Best') : worst ? h('span', { class: 'chip plain gd-rot worst' }, 'Weakest') : null),
+        h('td', { class: 'num' }, String(r.rallies)), h('td', { class: 'num' }, `${r.won}–${r.lost}`),
+        h('td', { class: `num gd-net ${r.net > 0 ? 'up' : r.net < 0 ? 'down' : ''}` }, signed(r.net)),
+        h('td', { class: 'num' }, r.served ? `${r.held}/${r.served}` : '—'), h('td', { class: 'num' }, r.received ? `${r.sideOut}/${r.received}` : '—'));
+    });
+    const rotCard = (rot.a.length || rot.b.length) ? h('div', {},
+      h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Rotation'), ...['Rallies', 'Won–lost', '+/−', 'Serving', 'Receiving'].map(t => h('th', { class: 'num' }, t)))),
+        h('tbody', {}, rot.a.length ? [rotHead('a'), ...rotRows('a')] : null, rot.b.length ? [rotHead('b'), ...rotRows('b')] : null))),
+      h('p', { class: 'muted small' }, 'A rotation is named by the player serving in it, in serving order. It counts the points the team played there, serving and receiving until it won the serve back. ',
+        'Serving: points won on its own serve. Receiving: side-outs. Best and weakest: the most and fewest points won over lost, among rotations with 3 or more rallies. One game is a small sample, so read it as a hint.')) : null;
 
     const box = recap([{ game, rallies }]).players;
     const mineId = Number(me.player_id);
@@ -216,7 +265,27 @@ function gameView(g, back) {
     const mineTally = Number.isInteger(mineId) && game.players_a.concat(game.players_b).includes(mineId) ? tally([{ game, rallies }]).get(mineId) : null;
     const you = mineTally && h('div', { class: 'card gd-you' }, h('h3', {}, 'Your game'), h('p', {}, gameLine(mineTally.counts)),
       h('p', { class: 'muted small' }, h('a', { href: `#player/${mineId}` }, 'All your stats on Me →')));
-    fill(right, you, teams, players);
+    // The team numbers as tabs on one card; the tab picked stays while moving between games.
+    const panels = [['teams', 'Teams', teams], ['rotations', 'Rotations', rotCard], ['points', 'Points', points], ['receive', 'Serve receive', receive]].filter(p => p[2]);
+    const tabs = h('div', { class: 'gd-tabs', role: 'tablist', 'aria-label': 'Team stats' });
+    const show = key => {
+      statsTab = key;
+      panels.forEach(([k, , el], i) => { const on = k === key; el.hidden = !on; tabs.children[i].setAttribute('aria-selected', String(on)); tabs.children[i].tabIndex = on ? 0 : -1; });
+    };
+    panels.forEach(([k, label, el], i) => {
+      el.id = `gd-panel-${k}`; el.setAttribute('role', 'tabpanel'); el.setAttribute('aria-labelledby', `gd-tab-${k}`);
+      tabs.append(h('button', { type: 'button', role: 'tab', id: `gd-tab-${k}`, 'aria-controls': el.id, onclick: () => show(k),
+        onkeydown: e => {
+          const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: panels.length - 1 }[e.key];
+          if (to == null) return;
+          e.preventDefault();
+          const n = (to + panels.length) % panels.length;
+          show(panels[n][0]); tabs.children[n].focus();
+        } }, label));
+    });
+    show(panels.some(p => p[0] === statsTab) ? statsTab : 'teams');
+    const statsCard = h('div', { class: 'card gd-stats' }, tabs, panels.map(p => p[2]));
+    fill(right, you, statsCard, players);
   }
 }
 // ---------- Upload several (super) ----------
