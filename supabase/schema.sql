@@ -186,6 +186,9 @@ alter table public.games add column if not exists video_kind text check (video_k
 alter table public.games add column if not exists video_ref text;  -- file name, or YouTube video id
 alter table public.games add column if not exists tags_end double precision;  -- seq of the last rally that counts for the score; later ones were played on after the game ended
 alter table public.games add column if not exists not_recorded boolean not null default false;  -- nobody filmed it, so it can't be tagged (not_recorded.sql)
+alter table public.games add column if not exists middle_a bigint references public.players on delete set null;  -- stayed front middle (front_middle.sql); null: nobody
+alter table public.games add column if not exists middle_b bigint references public.players on delete set null;
+alter table public.games add column if not exists middle_set boolean not null default false;  -- someone chose; before that, read from the tags
 
 -- One per rally. id is made in the browser, so a save that's sent twice doesn't add the rally twice.
 create table if not exists public.rallies (

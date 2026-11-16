@@ -134,7 +134,8 @@ function gameView(g, back) {
     try { d = await callFn('game-view', { action: 'game', game: g.id }); }
     catch (e) { return fill(left, h('p', { class: 'warn' }, e.message)); }
     const rallies = fromRows(d.rallies ?? []);
-    const game = { team_a: g.a.k, team_b: g.b.k, players_a: g.a.players.map(p => p.id), players_b: g.b.players.map(p => p.id), score_a: g.a.score, score_b: g.b.score };
+    const game = { team_a: g.a.k, team_b: g.b.k, players_a: g.a.players.map(p => p.id), players_b: g.b.players.map(p => p.id), score_a: g.a.score, score_b: g.b.score,
+      middle_set: !!d.middle?.set, middle_a: d.middle?.a ?? null, middle_b: d.middle?.b ?? null };
     const name = new Map([...g.a.players, ...g.b.players].map(p => [p.id, p.name]));
     const side = { a: g.a, b: g.b };
 
@@ -215,6 +216,7 @@ function gameView(g, back) {
       h('p', { class: 'muted small' }, 'Good: a pass graded 2 or 3. Poor: 0 or 1, and aces count as a 0. Side-out: the receiving team won the point.')) : null;
 
     // Rotations: each team's points won and lost in each rotation, named by who serves in it.
+    const cyc = { a: serveCycle(rallies, game, 'a'), b: serveCycle(rallies, game, 'b') };
     const rot = rotations(rallies, game);
     const rotHead = s => h('tr', { class: 'gd-teamhead', style: `--tc:${color(side[s].k)}` },
       h('th', { colspan: 6, scope: 'rowgroup' }, h('span', { class: 'gd-teamname' }, side[s].name)));
@@ -231,7 +233,7 @@ function gameView(g, back) {
       h('div', { class: 'scroll' }, h('table', { class: 'gd-table' },
         h('thead', {}, h('tr', {}, h('th', {}, 'Rotation'), ...['Rallies', 'Won–lost', '+/−', 'Serving', 'Receiving'].map(t => h('th', { class: 'num' }, t)))),
         h('tbody', {}, rot.a.length ? [rotHead('a'), ...rotRows('a')] : null, rot.b.length ? [rotHead('b'), ...rotRows('b')] : null))),
-      ['a', 'b'].map(s => serveCycle(rallies, game, s)).map((c, i) => c.fixed != null && h('p', { class: 'small gd-fixed' }, h('b', {}, name.get(c.fixed) ?? 'Someone'), ` stayed front middle for ${side['ab'[i]].name}, so it had five rotations.`)),
+      ['a', 'b'].filter(s => cyc[s].fixed != null).map(s => h('p', { class: 'small gd-fixed' }, h('b', {}, name.get(cyc[s].fixed) ?? 'Someone'), ` stayed front middle for ${side[s].name}, so the other five rotated. Change it on the Positions tab.`)),
       h('p', { class: 'muted small' }, 'A rotation is named by the player serving in it, in serving order. It counts the points the team played there, serving and receiving until it won the serve back. ',
         'Serving: points won on its own serve. Receiving: side-outs. Best and weakest: the most and fewest points won over lost, among rotations with 3 or more rallies. One game is a small sample, so read it as a hint.')) : null;
 
@@ -267,6 +269,33 @@ function gameView(g, back) {
     const mineTally = Number.isInteger(mineId) && game.players_a.concat(game.players_b).includes(mineId) ? tally([{ game, rallies }]).get(mineId) : null;
     const you = mineTally && h('div', { class: 'card gd-you' }, h('h3', {}, 'Your game'), h('p', {}, gameLine(mineTally.counts)),
       h('p', { class: 'muted small' }, h('a', { href: `#player/${mineId}` }, 'All your stats on Me →')));
+    // Who stayed front middle, per team: chosen by an organizer, or read from the tags until then.
+    const HOW = { served: 'read from the tags: the serve came round after five servers', sets: 'a guess: they hadn\'t served and did most of the setting', chosen: null };
+    const middleBox = () => {
+      const canEdit = me.role !== 'player';
+      const pickers = {};
+      const row = s => {
+        const f = cyc[s].fixed, how = cyc[s].how;
+        if (!canEdit) return f != null && h('p', { class: 'small' }, h('b', {}, name.get(f) ?? 'Someone'), ` stayed front middle for ${side[s].name}.`);
+        pickers[s] = h('select', { 'aria-label': `Stayed front middle for ${side[s].name}` }, h('option', { value: '' }, 'Nobody, all six rotated'),
+          side[s].players.map(p => h('option', { value: p.id, selected: p.id === f }, p.name)));
+        pickers[s].onchange = save;
+        return h('label', { class: 'gd-middle-row' }, h('span', { class: 'gd-teamname', style: `--tc:${color(side[s].k)}` }, side[s].name), pickers[s],
+          !game.middle_set && how && HOW[how] && h('span', { class: 'muted small' }, HOW[how]));
+      };
+      async function save() {
+        const v = s => pickers[s]?.value ? Number(pickers[s].value) : null;
+        const { error } = await sb.from('games').update({ middle_a: v('a'), middle_b: v('b'), middle_set: true }).eq('id', g.id);
+        if (error) return toast(/middle_/.test(error.message) ? 'This needs the database upgrade first: run supabase/front_middle.sql in the Supabase SQL Editor.' : error.message);
+        toast('Saved');
+        load();
+      }
+      const rows = ['a', 'b'].map(row).filter(Boolean);
+      if (!rows.length) return null;
+      return h('div', { class: 'gd-fixed' }, canEdit && h('b', { class: 'small' }, 'Stayed front middle'), rows,
+        canEdit && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'A player who stays front middle (often the setter) is in 3 every rally, even when they take their turn to serve; the other five rotate round them.'));
+    };
+
     // Positions: one player's numbers in each court position, from the serving order.
     const pos = positions(rallies, game);
     const posPanel = (pos.a.ok || pos.b.ok) ? h('div', {}) : null;
@@ -310,8 +339,7 @@ function gameView(g, back) {
       fill(posPanel, h('label', { class: 'gd-pos-pick' }, h('span', { class: 'muted small' }, 'Player'), sel), body,
         h('p', { class: 'muted small' }, 'Where a player stood comes from the serving order: the server is in 1, the next to serve in 2, and so on round the court (2, 3 and 4 are the front row). ',
           'Each row counts the rallies they played there and what they did. Serves in: out of serves. Good passes: 2 or 3, out of passes. Kills, blocks (stuffs) and digs: out of attempts.'),
-        ['a', 'b'].filter(s => pos[s].fixed != null).map(s => h('p', { class: 'small gd-fixed' }, h('b', {}, name.get(pos[s].fixed) ?? 'Someone'), ` stayed front middle (3) for ${side[s].name}, and the other five rotated round them`,
-          pos[s].guessed ? ': they never served and did most of the setting. The serving order hadn\'t come round yet to be sure.' : ': the serve came back round after five servers.')),
+        middleBox(),
         unplaced.length > 0 && h('p', { class: 'muted small' }, `${unplaced.map(p => name.get(p) ?? 'Someone').join(', ')} never served, so where they stood isn't known.`),
         ['a', 'b'].filter(s => !pos[s].ok && pos[s].why === 'size').map(s => h('p', { class: 'muted small' }, `${side[s].name} didn't play six with a fixed rotation, so positions aren't worked out for it.`)));
     }

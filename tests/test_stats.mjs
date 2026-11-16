@@ -213,7 +213,7 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   const S = (serve, won, p, ...more) => ({ serve, won, touches: [T(p, 'serve', 1), ...more] });
   const lap = [1, 2, 3, 4, 5, 1].flatMap((p, i) => [S('a', 'b', p, T(6, 'set', 2)), S('b', 'a', 7 + (i % 6), T(6, 'set', 2))]);
   const c = serveCycle(lap, g, 'a');
-  ok('fixed setter found', c.fixed === 6 && c.size === 5 && !c.guessed, c);
+  ok('fixed setter found', c.fixed === 6 && c.size === 5 && c.how === 'served', c);
   const p = positions(lap, g);
   ok('fixed in 3 every rally', p.a.fixed === 6 && p.a.players.get(6)[2].rallies === lap.length && p.a.players.get(6)[2].counts.set[2] === 12, p.a.players.get(6)[2]);
   ok('the rest skip 3', [1, 2, 3, 4, 5].every(pid => p.a.players.get(pid)[2].rallies === 0), p.a);
@@ -223,9 +223,39 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('six rotate normally', serveCycle(lap, g, 'b').fixed === null);
   // Order not round yet: the one left to serve did most of the setting -> guessed fixed; otherwise all six rotate.
   const short = lap.slice(0, 10);
-  ok('guessed from sets', serveCycle(short, g, 'a').fixed === 6 && serveCycle(short, g, 'a').guessed);
+  ok('guessed from sets', serveCycle(short, g, 'a').fixed === 6 && serveCycle(short, g, 'a').how === 'sets');
   const noSets = short.map(r => ({ ...r, touches: r.touches.filter(t => t.a !== 'set') }));
   ok('no setting, assume six', serveCycle(noSets, g, 'a').fixed === null && positions(noSets, g).a.players.size === 6);
+}
+
+// Chosen front middle: 6 stays in 3 every rally, even the ones they serve; the other five stay put while 6 serves.
+{
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12], middle_set: true, middle_a: 6, middle_b: null };
+  const S = (serve, won, p, ...more) => ({ serve, won, touches: [T(p, 'serve', 1), ...more] });
+  const rs = [
+    S('a', 'b', 1), S('b', 'a', 7),
+    S('a', 'b', 2), S('b', 'a', 8),
+    S('a', 'a', 6, T(6, 'set', 2)), S('a', 'b', 6),   // 6 takes a turn: rotation of 2 still stands for the other five
+    S('b', 'a', 9),
+    S('a', 'b', 3),                                    // the order carries on from 2
+  ];
+  const c = serveCycle(rs, g, 'a');
+  ok('chosen', c.fixed === 6 && c.how === 'chosen' && c.order.join() === '1,2,3', c);
+  ok('nobody chosen', serveCycle(rs, g, 'b').fixed === null && serveCycle(rs, g, 'b').how === null);
+  const p = positions(rs, g).a;
+  ok('setter in 3 every rally', p.players.get(6)[2].rallies === rs.length && p.players.get(6)[0].rallies === 0 && p.players.get(6)[2].counts.serve[1] === 2, p.players.get(6));
+  // While 6 serves (and the receive after), 2 is still in 1 and 3 in 2.
+  ok('others stay put', p.players.get(2)[0].rallies === 5 && p.players.get(3)[1].rallies === 5, p.players.get(2)[0], p.players.get(3)[1]);
+  ok('nobody else in 3', [1, 2, 3, 4, 5].every(pid => !p.players.has(pid) || p.players.get(pid)[2].rallies === 0));
+  const rot = rotations(rs, g, 1).a, row = pid => rot.find(r => r.server === pid);
+  ok('setter row has only their serves', row(6).served === 2 && row(6).received === 0 && row(6).rallies === 2, row(6));
+  ok('receive after setter serve stays in 2', row(2).received === 2 && row(2).served === 1, row(2));
+  // Suggestions skip the front-middle player after a side-out, and carry on from the player before them.
+  ok('suggest skips middle', nextServer(rs.slice(0, 4), 'a', g.players_a, 6) === 3, nextServer(rs.slice(0, 4), 'a', g.players_a, 6));
+  ok('after middle served', nextServer(rs.slice(0, 7), 'a', g.players_a, 6) === 3, nextServer(rs.slice(0, 7), 'a', g.players_a, 6));
+  ok('holds with middle', nextServer(rs.slice(0, 5), 'a', g.players_a, 6) === 6);
+  const lap = [1, 2, 3, 4, 5].flatMap(pid => [S('a', 'b', pid), S('b', 'a', 7)]);
+  ok('wraps after five', nextServer(lap, 'a', g.players_a, 6) === 1, nextServer(lap, 'a', g.players_a, 6));
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');
