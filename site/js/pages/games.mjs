@@ -4,7 +4,7 @@
 // here (Upload several) and can go from a game to tagging it.
 import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
-import { ACTIONS, bestPlayers, fromRows, gameDetail, gradeLabel, recap, rotations, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, bestPlayers, FRONT_ROW, fromRows, gameDetail, gradeLabel, POSITIONS, positions, recap, rotations, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
 import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
@@ -16,6 +16,7 @@ let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
 let videoOnly = false;   // Games: only games with a video
 let statsTab = 'teams';   // the team stats tab open on a game
+let posPlayer = null;   // the player picked on the Positions tab
 let query = '';        // what's typed in the search box, kept the same way
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 const color = k => TEAM_COLORS[(k - 1) % TEAM_COLORS.length];
@@ -265,8 +266,55 @@ function gameView(g, back) {
     const mineTally = Number.isInteger(mineId) && game.players_a.concat(game.players_b).includes(mineId) ? tally([{ game, rallies }]).get(mineId) : null;
     const you = mineTally && h('div', { class: 'card gd-you' }, h('h3', {}, 'Your game'), h('p', {}, gameLine(mineTally.counts)),
       h('p', { class: 'muted small' }, h('a', { href: `#player/${mineId}` }, 'All your stats on Me →')));
+    // Positions: one player's numbers in each court position, from the serving order.
+    const pos = positions(rallies, game);
+    const posPanel = (pos.a.ok || pos.b.ok) ? h('div', {}) : null;
+    if (posPanel) {
+      const placed = s => [...pos[s].players.keys()];
+      const all = [...placed('a'), ...placed('b')];
+      if (!all.includes(posPlayer)) posPlayer = all.includes(mineId) ? mineId : all[0];
+      const sel = h('select', { 'aria-label': 'Player' }, ['a', 'b'].filter(s => pos[s].ok).map(s => h('optgroup', { label: side[s].name },
+        placed(s).map(p => h('option', { value: p, selected: p === posPlayer }, name.get(p) ?? 'Someone')))));
+      const body = h('div');
+      const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+      const frac = (n, d) => d ? `${n}/${d}` : '—';
+      const merge = rows => rows.reduce((m, r) => {
+        m.rallies += r.rallies; m.won += r.won; m.lost += r.lost;
+        for (const a in r.counts) for (const g in r.counts[a]) m.counts[a][g] += r.counts[a][g];
+        return m;
+      }, { rallies: 0, won: 0, lost: 0, counts: Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, 0]))])) });
+      const cells = r => { const c = r.counts, net = r.won - r.lost; return [
+        h('td', { class: 'num' }, String(r.rallies)), h('td', { class: 'num' }, r.rallies ? `${r.won}–${r.lost}` : '—'),
+        h('td', { class: `num gd-net ${net > 0 ? 'up' : net < 0 ? 'down' : ''}` }, r.rallies ? signed(net) : '—'),
+        h('td', { class: 'num' }, frac(sum(c.serve) - c.serve[0], sum(c.serve))),
+        h('td', { class: 'num' }, frac(c.pass[2] + c.pass[3], sum(c.pass))),
+        h('td', { class: 'num' }, sum(c.set) ? String(sum(c.set)) : '—'),
+        h('td', { class: 'num' }, frac(c.attack[3], sum(c.attack))),
+        h('td', { class: 'num' }, c.block[3] || sum(c.block) ? `${c.block[3]}/${sum(c.block)}` : '—'),
+        h('td', { class: 'num' }, frac(c.dig[1] + c.dig[2] + c.dig[3], sum(c.dig)))]; };
+      const paintPos = () => {
+        const s = game.players_a.includes(posPlayer) ? 'a' : 'b', rows = pos[s].players.get(posPlayer);
+        const front = merge(rows.filter((_, i) => FRONT_ROW.includes(i + 1))), back = merge(rows.filter((_, i) => !FRONT_ROW.includes(i + 1)));
+        fill(body, h('div', { class: 'scroll' }, h('table', { class: 'gd-table gd-pos' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Position'), ...['Rallies', 'Won–lost', '+/−', 'Serves in', 'Good passes', 'Sets', 'Kills', 'Blocks', 'Digs'].map(t => h('th', { class: 'num' }, t)))),
+          h('tbody', {}, POSITIONS.map(([n, label], i) => h('tr', { class: [FRONT_ROW.includes(n) ? 'front' : null, rows[i].rallies ? null : 'empty'].filter(Boolean).join(' ') || null },
+            h('th', { scope: 'row', class: 'gd-team', style: `--tc:${color(side[s].k)}` }, `${n} `, h('span', { class: 'muted small' }, label)), ...cells(rows[i])))),
+          h('tbody', { class: 'gd-pos-sum' },
+            h('tr', {}, h('th', { scope: 'row' }, 'Front row'), ...cells(front)),
+            h('tr', {}, h('th', { scope: 'row' }, 'Back row'), ...cells(back))))));
+      };
+      sel.onchange = () => { posPlayer = Number(sel.value); paintPos(); };
+      paintPos();
+      const unplaced = ['a', 'b'].flatMap(s => pos[s].unplaced);
+      fill(posPanel, h('label', { class: 'gd-pos-pick' }, h('span', { class: 'muted small' }, 'Player'), sel), body,
+        h('p', { class: 'muted small' }, 'Where a player stood comes from the serving order: the server is in 1, the next to serve in 2, and so on round the court (2, 3 and 4 are the front row). ',
+          'Each row counts the rallies they played there and what they did. Serves in: out of serves. Good passes: 2 or 3, out of passes. Kills, blocks (stuffs) and digs: out of attempts.'),
+        unplaced.length > 0 && h('p', { class: 'muted small' }, `${unplaced.map(p => name.get(p) ?? 'Someone').join(', ')} never served, so where they stood isn't known.`),
+        ['a', 'b'].filter(s => !pos[s].ok && pos[s].why === 'size').map(s => h('p', { class: 'muted small' }, `${side[s].name} didn't play six with a fixed rotation, so positions aren't worked out for it.`)));
+    }
+
     // The team numbers as tabs on one card; the tab picked stays while moving between games.
-    const panels = [['teams', 'Teams', teams], ['rotations', 'Rotations', rotCard], ['points', 'Points', points], ['receive', 'Serve receive', receive]].filter(p => p[2]);
+    const panels = [['teams', 'Teams', teams], ['rotations', 'Rotations', rotCard], ['points', 'Points', points], ['receive', 'Serve receive', receive], ['positions', 'Positions', posPanel]].filter(p => p[2]);
     const tabs = h('div', { class: 'gd-tabs', role: 'tablist', 'aria-label': 'Team stats' });
     const show = key => {
       statsTab = key;

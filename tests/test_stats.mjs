@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -180,6 +180,31 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   // a received twice: a 0 pass (lost) and a serve error (no pass); b received an ace (0) and a 2 pass (won).
   ok('pass', d.a.pass.n === 1 && d.a.pass.avg === 0 && d.b.pass.n === 2 && d.b.pass.avg === 1 && d.b.pass.goodRate === 1 && d.b.pass.poorRate === 0, d.a.pass, d.b.pass);
   ok('attack eff', d.b.attackEff === 1 && d.a.attackEff === null, d.b);
+}
+
+// Positions from the serving order: server in 1, next server in 2, and so on.
+{
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12] };
+  const S = (serve, won, p, ...more) => ({ serve, won, touches: [T(p, 'serve', 1), ...more] });
+  const rs = [
+    S('b', 'b', 7, T(3, 'pass', 2)),   // a receives before serving: rotation before 1's, so 6 is in 1, 1 in 2, 3 in 4
+    S('b', 'a', 7, T(3, 'attack', 3)), // a sides out, same spots
+    S('a', 'b', 1),                    // a: 1 serving, so 3 is in 3
+    S('b', 'a', 8),
+    S('a', 'a', 2), S('a', 'b', 2),    // 2 serving: 3 in 2, 1 in 6
+    S('b', 'a', 9), S('a', 'b', 3), S('b', 'a', 10), S('a', 'b', 4), S('b', 'a', 11), S('a', 'b', 5),   // 6 never served
+  ];
+  const p = positions(rs, g);
+  const at = (pid, n) => p.a.players.get(pid)[n - 1];
+  ok('positions ok', p.a.ok && p.a.players.size === 6 && p.a.unplaced.length === 0, p.a);
+  ok('received before first serve', at(3, 4).rallies === 2 && at(3, 4).won === 1 && at(3, 4).counts.pass[2] === 1 && at(3, 4).counts.attack[3] === 1, at(3, 4));
+  ok('server is in 1', at(1, 1).rallies === 2 && at(2, 1).rallies === 3 && at(1, 1).counts.serve[1] === 1, at(1, 1));
+  ok('next server in 2', at(3, 2).rallies === 3 && at(1, 6).rallies === 3, at(3, 2), at(1, 6));
+  ok('sixth fills the last slot', at(6, 1).rallies === 2, at(6, 1));
+  ok('every rally placed once per player', [...p.a.players.values()].every(rows => rows.reduce((t, r) => t + r.rallies, 0) === rs.length));
+  ok('not six', positions(rs, { players_a: [1, 2, 3], players_b: g.players_b }).a.why === 'size');
+  const few = positions([S('a', 'b', 1), S('b', 'a', 7), S('a', 'b', 2)], g);
+  ok('unplaced', few.a.ok && few.a.players.size === 2 && few.a.unplaced.length === 4 && few.b.players.size === 1, few.a);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');
