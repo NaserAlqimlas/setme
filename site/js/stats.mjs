@@ -85,6 +85,100 @@ export function teamSummary(rallies, game) {
   return out;
 }
 
+// Each team's rotations in one game, named by the player serving in it (position 1). A team stays in a rotation
+// while it serves and while it receives after losing the serve; it moves to the next one when it wins a side-out.
+// So a rally counts for the serving team's rotation of its server, and for the receiving team's rotation of the
+// last player it had serve. Rallies a team received before anyone on it served belong to the rotation before its
+// first server's: the last in its serving order, once everyone has served; until then they aren't counted.
+// -> { a: [row], b: [row] } in serving order, row = { server, rallies, won, lost, net, served, held, received, sideOut },
+// and best / worst: the server of the rotation with the highest / lowest net, among those with at least `min`
+// rallies (none when fewer than two rotations qualify or they're all level).
+export function rotations(rallies, game, min = 3) {
+  const out = {};
+  const done = rallies.filter(r => r.won);
+  for (const s of ['a', 'b']) {
+    const serverOf = r => r.serve === s ? r.touches.find(t => t.a === 'serve' && sideOf(game, t.p) === s)?.p ?? null : null;
+    const order = [];
+    for (const r of done) { const p = serverOf(r); if (p != null && !order.includes(p)) order.push(p); }
+    const lineup = game[`players_${s}`] ?? [];
+    const full = order.length >= lineup.length && order.length > 1;
+    const rows = new Map(order.map(p => [p, { server: p, rallies: 0, won: 0, lost: 0, served: 0, held: 0, received: 0, sideOut: 0 }]));
+    let cur = null;
+    for (const r of done) {
+      if (r.serve === s) cur = serverOf(r) ?? cur;
+      const p = cur ?? (full ? order.at(-1) : null);
+      const row = rows.get(p);
+      if (!row) continue;
+      row.rallies++;
+      r.won === s ? row.won++ : row.lost++;
+      if (r.serve === s) { row.served++; if (r.won === s) row.held++; }
+      else { row.received++; if (r.won === s) row.sideOut++; }
+    }
+    const list = [...rows.values()].map(r => ({ ...r, net: r.won - r.lost }));
+    const enough = list.filter(r => r.rallies >= min);
+    const top = Math.max(...enough.map(r => r.net)), bottom = Math.min(...enough.map(r => r.net));
+    const pick = v => enough.length > 1 && top !== bottom ? enough.filter(r => r.net === v).map(r => r.server) : [];
+    out[s] = list;
+    out[s].best = pick(top);
+    out[s].worst = pick(bottom);
+  }
+  return out;
+}
+
+// More team numbers for one game, per side:
+//   from: how its points came: kills, aces, blocks, the other team's errors, and other (the rally's end wasn't tagged)
+//   run: its longest streak of points in a row
+//   pass: serve receive, the first touch after the other team's serve (an ace counts as a 0 pass), with its average
+//     and the side-out rate after a good pass (2 or 3) and after a poor one (0 or 1)
+//   attackEff: (kills - errors - blocked) / attacks, null without attacks
+export function gameDetail(rallies, game) {
+  const out = {};
+  for (const s of ['a', 'b']) out[s] = { from: { kills: 0, aces: 0, blocks: 0, errors: 0, other: 0 }, run: 0,
+    pass: { n: 0, sum: 0, good: 0, goodWon: 0, poor: 0, poorWon: 0 }, attacks: 0, attackEff: null, kills: 0, attackErr: 0 };
+  const streak = { a: 0, b: 0 };
+  for (const r of rallies) {
+    if (!r.won) continue;
+    const w = r.won, l = other(w);
+    streak[w]++; streak[l] = 0;
+    out[w].run = Math.max(out[w].run, streak[w]);
+    const end = [...r.touches].reverse().find(t => endsRally(t.a, t.g) && sideOf(game, t.p));
+    const f = out[w].from;
+    if (!end) f.other++;
+    else if (sideOf(game, end.p) !== w) f.errors++;
+    else if (end.a === 'attack') f.kills++;
+    else if (end.a === 'serve') f.aces++;
+    else if (end.a === 'block') f.blocks++;
+    else f.other++;
+    // Serve receive.
+    const recv = other(r.serve), ts = r.touches;
+    const serve = ts.find(t => t.a === 'serve');
+    if (!(serve && serve.g === 0)) {
+      const first = ts.find(t => t.a !== 'serve' && sideOf(game, t.p) === recv);
+      const g = first ? (first.a === 'pass' || first.a === 'dig' ? first.g : null) : serve?.g === 3 ? 0 : null;
+      if (g != null) {
+        const p = out[recv].pass, won = r.won === recv;
+        p.n++; p.sum += g;
+        if (g >= 2) { p.good++; if (won) p.goodWon++; } else { p.poor++; if (won) p.poorWon++; }
+      }
+    }
+    for (const t of r.touches) {
+      if (t.a !== 'attack') continue;
+      const side = sideOf(game, t.p); if (!side) continue;
+      out[side].attacks++;
+      if (t.g === 3) out[side].kills++;
+      if (t.g <= 1) out[side].attackErr++;
+    }
+  }
+  for (const s of ['a', 'b']) {
+    const o = out[s], p = o.pass;
+    p.avg = p.n ? p.sum / p.n : null;
+    p.goodRate = p.good ? p.goodWon / p.good : null;
+    p.poorRate = p.poor ? p.poorWon / p.poor : null;
+    o.attackEff = o.attacks ? (o.kills - o.attackErr) / o.attacks : null;
+  }
+  return out;
+}
+
 // Per player: games played and how many of each action and grade, from the database view player_stats
 // (one row per player: { player_id, games, serve_0 … dig_3 }). A column the view doesn't have yet counts as 0.
 export function tallyFromCounts(rows) {

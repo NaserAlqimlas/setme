@@ -930,3 +930,32 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .gd-star.silver { color: #9aa3b5; text-shadow: 0 0 5px rgba(180, 190, 210, .35); }
 .gd-star-note .gd-star { margin-left: 0; }
 .gd-star-note { margin-bottom: 4px; }
+
+/* Games: rotations, and where the points came from */
+.gd-rot { margin-left: 6px; font-size: .72rem; padding: 1px 7px; }
+.gd-rot.best { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.gd-rot.worst { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 9%, transparent); }
+.gd-table tr.gd-best { background: color-mix(in srgb, var(--ok) 7%, transparent); }
+.gd-net { font-weight: 650; }
+.gd-net.up { color: var(--ok); }
+.gd-net.down { color: var(--danger); }
+.gd-from { margin: 0 0 12px; }
+.gd-from-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.gd-bar { display: flex; gap: 2px; height: 24px; border-radius: 6px; overflow: hidden; }
+.gd-seg { display: flex; align-items: center; justify-content: center; min-width: 18px; color: #fff; font-size: .75rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.gd-seg.kills { background: #2f6fd6; }
+.gd-seg.aces { background: #0f9488; }
+.gd-seg.blocks { background: #7c4bd1; }
+.gd-seg.errors { background: #c26a12; }
+.gd-seg.other { background: var(--line-strong); color: var(--fg); }
+.gd-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 0; padding: 0; color: var(--muted); }
+.gd-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.gd-legend i { width: 10px; height: 10px; min-width: 0; border-radius: 2px; }
+.gd-tabs { display: flex; gap: 2px; margin: -4px 0 14px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.gd-tabs::-webkit-scrollbar { display: none; }
+.gd-tabs button { flex: 0 0 auto; min-width: 0; padding: 8px 12px; margin-bottom: -1px; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--muted); font: inherit; font-weight: 600; font-size: .92rem; cursor: pointer; }
+.gd-tabs button:hover { color: var(--fg); filter: none; }
+.gd-tabs button[aria-selected=true] { color: var(--fg); border-bottom-color: var(--primary); }
+.gd-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.gd-stats [role=tabpanel] > .scroll:first-child, .gd-stats [role=tabpanel] > .gd-from:first-child { margin-top: 0; }
