@@ -49,19 +49,24 @@ export function suggestAction(rally, side, game) {
 }
 
 // Who serves for this side next. Same server while their side keeps the serve; after a side-out, the next player in
-// the order they first served, or the first player in the lineup who hasn't served yet.
-export function nextServer(rallies, side, lineup) {
+// the order they first served, or the first player in the lineup who hasn't served yet. fixed: a player who stays
+// front middle (frontMiddle). They're never suggested after a side-out, since serving is up to them; when they do
+// serve, the order carries on from the player who served before them.
+export function nextServer(rallies, side, lineup, fixed = null) {
+  const turn = lineup.filter(p => p !== fixed);
   const servers = [];
   for (const r of rallies) for (const t of r.touches) if (t.a === 'serve' && r.serve === side && !servers.includes(t.p)) servers.push(t.p);
   const done = rallies.filter(r => r.won);
   const prev = done.at(-1);
-  const lastServe = [...rallies].reverse().flatMap(r => r.serve === side ? r.touches.filter(t => t.a === 'serve') : []).at(0);
+  const serves = [...rallies].reverse().flatMap(r => r.serve === side ? r.touches.filter(t => t.a === 'serve') : []);
+  const lastServe = serves[0];
   if (lastServe && prev && prev.serve === side && prev.won === side) return lastServe.p;
-  const fresh = lineup.find(p => !servers.includes(p));
-  if (!lastServe) return fresh ?? lineup[0] ?? null;
-  if (fresh != null && servers.length < lineup.length) return fresh;
-  const order = servers.filter(p => lineup.includes(p));
-  return order[(order.indexOf(lastServe.p) + 1) % order.length] ?? lineup[0] ?? null;
+  const order = servers.filter(p => turn.includes(p));
+  const fresh = turn.find(p => !servers.includes(p));
+  const last = serves.find(t => turn.includes(t.p));
+  if (!last) return fresh ?? turn[0] ?? null;
+  if (fresh != null && order.length < turn.length) return fresh;
+  return order[(order.indexOf(last.p) + 1) % order.length] ?? turn[0] ?? null;
 }
 
 // Team numbers for one game: points won serving, side-out rate, aces, kills, stuffs and errors given away.
@@ -85,37 +90,56 @@ export function teamSummary(rallies, game) {
   return out;
 }
 
-// A team's serving order in one game, and whether one player stayed put. In the usual game all six rotate and
-// serve. Sometimes the setter stays front middle all game and only the other five rotate (and serve): then the
-// order comes round after five servers. Read from the game itself, since who sets can change during a game day.
-//   order: servers in the order they first served; size: how many rotate (5 or 6), null when it can't be told yet
-//   fixed: the player who stayed front middle, or null; guessed: true when the order hadn't come round, so it's read
-//   from who set (the one player yet to serve did most of the team's setting: fixed; otherwise all six rotate).
+// A team's serving order in one game, and whether one player stayed front middle. In the usual game all six rotate.
+// Sometimes the setter stays front middle and the other five rotate round them; the setter may still take a turn to
+// serve (and run back to front middle in the same rally, the other five staying where they are) or let it pass.
+// Who stayed front middle is per game and per team: chosen by a person (games.middle_set, middle_a / middle_b, null
+// = nobody), or until then read from the tags: a serve that came back round after five servers means the sixth
+// stayed (how 'served'); before it has, the one player yet to serve counts if they did most of the team's setting
+// (how 'sets', a guess). Who sets can change during a game day, so the day's all-game setters aren't used.
+//   order: the rotating players in the order they first served (the front-middle player's serves left out)
+//   size: how many rotate, null when it can't be told yet
+//   fixed: the front-middle player or null; how: 'chosen' | 'served' | 'sets' | null
+export function frontMiddle(game, s) {
+  return game.middle_set ? game[`middle_${s}`] ?? null : undefined;
+}
 export function serveCycle(rallies, game, s) {
   const lineup = game[`players_${s}`] ?? [];
   const done = rallies.filter(r => r.won);
   const serverOf = r => r.serve === s ? r.touches.find(t => t.a === 'serve' && sideOf(game, t.p) === s)?.p ?? null : null;
-  const order = [], stints = [];
-  let prev = null;
-  for (const r of done) {
-    if (r.serve !== s) { prev = null; continue; }
-    const p = serverOf(r);
-    if (p == null) continue;
-    if (p !== prev) stints.push(p);
-    prev = p;
-    if (!order.includes(p)) order.push(p);
+  const build = fixed => {
+    const order = [], stints = [];
+    let prev = null;
+    for (const r of done) {
+      if (r.serve !== s) { prev = null; continue; }
+      const p = serverOf(r);
+      if (p == null || p === fixed) continue;
+      if (p !== prev) stints.push(p);
+      prev = p;
+      if (!order.includes(p)) order.push(p);
+    }
+    return { order, stints };
+  };
+  const chosen = frontMiddle(game, s);
+  if (chosen !== undefined) {
+    const { order } = build(chosen), rotating = lineup.filter(p => p !== chosen).length;
+    return { order, size: order.length >= rotating ? order.length : null, fixed: chosen, how: chosen != null ? 'chosen' : null, serverOf };
   }
+  const { order, stints } = build(null);
   const wrapped = stints.length > order.length && stints[order.length] === order[0];
   const left = lineup.filter(p => !order.includes(p));
-  if (wrapped) return { order, size: order.length, fixed: order.length === 5 && left.length === 1 ? left[0] : null, guessed: false, serverOf };
+  if (wrapped) {
+    const fixed = order.length === 5 && left.length === 1 ? left[0] : null;
+    return { order, size: order.length, fixed, how: fixed != null ? 'served' : null, serverOf };
+  }
   if (lineup.length === 6 && order.length === 5 && left.length === 1) {
     const sets = new Map();
     for (const r of done) for (const t of r.touches) if (t.a === 'set' && sideOf(game, t.p) === s) sets.set(t.p, (sets.get(t.p) ?? 0) + 1);
     const top = Math.max(0, ...sets.values());
     const fixed = top >= 3 && sets.get(left[0]) === top ? left[0] : null;
-    return { order, size: fixed ? 5 : 6, fixed, guessed: true, serverOf };
+    return { order, size: fixed ? 5 : 6, fixed, how: fixed != null ? 'sets' : null, serverOf };
   }
-  return { order, size: order.length >= lineup.length ? order.length : null, fixed: null, guessed: false, serverOf };
+  return { order, size: order.length >= lineup.length ? order.length : null, fixed: null, how: null, serverOf };
 }
 
 // Each team's rotations in one game, named by the player serving in it (position 1). A team stays in a rotation
@@ -130,13 +154,17 @@ export function rotations(rallies, game, min = 3) {
   const out = {};
   const done = rallies.filter(r => r.won);
   for (const s of ['a', 'b']) {
-    const { order, size, serverOf } = serveCycle(rallies, game, s);
+    const { order, size, fixed, serverOf } = serveCycle(rallies, game, s);
     const full = size != null && order.length === size && order.length > 1;
-    const rows = new Map(order.map(p => [p, { server: p, rallies: 0, won: 0, lost: 0, served: 0, held: 0, received: 0, sideOut: 0 }]));
+    // A front-middle player who serves gets a row of their own, for the rallies they serve; the other five stay put,
+    // so the team receives in the rotation it was in before.
+    const fixedServes = fixed != null && done.some(r => serverOf(r) === fixed);
+    const rows = new Map([...order, ...(fixedServes ? [fixed] : [])].map(p => [p, { server: p, rallies: 0, won: 0, lost: 0, served: 0, held: 0, received: 0, sideOut: 0 }]));
     let cur = null;
     for (const r of done) {
-      if (r.serve === s) cur = serverOf(r) ?? cur;
-      const p = cur ?? (full ? order.at(-1) : null);
+      const srv = r.serve === s ? serverOf(r) : null;
+      if (srv != null && srv !== fixed) cur = srv;
+      const p = srv != null && srv === fixed ? fixed : cur ?? (full ? order.at(-1) : null);
       const row = rows.get(p);
       if (!row) continue;
       row.rallies++;
@@ -161,9 +189,9 @@ export function rotations(rallies, game, min = 3) {
 // So with six a side, a player who has served has a known position in every rally once the team's rotation is
 // known, including rallies received before the team first served (the rotation before its first server's). With
 // five servers seen, the sixth player fills the last spot, unless they stayed front middle (serveCycle): then they
-// are in 3 throughout and the other five go round 1, 2, 4, 5 and 6. Players who never served have no position.
+// are in 3 throughout (serving or not) and the other five go round 1, 2, 4, 5 and 6. Players who never served have no position.
 // -> { a: side, b: side }, side = { ok, why?: 'size' | 'none', players: Map pid -> [6 rows, position 1 first],
-// unplaced: [pid], fixed: pid | null, guessed }, row = { rallies, won, lost, counts: { action: { grade: n } } } (counts as in tally()).
+// unplaced: [pid], fixed: pid | null, how (serveCycle) }, row = { rallies, won, lost, counts: { action: { grade: n } } } (counts as in tally()).
 export const POSITIONS = [[1, 'Back right'], [2, 'Front right'], [3, 'Front middle'], [4, 'Front left'], [5, 'Back left'], [6, 'Back middle']];
 export const FRONT_ROW = [2, 3, 4];
 export function positions(rallies, game) {
@@ -172,15 +200,16 @@ export function positions(rallies, game) {
   const blank = () => Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, 0]))]));
   for (const s of ['a', 'b']) {
     const lineup = game[`players_${s}`] ?? [];
-    const { order: served, size, fixed, guessed, serverOf } = serveCycle(rallies, game, s);
+    const { order: served, size, fixed, how, serverOf } = serveCycle(rallies, game, s);
     const order = [...served];
-    const none = why => ({ ok: false, why, players: new Map(), unplaced: why === 'none' ? [...lineup] : [], fixed: null, guessed: false });
+    const none = why => ({ ok: false, why, players: new Map(), unplaced: why === 'none' ? [...lineup] : [], fixed: null, how: null });
     if (lineup.length !== 6 || order.length > 6 || (size != null && size !== 6 && !fixed)) { out[s] = none('size'); continue; }
-    if (!order.length) { out[s] = none('none'); continue; }
-    if (order.length === 5 && !fixed) order.push(lineup.find(p => !order.includes(p)));
+    if (!order.length && fixed == null) { out[s] = none('none'); continue; }
+    const rot = lineup.filter(p => p !== fixed);
+    if (order.length === rot.length - 1) order.push(rot.find(p => !order.includes(p)));   // one left to serve: the last spot
     // The spots the rotating players go round: all six, or the five around a player fixed in 3.
-    const spots = fixed ? [1, 2, 4, 5, 6] : [1, 2, 3, 4, 5, 6], n = spots.length;
-    const players = new Map([...order, ...(fixed ? [fixed] : [])].map(p => [p, POSITIONS.map(() => ({ rallies: 0, won: 0, lost: 0, counts: blank() }))]));
+    const spots = fixed != null ? [1, 2, 4, 5, 6] : [1, 2, 3, 4, 5, 6], n = spots.length;
+    const players = new Map([...order, ...(fixed != null ? [fixed] : [])].map(p => [p, POSITIONS.map(() => ({ rallies: 0, won: 0, lost: 0, counts: blank() }))]));
     const add = (p, spot, r) => {
       const row = players.get(p)[spot - 1];
       row.rallies++;
@@ -189,13 +218,14 @@ export function positions(rallies, game) {
     };
     let slot = null;
     for (const r of done) {
-      if (r.serve === s) { const p = serverOf(r); if (p != null) slot = order.indexOf(p); }
-      const at = slot ?? (r.serve === s ? null : n - 1);   // received before its first serve: the rotation before slot 0
+      if (r.serve === s) { const p = serverOf(r); if (p != null && p !== fixed) slot = order.indexOf(p); }
+      // Received before its first serve: the rotation before slot 0. Served first by the front-middle player: the same.
+      const at = slot ?? (r.serve !== s || (fixed != null && serverOf(r) === fixed) ? n - 1 : null);
       if (at == null) continue;
       for (const [i, p] of order.entries()) add(p, spots[(i - at + n) % n], r);
-      if (fixed) add(fixed, 3, r);
+      if (fixed != null) add(fixed, 3, r);   // front middle all rally, even when they serve (they run back there)
     }
-    out[s] = { ok: true, players, unplaced: lineup.filter(p => !players.has(p)), fixed, guessed };
+    out[s] = { ok: true, players, unplaced: lineup.filter(p => !players.has(p)), fixed, how };
   }
   return out;
 }

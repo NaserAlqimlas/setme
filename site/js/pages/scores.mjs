@@ -3,7 +3,7 @@ import { jumpTo, parseRallyTimes, playAt, rallyAt } from '../rallytimes.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, recap, score, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -459,7 +459,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // At the start of a rally the expected server is ready to grade.
   const autoSel = () => {
     if (sel || open()?.touches.length) return;
-    const p = nextServer(rallies, serving(), lineup[serving()]);
+    const p = nextServer(rallies, serving(), lineup[serving()], serveCycle(rallies, g, serving()).fixed);
     if (p != null) sel = { p, a: 'serve', auto: true };
   };
 
@@ -629,6 +629,28 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     paintSource();
   };
 
+  // Who stayed front middle (often the setter): never suggested as server after a side-out, and placed in 3 on Games.
+  const middleEl = h('div', { class: 'tag-middle small' });
+  const paintMiddle = () => {
+    if (ro) return fill(middleEl);
+    const pick = s => {
+      const cur = serveCycle(rallies, g, s).fixed;
+      const el = h('select', { 'aria-label': `Stayed front middle for ${name[s]}` }, h('option', { value: '' }, 'Nobody'),
+        lineup[s].map(p => h('option', { value: p, selected: p === cur }, pn(p))));
+      el.onchange = async () => {
+        const v = x => x === s ? (el.value ? Number(el.value) : null) : serveCycle(rallies, g, x).fixed;
+        const upd = { middle_a: v('a'), middle_b: v('b'), middle_set: true };
+        const { error } = await sb.from('games').update(upd).eq('id', g.id);
+        if (error) { paintMiddle(); return toast(/middle_/.test(error.message) ? 'This needs the database upgrade first: run supabase/front_middle.sql in the Supabase SQL Editor.' : error.message); }
+        Object.assign(g, upd);
+        if (sel?.auto) sel = null;
+        paintPad(); paintMiddle(); toast('Saved');
+      };
+      return h('label', {}, h('span', { style: `color:${color[s]}`, class: 'tag-middle-team' }, name[s]), el);
+    };
+    fill(middleEl, h('span', { class: 'muted' }, 'Stayed front middle'), pick('a'), pick('b'));
+  };
+
   const paintPad = () => {
     autoSel();
     const r = open(), sv = serving();
@@ -679,7 +701,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
     () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
-  const paint = () => { paintScore(); if (!ro) paintPad(); paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); };
+  const paint = () => { paintScore(); if (!ro) { paintPad(); paintMiddle(); } paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); };
 
   const loadYt = paintSource();
   paint();
@@ -741,7 +763,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
         h('div', { class: 'card' }, h('div', { class: 'video-frame' }, videoBox, bigVideoButton(() => wrap)), sourceRow, jobBar, foundBar,
           keyHint)),
       h('div', { class: 'tag-right' },
-        !ro && h('div', { class: 'card' }, pad),
+        !ro && h('div', { class: 'card' }, pad, middleEl),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));
   return wrap;
 }

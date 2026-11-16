@@ -966,3 +966,9 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .gd-pos-sum th { text-align: left; font-weight: 650; }
 .gd-pos-sum tr:first-child th, .gd-pos-sum tr:first-child td { border-top: 2px solid var(--line-strong); }
 .gd-fixed { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.gd-middle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 0; }
+.gd-middle-row select { width: auto; margin: 0; }
+.tag-middle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.tag-middle label { display: inline-flex; align-items: center; gap: 6px; }
+.tag-middle select { width: auto; margin: 0; padding: 4px 8px; font-size: .88rem; }
+.tag-middle-team { font-weight: 650; }

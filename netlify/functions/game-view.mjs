@@ -65,7 +65,7 @@ export default async (req) => {
         const bucket = r2();
         if (job?.status === 'done' && job.viewing_key && bucket) video = { url: bucket.getUrl(job.viewing_key, LINK_SECONDS), rallies: job.result?.rallies ?? [] };
       }
-      return json({ rallies, video, tags_end: g.tags_end ?? null });
+      return json({ rallies, video, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null } });
     }
   } catch (e) {
     return json({ error: e.message }, 400);
