@@ -11,6 +11,7 @@ import { openTagging } from './scores.mjs';
 import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
 import { searchDays, toTag } from '../gamesearch.mjs';
+import { highlightBox, videoControl } from '../highlights.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
@@ -31,7 +32,8 @@ export async function gamesPage() {
   catch (e) { return h('div', {}, head, bulkBox, h('p', { class: 'warn' }, e.message)); }
   const consent = h('p', { class: 'muted small' }, 'Some games are filmed so the club can review them. ',
     'Only organizers and the players in a game can watch its video and see its stats. Rather not be filmed? Tell an organizer.');
-  const all = data.days.flatMap(d => d.games.map(g => ({ ...g, played_on: d.played_on })));
+  const all = data.days.flatMap(d => d.games.map(g => ({ ...g, played_on: d.played_on, session_id: d.session_id })));
+  const reels = data.highlights ?? {};
   const open = id => { openGame = id; show(); scrollTo(0, 0); };
   // Only the list is redrawn while typing, so the search box keeps its place and focus.
   const list = h('div');
@@ -39,7 +41,7 @@ export async function gamesPage() {
     const found = searchDays(data.days, query).map(d => videoOnly ? { ...d, games: d.games.filter(g => g.video) } : d).filter(d => d.games.length);
     const n = found.reduce((t, d) => t + d.games.length, 0);
     fill(list, (query.trim() || videoOnly) && h('p', { class: 'muted small', role: 'status' }, n ? `${n} game${n === 1 ? '' : 's'} found` : ''),
-      found.length ? found.map(d => dayCard(d, open))
+      found.length ? found.map(d => dayCard(d, open, reels[d.session_id] ?? 0))
         : h('div', { class: 'card empty' }, videoOnly && !query.trim() ? 'No games have a video yet.' : 'No games match that. Try a first name, a date like "nov 10", or video, tagged or untagged.'));
   };
   const search = h('input', { type: 'search', class: 'gd-search', placeholder: 'Search: a name, a date like "nov 10", video, tagged…', 'aria-label': 'Search games', value: query });
@@ -98,8 +100,9 @@ function toTagCard(days) {
   return card;
 }
 
-function dayCard(d, open) {
-  return h('div', { class: 'card' }, h('h3', {}, dayTitle(d.played_on)),
+function dayCard(d, open, highlights = 0) {
+  return h('div', { class: 'card' }, h('div', { class: 'gd-dayhead' }, h('h3', {}, dayTitle(d.played_on)),
+      highlights > 0 && h('a', { class: 'chip plain gd-reel', href: `#reel/${d.session_id}` }, `★ Highlights (${highlights})`)),
     h('ul', { class: 'gd-games' }, d.games.map(g => {
       const res = g.mine && (g[g.mine].score > g[g.mine === 'a' ? 'b' : 'a'].score ? 'Won' : g[g.mine].score < g[g.mine === 'a' ? 'b' : 'a'].score ? 'Lost' : 'Tied');
       return h('li', {}, h('button', { type: 'button', class: 'gd-game', onclick: () => open(g.id) },
@@ -160,7 +163,8 @@ function gameView(g, back) {
         times.length && h('button', { class: 'ghost sm', onclick: () => go(-1) }, '◀ Previous rally'), times.length && h('button', { class: 'ghost sm', onclick: () => go(1) }, 'Next rally ▶'), times.length && where,
         h('span', { class: 'grow' }),
         h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
-        times.length && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Keys: N next rally · Shift N back'));
+        times.length && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Keys: N next rally · Shift N back'),
+        highlightBox(g, videoControl(video), () => times, d.highlights));
     } else fill(videoCard, h('p', { class: 'muted' }, 'No video of this game.'));
     const seek = t => { if (!video || t == null) return; playAt(video, t - 2); video.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
 

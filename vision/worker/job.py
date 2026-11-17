@@ -41,8 +41,8 @@ def verify(body: bytes, headers, secret: str, now: float = None, slack: int = 60
 
 class Reporter:
     """Posts signed updates to SetMe; progress at most every 10 seconds. A failed post is retried on the next one."""
-    def __init__(self, callback, job, secret, post=None):
-        self.callback, self.job, self.secret, self.last = callback, job, secret, 0.0
+    def __init__(self, callback, job, secret, post=None, key='job'):
+        self.callback, self.job, self.secret, self.last, self.key = callback, job, secret, 0.0, key
         self.post = post or self._post
 
     def _post(self, body: bytes, headers: dict):
@@ -51,7 +51,7 @@ class Reporter:
             return r.status
 
     def send(self, **fields):
-        body = json.dumps({'job': self.job, **fields}).encode()
+        body = json.dumps({self.key: self.job, **fields}).encode()
         for attempt in range(3):
             try:
                 return self.post(body, sign(body, self.secret))

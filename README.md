@@ -84,6 +84,8 @@ Consistency from tags: paste and run `supabase/consistency.sql` after `match_sta
 
 SetMe's exact numbers: paste and run `supabase/setme_exact.sql` (ratings accept any number from 0 to 1, so SetMe can save .14 rather than .25). Safe to run again. Until then saving SetMe's ratings says the SQL is needed; people's ratings are unaffected.
 
+Highlights: paste and run `supabase/highlights.sql` after `video.sql` (adds `highlights` and `highlight_reels`). Safe to run again. Until then the ★ highlight buttons on a game's video say the SQL is needed. Making a reel into a video file also needs the worker redeployed (`modal deploy worker/modal_app.py` from the vision folder).
+
 Organizers see All ratings: paste and run `supabase/organizer_ratings.sql` (everyone's ratings and rating history, and raters' names, for organizers). Safe to run again. Until then organizers' All ratings page only has their own ratings.
 
 Tags on the wrong game: paste and run `supabase/move_tags.sql` after `match_stats.sql` and `tag_window.sql` (adds `move_game_tags`). Safe to run again. Until then the Tag screen's Wrong game? button says the SQL is needed.

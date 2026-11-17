@@ -73,6 +73,9 @@ tests/                  node scripts, no framework
 | `games.video_kind`, `video_ref` | 'file' + file name, or 'youtube' + video id | Which video the tags were made from. The video itself is never uploaded. |
 | views `player_stats`, `tagged_games` | | One row per player: games played (tagged games with a finished rally) and `<action>_<grade>` counts. Security invoker, so the table policies apply. |
 
+| `highlights` | game_id, start_t, end_t, label | Stretches of a game's uploaded video the super marks on Games. Played back to back as the game's or the game day's reel (`#reel/<session>[/<game>]`, `highlights` function). Everyone who played that day sees the day's reel. |
+| `highlight_reels` | session_id, game_id (null = the whole day), status, progress, clips, file_key | A reel made into one MP4 by the video worker (`vision/worker/reel.py`), stored in R2 at `reels/<id>.mp4`. Making it again replaces the file. |
+
 | `profiles.player_id` | player id, unique | Which player an account is. Set only by the super on Users. `my_player()` reads it for policies. |
 | `players.anchor` | boolean | Anchor players every rater rates first. |
 | `events` | played_on (unique), cap, open, note | A game day open for sign-ups. Everyone reads; organizers write. |
