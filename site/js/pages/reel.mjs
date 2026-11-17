@@ -31,6 +31,8 @@ export async function reelPage(session, game) {
     playAt(video, c.start);
     paint();
   };
+  // Played with the video's own button before choosing a clip: that's the first clip.
+  video.addEventListener('play', () => { if (at < 0) { at = 0; paint(); } });
   // Moving on when a clip's end is reached; after the last one the reel stops there.
   video.addEventListener('timeupdate', () => {
     const c = clips[at];
@@ -47,6 +49,9 @@ export async function reelPage(session, game) {
       h('button', { type: 'button', onclick: () => go(i) }, h('span', { class: 'muted small' }, `Game ${c.n}`), ` ${clock(c.start)}`, c.label && h('span', { class: 'muted small' }, ` · ${c.label}`)))));
   };
   paint();
+  // The first clip is ready on screen (its first frame), so the reel starts at once when Play is tapped.
+  video.src = d.videos[clips[0].game]; video.dataset.game = String(clips[0].game);
+  playAt(video, clips[0].start, false);
   const total = clips.reduce((t, c) => t + c.end - c.start, 0);
   const full = () => (video.requestFullscreen?.() ?? video.webkitRequestFullscreen?.() ?? video.webkitEnterFullscreen?.())?.catch?.(() => {});
   const start = h('button', { class: 'reel-start', onclick: () => go(0) }, `▶ Play the reel · ${clock(total)}`);
