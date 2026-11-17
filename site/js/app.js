@@ -7,6 +7,7 @@ import { scoresPage } from './pages/scores.mjs';
 import { ratingsPage } from './pages/ratings.mjs';
 import { usersPage } from './pages/users.mjs';
 import { gamesPage } from './pages/games.mjs';
+import { reelPage } from './pages/reel.mjs';
 import { lineupPage, profilePage, signupPage } from './pages/club.mjs';
 
 const app = document.getElementById('app');
@@ -80,12 +81,15 @@ async function render() {
   const PLAYER_ORDER = ['lineup', 'games', 'signup'];
   const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me))
     .sort((a, b) => playerFirst ? PLAYER_ORDER.indexOf(a.id) - PLAYER_ORDER.indexOf(b.id) : 0);
+  // #reel/<game day>[/<game>]: a highlight reel, opened from Games (shown under Games in the nav).
+  const reel = location.hash.match(/^#reel\/(\d+)(?:\/(\d+))?$/);
   // #player/12 opens a player's profile (not in the nav, except your own as "Me").
-  const profileId = Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || (playerFirst && !pages.some(p => '#' + p.id === location.hash) ? me.player_id : null);
-  const current = profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
+  const profileId = reel ? null : Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || (playerFirst && !pages.some(p => '#' + p.id === location.hash) ? me.player_id : null);
+  const current = reel && pages.some(p => p.id === 'games') ? { ...pages.find(p => p.id === 'games'), view: () => reelPage(Number(reel[1]), reel[2] ? Number(reel[2]) : null) }
+    : profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
   const meLink = () => nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
   if (playerFirst) meLink();
-  if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p === current ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
+  if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p.id === current.id ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
   if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
   if (me.role === 'super') mountTray();

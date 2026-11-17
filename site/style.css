@@ -871,6 +871,27 @@ tbody > .gd-teamhead:not(:first-child) th { border-top: 3px solid var(--line-str
 .gd-search { flex: 1 1 260px; width: auto; margin: 0; }
 .gd-filter { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: .92rem; white-space: nowrap; cursor: pointer; }
 
+/* Highlights: marking them under a game's video, the day's link, and the reel page (games.mjs, reel.mjs) */
+.gd-dayhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.gd-dayhead h3 { margin: 0; }
+.gd-reel { text-decoration: none; color: var(--fg); font-weight: 600; }
+.gd-reel:hover { border-color: var(--line-strong); }
+.gd-highlights { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.gd-highlights a.button.sm { min-height: 34px; padding: 4px 12px; font-size: .85rem; }
+.gd-hl-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-hl-list li { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
+.gd-hl-list .linkish { background: none; border: 0; padding: 4px 2px; color: var(--fg); font: inherit; font-variant-numeric: tabular-nums; font-weight: 600; cursor: pointer; }
+.gd-hl-list .linkish:hover { color: var(--primary); }
+.gd-hl-list .up-icon { min-height: 26px; height: 26px; width: 26px; padding: 0; border: 0; font-size: .8rem; }
+.gd-hl-list .linkish { min-height: 30px; }
+.reel-card video { display: block; width: 100%; max-height: 75vh; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; }
+.reel-start { font-weight: 700; }
+.reel-now { font-variant-numeric: tabular-nums; }
+.reel-list { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.reel-list button { display: block; width: 100%; padding: 8px 6px; background: none; border: 0; border-top: 1px solid var(--line); color: var(--fg); font: inherit; text-align: left; cursor: pointer; font-variant-numeric: tabular-nums; }
+.reel-list button:hover { background: var(--bg); }
+.reel-list li.on button { background: color-mix(in srgb, var(--primary) 12%, transparent); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
+
 /* Loading: a volleyball that bounces and spins (ui.mjs spinner) */
 .vb-spin { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 12px; }
 main > .vb-spin { padding: 12vh 12px; }

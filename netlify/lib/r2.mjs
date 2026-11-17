@@ -2,6 +2,7 @@
 // no packages. Server side only: the secret key never reaches the browser, which gets short-lived signed links.
 //   originals/<job>/<file>   the upload as recorded; deleted 7 days after analysis (video-cleanup)
 //   viewing/<job>.mp4        the 720p copy people watch; kept
+//   reels/<reel>.mp4         a highlight reel made into one file; replaced when it's made again
 // Environment: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET (and R2_ENDPOINT only for tests).
 import { createHash, createHmac } from 'node:crypto';
 
@@ -58,8 +59,9 @@ export function r2(env = process.env, fetcher = (...a) => fetch(...a)) {
   };
   const link = (method, key, query, expires) => presign({ ...auth, method, path: path(key), query, expires, protocol: base.protocol });
   return {
-    // Watch or download for `expires` seconds.
-    getUrl: (key, expires = 6 * 3600) => link('GET', key, {}, expires),
+    // Watch or download for `expires` seconds. download: a file name, so the browser saves it rather than plays it.
+    getUrl: (key, expires = 6 * 3600, download) => link('GET', key,
+      download ? { 'response-content-disposition': `attachment; filename="${String(download).replace(/[^\w. -]+/g, '_')}"` } : {}, expires),
     // Upload a whole file (up to 5 GB) with one PUT.
     putUrl: (key, expires = 6 * 3600) => link('PUT', key, {}, expires),
     // Big uploads go in parts, so a dropped connection only resends one part.

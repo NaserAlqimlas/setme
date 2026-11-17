@@ -7,7 +7,8 @@ One-time setup, from the vision folder (see vision/README.md, "Game videos"):
     modal secret create setme-video VIDEO_WORKER_SECRET=<the same value as in Netlify>
     modal deploy worker/modal_app.py
 
-`modal deploy` prints the start URL: put it in Netlify as MODAL_VIDEO_URL.
+`modal deploy` prints the start URL: put it in Netlify as MODAL_VIDEO_URL. The same URL starts highlight reels
+(kind: 'reel'); redeploy after pulling changes to the worker.
 """
 from __future__ import annotations
 
@@ -34,6 +35,13 @@ def analyse(job: str, source: str, viewing: str, callback: str):
     run(job, source, viewing, callback)
 
 
+# A highlight reel made into one file (worker/reel.py): a few minutes of 720p clips, 2 cores is plenty.
+@app.function(image=image, secrets=[secret], cpu=2, memory=4096, timeout=1800)
+def reel(reel_id: str, clips: list, output: str, callback: str):
+    from worker.reel import run_reel
+    run_reel(reel_id, clips, output, callback)
+
+
 @app.function(image=image, secrets=[secret])
 @modal.fastapi_endpoint(method='POST')
 async def start(request: Request):
@@ -44,5 +52,8 @@ async def start(request: Request):
     if not verify(body, request.headers, os.environ['VIDEO_WORKER_SECRET']):
         raise HTTPException(status_code=401, detail='Not signed')
     j = json.loads(body)
-    await analyse.spawn.aio(j['job'], j['source'], j['viewing'], j['callback'])
+    if j.get('kind') == 'reel':
+        await reel.spawn.aio(j['reel'], j['clips'], j['output'], j['callback'])
+    else:
+        await analyse.spawn.aio(j['job'], j['source'], j['viewing'], j['callback'])
     return {'ok': True}

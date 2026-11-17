@@ -28,6 +28,37 @@ export function canWatch(me, game) {
   return me.role === 'player' && Number.isInteger(pid) && [...(game.players_a ?? []), ...(game.players_b ?? [])].map(Number).includes(pid);
 }
 
+// Highlight reels (supabase/highlights.sql). A game day's reel is open to organizers, the super, and players who
+// played any game that day once it's published (decided 2026-11-17: everyone in the game day sees the day's reel).
+export const reelKey = reel => `reels/${reel}.mp4`;
+export const MAX_CLIP_SECONDS = 90;   // a highlight longer than this is cut short (a reel is short moments)
+export function canSeeDay(me, games, session) {
+  if (!me) return false;
+  if (me.role === 'super' || me.role === 'organizer') return true;
+  return me.role === 'player' && !!session?.published && games.some(g => canWatch(me, g));
+}
+// The reel's clips, in the order played: games by when they were saved, then by time in the video. Only games with
+// a finished viewing copy. games: [{ id, created_at, video_ref }], jobs: Map video_ref -> job, highlights: rows.
+export function reelClips(games, jobs, highlights) {
+  const order = [...games].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.id - b.id);
+  const n = new Map(order.map((g, i) => [g.id, i + 1]));
+  const ok = new Set(order.filter(g => { const j = jobs.get(g.video_ref); return j?.status === 'done' && j.viewing_key; }).map(g => g.id));
+  return highlights.filter(x => ok.has(x.game_id))
+    .map(x => ({ id: x.id, game: x.game_id, n: n.get(x.game_id), start: Number(x.start_t), end: Math.min(Number(x.end_t), Number(x.start_t) + MAX_CLIP_SECONDS), label: x.label ?? null }))
+    .sort((a, b) => a.n - b.n || a.start - b.start);
+}
+// Is the file made from these clips still the reel? (Highlights added, removed or moved since: no.)
+export const sameClips = (a, b) => JSON.stringify((a ?? []).map(c => [c.id, c.start, c.end])) === JSON.stringify((b ?? []).map(c => [c.id, c.start, c.end]));
+
+// A worker update about a reel, given the reel now -> fields to save, or null to ignore it.
+export function applyReelUpdate(reel, u) {
+  if (!['queued', 'processing'].includes(reel.status)) return null;
+  if (u.status === 'processing') return { status: 'processing', progress: clamp01(u.progress), error: null };
+  if (u.status === 'done') return { status: 'done', progress: 1, error: null, finished_at: new Date().toISOString(), file_key: reelKey(reel.id) };
+  if (u.status === 'failed') return { status: 'failed', error: String(u.error || 'The video file couldn\'t be made.').slice(0, 300), finished_at: new Date().toISOString() };
+  return null;
+}
+
 // Messages between SetMe and the worker are signed with a secret both know, with the time, so an old message can't
 // be replayed. Header x-setme-signature: hex HMAC-SHA256 of `${time}.${body}`; x-setme-time: seconds.
 export const sign = (body, secret, time = Math.floor(Date.now() / 1000)) =>
