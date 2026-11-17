@@ -224,6 +224,7 @@ export function withSpinner(video, label = 'Loading the video…') {
   const on = () => over.classList.remove('hide'), off = () => over.classList.add('hide');
   ['loadstart', 'waiting', 'seeking'].forEach(e => video.addEventListener(e, on));
   ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'seeked', 'suspend', 'error', 'pause'].forEach(e => video.addEventListener(e, off));
+  if (!video.getAttribute('src') && !video.currentSrc) off();   // nothing to load yet: no spinner until there is
   return wrap;
 }
 
