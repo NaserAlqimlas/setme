@@ -388,6 +388,8 @@ tbody tr:hover { background: var(--surface-2); }
 .login .brand svg { width: 48px; height: 48px; }
 .login .brand h1 { font-size: 2.8rem; }
 .login .tag { text-align: center; margin: -4px 0 10px; color: var(--muted); }
+.login .forgot { justify-self: center; min-height: 36px; padding: 4px 8px; background: none; border: 0; color: var(--primary); font: inherit; font-size: .92rem; text-decoration: underline; cursor: pointer; }
+.login > .ghost.sm { justify-self: center; }
 .login button { min-height: 50px; }
 
 /* ---------- phones ---------- */

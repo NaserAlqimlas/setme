@@ -11,6 +11,7 @@
 //                                                    A normal rater account with a random password nobody knows.
 import { authAdmin, caller, json, rest } from '../lib/supabase.mjs';
 import { accountEmail, emailReady, sendEmail } from '../lib/email.mjs';
+import { accountLink } from '../lib/accountlink.mjs';
 
 const SETME_EMAIL = 'setme@setme.invalid';
 // Activity log entry; skipped quietly before the club upgrade (supabase/club.sql) adds the table.
@@ -27,24 +28,15 @@ export default async (req) => {
     if (body.action === 'invite' || body.action === 'reset') {
       const email = String(body.email || '').trim().toLowerCase();
       if (!email.includes('@')) return json({ error: 'Enter an email' }, 400);
-      const res = await authAdmin('generate_link', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: body.action === 'invite' ? 'invite' : 'recovery',
-          email, redirect_to,
-          ...(body.action === 'invite' ? { data: { display_name: String(body.name || '').trim() || email.split('@')[0] } } : {}),
-        }),
-      });
-      const hashed = res.hashed_token ?? res.properties?.hashed_token;
       const type = body.action === 'invite' ? 'invite' : 'recovery';
-      const userId = res.id ?? res.user?.id;
+      const { link, userId } = await accountLink({ type, email, origin: redirect_to,
+        data: type === 'invite' ? { display_name: String(body.name || '').trim() || email.split('@')[0] } : undefined });
       if (type === 'invite' && ['player', 'organizer'].includes(body.role) && userId) {
         // The profile row comes from the new-user trigger; 'player' needs the club upgrade, so say so if it fails.
         await rest(`profiles?id=eq.${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role: body.role }) })
           .catch(e => { throw new Error(body.role === 'player' ? 'Invite made, but the player role needs the database upgrade (supabase/club.sql). They are a rater for now.' : e.message); });
       }
       const role = ['player', 'organizer'].includes(body.role) ? body.role : 'rater';
-      const link = hashed ? `${redirect_to}/?token_hash=${encodeURIComponent(hashed)}&type=${type}` : (res.action_link ?? res.properties?.action_link);
       // Emailed when Resend is set up. If it can't send (say the domain isn't verified yet), the link still comes back.
       let emailed = false, emailError;
       if (emailReady() && body.send !== false) {
