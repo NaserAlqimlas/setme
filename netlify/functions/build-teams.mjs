@@ -15,7 +15,7 @@
 // scores.mjs) before building or checking. Never used for predict, so stored predictions stay ratings-only.
 import { RATED, SKILLS, buildTeams, combineRatings, snap, describeTeam, strength, teamSkills, teamProblems, suggestSwaps, adjustSkills, repeatPairs, VARIETY } from '../../site/js/teams.mjs';
 import { resultAdjustments } from '../../site/js/scores.mjs';
-import { caller, json, rest } from '../lib/supabase.mjs';
+import { activeRaters, caller, json, rest } from '../lib/supabase.mjs';
 
 // Recent game days' teams, newest first, before `day` when given. [] before the scores upgrade.
 // Building a later round on `day` itself: the rounds already played that day come first, so round 2 mixes up
@@ -59,10 +59,12 @@ export default async (req) => {
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
   const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false, spreadWomen: sentSpread = true } = await req.json().catch(() => ({}));
-  const [players, ratings] = await Promise.all([
+  const [players, allRatings, rating] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
+    activeRaters(),
   ]);
+  const ratings = allRatings.filter(r => rating.has(r.rater_id));
   // Who has rated anyone, for the Ratings from picker (organizers can't read other people's rating rows), and everyone's
   // name (people), for who made each draft. Names only, never emails.
   if (listRaters) {

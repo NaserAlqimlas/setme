@@ -33,7 +33,12 @@ export async function usersPage() {
     } catch (err) { toast(err.message); }
   };
   const setRole = async (p, role) => {
-    try { await q(sb.from('profiles').update({ role }).eq('id', p.id)); p.role = role; toast('Saved'); }
+    // Only raters, organizers and the super's ratings show up (supabase/active_raters.sql); the rows themselves stay.
+    const was = ['rater', 'organizer', 'super'].includes(p.role), now = ['rater', 'organizer', 'super'].includes(role);
+    try {
+      await q(sb.from('profiles').update({ role }).eq('id', p.id)); p.role = role;
+      toast(was && !now ? 'Saved. Their ratings are hidden now, and come back if they rate again.' : !was && now ? 'Saved. Their earlier ratings count again.' : 'Saved');
+    }
     catch (err) { toast(err.message); return false; }
   };
   const linkPlayer = async (p, sel) => {
