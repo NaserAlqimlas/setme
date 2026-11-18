@@ -27,10 +27,12 @@ export default async (req) => {
   const me = await caller(req);
   if (!me) return json({ error: 'Sign in first' }, 401);
   me.player_id = await rest(`profiles?id=eq.${me.id}&select=player_id`).then(r => r[0]?.player_id ?? null, () => null);
+  const body = await req.json().catch(() => ({}));
+  // The super looking at the app as another role (site/js/ui.mjs viewingAs) gets what that role would get.
+  if (me.role === 'super' && ['organizer', 'rater', 'player'].includes(body.view_as)) me.role = body.view_as;
   const isPlayer = me.role === 'player', pid = Number(me.player_id);
   if (!['player', 'organizer', 'super'].includes(me.role)) return json({ error: 'Games are for players, organizers and the super' }, 403);
   if (isPlayer && !Number.isInteger(pid)) return json({ days: [], me: { role: me.role, player_id: null } });
-  const body = await req.json().catch(() => ({}));
 
   try {
     if (body.action === 'days') {
