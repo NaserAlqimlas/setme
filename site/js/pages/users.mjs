@@ -143,6 +143,7 @@ function activityCard(profiles) {
       case 'ratings imported': return `Imported ${d.players} players' ratings for ${who.get(d.for) ?? 'another rater'}${d.file ? ` (${d.file})` : ''}`;
       case 'invite link created': return `${d.emailed ? 'Invite emailed to' : 'Invite link for'} ${d.email}${d.role ? ` as ${d.role}` : ''}`;
       case 'reset link created': return `${d.emailed ? 'Password reset emailed to' : 'Password reset link for'} ${d.email}`;
+      case 'reset requested': return `Forgot password: reset link emailed to ${d.email}`;
       case 'backup downloaded': return `Backup downloaded (${d.rows} rows)`;
       default: return r.action;
     }

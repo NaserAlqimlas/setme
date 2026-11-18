@@ -27,6 +27,8 @@ const PAGES = [
 
 // Arriving from an invite or reset link means a password needs setting.
 let mustSetPassword = /type=(invite|recovery)/.test(location.hash);
+let resetting = /type=recovery/.test(location.hash);   // a reset link, not an invite: the password page says "new password"
+let forgot = false;   // the sign-in page is showing Forgot password
 // Invite/reset links carry a token that is only used when the person taps Continue (see netlify/functions/admin.mjs).
 const query = new URLSearchParams(location.search);
 let pendingLink = query.get('token_hash') ? { token_hash: query.get('token_hash'), type: query.get('type') === 'recovery' ? 'recovery' : 'invite' } : null;
@@ -51,7 +53,7 @@ function accountMenu() {
 // ---------- auth & routing ----------
 sb.auth.onAuthStateChange((event, s) => {
   setSession(s);
-  if (event === 'PASSWORD_RECOVERY') mustSetPassword = true;
+  if (event === 'PASSWORD_RECOVERY') { mustSetPassword = true; resetting = true; }
   if (event === 'SIGNED_OUT') { setMe(null); render(); }
 });
 window.addEventListener('hashchange', render);
@@ -114,25 +116,54 @@ function linkPage() {
     const { data, error } = await sb.auth.verifyOtp({ token_hash: pendingLink.token_hash, type: pendingLink.type });
     pendingLink = null;
     history.replaceState(null, '', location.pathname);
-    if (error) { linkError = 'This link has expired or was already used. Ask the organizer for a new one.'; setSession(null); setMe(null); return render(); }
-    setSession(data.session); setMe(null); mustSetPassword = true; render();
+    if (error) { linkError = invite ? 'This link has expired or was already used. Ask the organizer for a new one.' : 'This link has expired or was already used. Tap Forgot password to get a new one.'; setSession(null); setMe(null); return render(); }
+    setSession(data.session); setMe(null); mustSetPassword = true; resetting = !invite; render();
   };
   return h('div', { class: 'login card' }, brand(), h('p', { class: 'tag' }, invite ? "You're invited to SetMe." : 'Reset your password.'), btn, msg);
 }
 
+// Forgot password: emails a reset link (netlify/functions/forgot-password.mjs). The same message whether or not the
+// address has an account, so nobody learns who's in the club. Limited to a few emails per address a day.
+function forgotPage(typed = '') {
+  const email = h('input', { type: 'email', placeholder: 'Email', autocomplete: 'email', 'aria-label': 'Email', required: true, value: typed });
+  const btn = h('button', { class: 'big' }, 'Email me a reset link');
+  const msg = h('p', { class: 'muted small' }, 'We\'ll email you a link to choose a new password.');
+  const back = h('button', { type: 'button', class: 'ghost sm', onclick: () => { forgot = false; render(); } }, '← Back to sign in');
+  const go = async e => {
+    e.preventDefault();
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await fetch('/.netlify/functions/forgot-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email.value.trim() }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Something went wrong. Try again.');
+      if (data.email === false) { msg.replaceChildren(h('span', { class: 'warn' }, 'Email isn\'t set up on SetMe yet. Ask the organizer for a reset link.')); btn.disabled = false; btn.textContent = 'Email me a reset link'; return; }
+      form.replaceChildren(brand(), h('p', { class: 'tag' }, 'Check your email.'),
+        h('p', {}, `If ${email.value.trim()} has a SetMe account, a reset link is on its way. Open it and choose a new password. It works once.`),
+        h('p', { class: 'muted small' }, 'Nothing after a few minutes? Check spam or promotions. You can ask for another in 5 minutes, up to 3 a day; after that, ask the organizer.'),
+        back);
+    } catch (err) {
+      msg.replaceChildren(h('span', { class: 'warn' }, err.message)); btn.disabled = false; btn.textContent = 'Email me a reset link';
+    }
+  };
+  const form = h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Forgot your password?'), email, btn, msg, back);
+  return form;
+}
+
 function loginPage() {
+  if (forgot) return forgotPage(forgot === true ? '' : forgot);
   const email = h('input', { type: 'email', placeholder: 'Email', autocomplete: 'email', 'aria-label': 'Email' });
   const pw = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password', 'aria-label': 'Password' });
-  const msg = h('p', { class: 'muted small' }, 'Invite only. Forgot your password? Ask the organizer for a reset link.');
+  const msg = h('p', { class: 'muted small' }, 'Invite only.');
+  const forgotBtn = h('button', { type: 'button', class: 'linkish forgot', onclick: () => { forgot = email.value.trim() || true; render(); } }, 'Forgot password?');
   const go = async e => {
     e.preventDefault();
     const { data, error } = await sb.auth.signInWithPassword({ email: email.value.trim(), password: pw.value });
     if (error) return msg.replaceChildren(h('span', { class: 'warn' }, error.message));
     setSession(data.session); render();
   };
-  const err = linkError && h('p', { class: 'warn small' }, /expired|invalid|used/i.test(linkError) ? 'This link has expired or was already used. Ask the organizer for a new one.' : linkError);
+  const err = linkError && h('p', { class: 'warn small' }, /expired|invalid|used/i.test(linkError) && !/Forgot|organizer/.test(linkError) ? 'This link has expired or was already used. Tap Forgot password to get a new one.' : linkError);
   linkError = null;
-  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Fair teams, every session.'), err, email, pw, h('button', { class: 'big' }, 'Sign in'), msg);
+  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Fair teams, every session.'), err, email, pw, h('button', { class: 'big' }, 'Sign in'), forgotBtn, msg);
 }
 
 function passwordPage() {
@@ -143,9 +174,9 @@ function passwordPage() {
     if (pw.value.length < 8) return msg.replaceChildren(h('span', { class: 'warn' }, 'Use at least 8 characters.'));
     const { error } = await sb.auth.updateUser({ password: pw.value, data: { password_set: true } });
     if (error) return msg.replaceChildren(h('span', { class: 'warn' }, error.message));
-    mustSetPassword = false; toast('Password saved'); render();
+    mustSetPassword = false; resetting = false; forgot = false; toast('Password saved'); render();
   };
-  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, 'Welcome! Choose a password.'), pw, h('button', { class: 'big' }, 'Save password'), msg);
+  return h('form', { class: 'login card', onsubmit: go }, brand(), h('p', { class: 'tag' }, resetting ? 'Choose a new password.' : 'Welcome! Choose a password.'), pw, h('button', { class: 'big' }, 'Save password'), msg);
 }
 
 boot();
