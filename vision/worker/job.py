@@ -166,16 +166,35 @@ def run(job, source, viewing, callback, secret=None, work=None, report=None):
             t.start()
             make_viewing(src, out, duration, step('copy'))
             t.join()
+            # The sound after each rally, for highlight suggestions. Nice to have: a failure here changes nothing else.
+            try:
+                from worker.sound import sound_track
+                sound = sound_track(str(src))
+            except Exception as e:
+                print(f'sound scores failed: {e!r}', file=sys.stderr)
+                sound = None
             upload(viewing, out)
             if problem:
                 # The copy to watch is what matters most; no rally times just means tagging without Next rally.
                 print(f'rally finder failed: {problem[0]}', file=sys.stderr)
                 found = {'version': 1, 'video': src.name, 'duration': round(duration, 2), 'rallies': [], 'note': 'rally finder failed'}
+            if sound:
+                found['sound'] = sound
             report.send(status='done', viewing=True, result=found)
         except Exception as e:
             msg = str(e) if isinstance(e, (ValueError, RuntimeError)) else f'Something went wrong while analysing ({type(e).__name__}). Try again.'
             print(f'job {job} failed: {e!r}', file=sys.stderr)
             report.send(status='failed', error=msg[:300])
+
+
+def run_sound(job, source, callback, secret=None, report=None):
+    """Sound scores for a video already analysed (made before they existed), from its viewing copy. Never raises."""
+    from worker.sound import sound_track
+    report = report or Reporter(callback, job, secret or os.environ['VIDEO_WORKER_SECRET'])
+    try:
+        report.send(status='sound', sound=sound_track(source))
+    except Exception as e:
+        print(f'sound for {job} failed: {e!r}', file=sys.stderr)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
 import { searchDays, toTag } from '../gamesearch.mjs';
 import { highlightBox, videoControl } from '../highlights.mjs';
+import { moments } from '../suggest.mjs';
 
 let openGame = null;   // the game shown, kept while moving between pages
 let showAllToTag = false;   // the super's to-tag list, opened past its first few
@@ -33,7 +34,7 @@ export async function gamesPage() {
   const consent = h('p', { class: 'muted small' }, 'Some games are filmed so the club can review them. ',
     'Only organizers and the players in a game can watch its video and see its stats. Rather not be filmed? Tell an organizer.');
   const all = data.days.flatMap(d => d.games.map(g => ({ ...g, played_on: d.played_on, session_id: d.session_id })));
-  const reels = data.highlights ?? {};
+  const reels = data.highlights ?? {}, blooperReels = data.bloopers ?? {};
   const open = id => { openGame = id; show(); scrollTo(0, 0); };
   // Only the list is redrawn while typing, so the search box keeps its place and focus.
   const list = h('div');
@@ -41,7 +42,7 @@ export async function gamesPage() {
     const found = searchDays(data.days, query).map(d => videoOnly ? { ...d, games: d.games.filter(g => g.video) } : d).filter(d => d.games.length);
     const n = found.reduce((t, d) => t + d.games.length, 0);
     fill(list, (query.trim() || videoOnly) && h('p', { class: 'muted small', role: 'status' }, n ? `${n} game${n === 1 ? '' : 's'} found` : ''),
-      found.length ? found.map(d => dayCard(d, open, reels[d.session_id] ?? 0))
+      found.length ? found.map(d => dayCard(d, open, reels[d.session_id] ?? 0, blooperReels[d.session_id] ?? 0))
         : h('div', { class: 'card empty' }, videoOnly && !query.trim() ? 'No games have a video yet.' : 'No games match that. Try a first name, a date like "nov 10", or video, tagged or untagged.'));
   };
   const search = h('input', { type: 'search', class: 'gd-search', placeholder: 'Search: a name, a date like "nov 10", video, tagged…', 'aria-label': 'Search games', value: query });
@@ -54,10 +55,26 @@ export async function gamesPage() {
     if (g) return fill(wrap, gameView(g, () => { openGame = null; show(); scrollTo(0, 0); }));
     if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
     paintList();
-    fill(wrap, head, bulkBox, me.role === 'super' && toTagCard(data.days), filters, list, consent);
+    fill(wrap, head, bulkBox, me.role === 'super' && data.unscored > 0 && soundCard(data.unscored), me.role === 'super' && toTagCard(data.days), filters, list, consent);
   };
   show();
   return wrap;
+}
+
+// Videos uploaded before sound scores existed get no highlight suggestions until the worker scores their sound.
+// The super starts that here, 25 at a time (a minute or two each, side by side).
+function soundCard(n) {
+  const btn = h('button', { class: 'ghost sm' }, 'Score them');
+  const note = h('span', { class: 'muted small' }, `${n} older video${n === 1 ? ' has' : 's have'} no sound scores yet, so no highlight suggestions.`);
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const { started } = await callFn('video', { action: 'sound' });
+      note.textContent = started ? `Scoring ${started} video${started === 1 ? '' : 's'}. It takes a few minutes; suggestions show on each game after that.` : 'Nothing to score right now.';
+      btn.remove();
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  };
+  return h('div', { class: 'card row', style: 'flex-wrap:wrap;gap:8px;align-items:center' }, note, h('span', { class: 'grow' }), btn);
 }
 
 // The super's list of games still to tag, to work through. Each opens the tag screen; a game nobody filmed can be
@@ -100,9 +117,11 @@ function toTagCard(days) {
   return card;
 }
 
-function dayCard(d, open, highlights = 0) {
+function dayCard(d, open, highlights = 0, bloopers = 0) {
   return h('div', { class: 'card' }, h('div', { class: 'gd-dayhead' }, h('h3', {}, dayTitle(d.played_on)),
-      highlights > 0 && h('a', { class: 'chip plain gd-reel', href: `#reel/${d.session_id}` }, `★ Highlights (${highlights})`)),
+      (highlights > 0 || bloopers > 0) && h('span', { class: 'gd-reels' },
+        highlights > 0 && h('a', { class: 'chip plain gd-reel', href: `#reel/${d.session_id}` }, `★ Highlights (${highlights})`),
+        bloopers > 0 && h('a', { class: 'chip plain gd-reel', href: `#bloopers/${d.session_id}` }, `🙈 Bloopers (${bloopers})`))),
     h('ul', { class: 'gd-games' }, d.games.map(g => {
       const res = g.mine && (g[g.mine].score > g[g.mine === 'a' ? 'b' : 'a'].score ? 'Won' : g[g.mine].score < g[g.mine === 'a' ? 'b' : 'a'].score ? 'Lost' : 'Tied');
       return h('li', {}, h('button', { type: 'button', class: 'gd-game', onclick: () => open(g.id) },
@@ -164,7 +183,9 @@ function gameView(g, back) {
         h('span', { class: 'grow' }),
         h('button', { class: 'ghost sm', onclick: full }, '⛶ Full screen')),
         times.length && h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Keys: N next rally · Shift N back'),
-        highlightBox(g, videoControl(video), () => times, d.highlights));
+        highlightBox(g, videoControl(video), () => times, d.highlights, {
+          suggestions: () => ({ sound: d.video.sound, moments: moments(rallies, d.video.rallies ?? []), dismissed: d.dismissed }),
+          nameOf: id => name.get(id) }));
     } else fill(videoCard, h('p', { class: 'muted' }, 'No video of this game.'));
     const seek = t => { if (!video || t == null) return; playAt(video, t - 2); video.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
 

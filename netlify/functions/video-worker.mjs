@@ -5,11 +5,12 @@
 //   { job, status: 'failed', error }
 // Or about a highlight reel being made into a file (highlights.mjs): { reel, status: 'processing' | 'done' | 'failed', progress?, error? }.
 // When a reel's file is done, older files of the same reel are deleted.
+// Or sound scores for a video analysed before they existed (video.mjs 'sound'): { job, status: 'sound', sound }.
 // When the job ends, the person who uploaded it gets an email (Resend), if email is set up.
 import { json, rest } from '../lib/supabase.mjs';
 import { sendEmail } from '../lib/email.mjs';
 import { r2 } from '../lib/r2.mjs';
-import { applyReelUpdate, applyUpdate, doneEmail, gameLabel, verify } from '../lib/video.mjs';
+import { applyReelUpdate, applyUpdate, doneEmail, gameLabel, soundPatch, verify } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
 
@@ -31,6 +32,12 @@ export default async (req) => {
   if (u.reel) return reelUpdate(u);
   const [job] = await rest(`video_jobs?id=eq.${enc(u.job)}&select=*`);
   if (!job) return json({ error: 'No such job' }, 404);
+  if (u.status === 'sound') {
+    const p = soundPatch(job, u);
+    if (!p) return json({ ignored: true });
+    await rest(`video_jobs?id=eq.${enc(job.id)}`, { method: 'PATCH', body: JSON.stringify(p) });
+    return json({ ok: true });
+  }
   const patch = applyUpdate(job, u);
   if (!patch) return json({ ignored: true });   // cancelled, replaced, or already finished
   const [now] = await rest(`video_jobs?id=eq.${enc(job.id)}`, { method: 'PATCH', headers: { prefer: 'return=representation' }, body: JSON.stringify(patch) });
@@ -48,7 +55,7 @@ async function reelUpdate(u) {
   if (!patch) return json({ ignored: true });
   const [now] = await rest(`highlight_reels?id=eq.${enc(reel.id)}`, { method: 'PATCH', headers: { prefer: 'return=representation' }, body: JSON.stringify(patch) });
   if (now.status === 'done') {
-    const older = await rest(`highlight_reels?session_id=eq.${reel.session_id}&game_id=${reel.game_id ? `eq.${reel.game_id}` : 'is.null'}&id=neq.${enc(reel.id)}&select=id,file_key`);
+    const older = await rest(`highlight_reels?session_id=eq.${reel.session_id}&game_id=${reel.game_id ? `eq.${reel.game_id}` : 'is.null'}&id=neq.${enc(reel.id)}${reel.kind ? `&kind=eq.${reel.kind}` : ''}&select=id,file_key`);
     const bucket = r2();
     for (const o of older) {
       if (o.file_key && bucket) await bucket.remove(o.file_key).catch(() => {});
