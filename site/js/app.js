@@ -1,4 +1,4 @@
-import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, spinner, toast } from './ui.mjs';
+import { avatar, h, me, q, sb, seg, session, setMe, setRender, setSession, spinner, toast, VIEW_AS_KEY, viewingAs } from './ui.mjs';
 import { mountTray } from './uploadtray.mjs';
 import { ratePage } from './pages/rate.mjs';
 import { playersPage } from './pages/players.mjs';
@@ -46,15 +46,30 @@ function accountMenu() {
     h('div', { class: 'menu-list', role: 'menu' },
       h('p', { class: 'small' }, h('b', {}, me.display_name), h('br'), h('span', { class: 'muted' }, `${session.user.email}, ${me.role}`)),
       me.player_id && h('a', { href: `#player/${me.player_id}`, role: 'menuitem', onclick: () => { box.open = false; } }, 'My profile'),
+      me.real_role === 'super' && h('div', { class: 'menu-theme' }, h('span', { class: 'small' }, 'View as'),
+        seg(VIEW_ROLES, me.role, v => { box.open = false; setViewAs(v); }, 'View as')),
       h('div', { class: 'menu-theme' }, h('span', { class: 'small' }, 'Theme'), seg([['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], themeNow(), setTheme, 'Theme')),
       h('button', { type: 'button', role: 'menuitem', onclick: () => { teamsStore.clear(); sb.auth.signOut(); } }, 'Sign out')));
   return box;
 }
+// The super can see the app as another role (ui.mjs viewingAs). Remembered for this tab until switched back.
+const VIEW_ROLES = [['super', 'Super'], ['organizer', 'Organizer'], ['rater', 'Rater'], ['player', 'Player']];
+const savedViewAs = () => { try { return sessionStorage.getItem(VIEW_AS_KEY); } catch { return null; } };
+function setViewAs(role) {
+  try { role === 'super' ? sessionStorage.removeItem(VIEW_AS_KEY) : sessionStorage.setItem(VIEW_AS_KEY, role); } catch { /* this page only */ }
+  me.role = role;
+  teamsStore.clear();
+  render();
+}
+const viewAsBar = () => h('div', { class: 'view-as', role: 'status' },
+  h('span', {}, 'Viewing as ', h('b', {}, VIEW_ROLES.find(r => r[0] === me.role)[1]),
+    me.role === 'player' && !me.player_id ? '. Your account has no player, so player pages are empty.' : '. Changes you make still save.'),
+  h('button', { type: 'button', class: 'sm', onclick: () => setViewAs('super') }, 'Back to super'));
 // ---------- auth & routing ----------
 sb.auth.onAuthStateChange((event, s) => {
   setSession(s);
   if (event === 'PASSWORD_RECOVERY') { mustSetPassword = true; resetting = true; }
-  if (event === 'SIGNED_OUT') { setMe(null); render(); }
+  if (event === 'SIGNED_OUT') { try { sessionStorage.removeItem(VIEW_AS_KEY); } catch { /* fine */ } setMe(null); render(); }
 });
 window.addEventListener('hashchange', render);
 
@@ -74,7 +89,12 @@ async function render() {
   if (!session) return app.replaceChildren(loginPage());
   if (mustSetPassword) return app.replaceChildren(passwordPage());
   try {
-    if (!me) setMe(await q(sb.from('profiles').select('*').eq('id', session.user.id).single()));
+    if (!me) {
+      setMe(await q(sb.from('profiles').select('*').eq('id', session.user.id).single()));
+      me.real_role = me.role;
+      const as = savedViewAs();
+      if (me.role === 'super' && VIEW_ROLES.some(r => r[0] === as)) me.role = as;
+    }
   } catch {
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
@@ -95,6 +115,8 @@ async function render() {
   if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
   if (me.role === 'super') mountTray();
+  document.querySelector('.view-as')?.remove();
+  if (viewingAs()) app.before(viewAsBar());
   nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   app.replaceChildren(spinner());
   try {

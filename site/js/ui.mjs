@@ -15,6 +15,10 @@ export const SHORT = { receiving: 'Rcv', hitting: 'Hit', hustle: 'Hus', serve: '
 export let session = null, me = null;
 export const setSession = s => { session = s; };
 export const setMe = p => { me = p; };
+// The super can look at the app as an organizer, rater or player (just the look: the database still lets them do
+// everything). me.role is the role being shown; me.real_role is theirs. Kept for this tab only.
+export const VIEW_AS_KEY = 'setme-view-as';
+export const viewingAs = () => me?.real_role && me.real_role !== me.role ? me.role : null;
 // Draws the current page again. app.js sets the real one.
 export let render = () => {};
 export const setRender = f => { render = f; };
@@ -144,7 +148,7 @@ export async function callFn(name, body) {
   const res = await fetch(`/.netlify/functions/${name}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify(body),
+    body: JSON.stringify(viewingAs() ? { ...body, view_as: me.role } : body),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);

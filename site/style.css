@@ -1006,3 +1006,8 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .tag-middle label { display: inline-flex; align-items: center; gap: 6px; }
 .tag-middle select { width: auto; margin: 0; padding: 4px 8px; font-size: .88rem; }
 .tag-middle-team { font-weight: 650; }
+
+/* The super viewing the app as another role (app.js viewAsBar) */
+.view-as { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px;
+  padding: 8px 16px; background: var(--primary); color: var(--primary-fg); font-size: .9rem; }
+.view-as button { background: var(--primary-fg); color: var(--primary); border-color: transparent; }
