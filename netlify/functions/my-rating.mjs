@@ -3,7 +3,7 @@
 //    (the super may pass { player: id } for anyone's).
 // Averages of what everyone rated them (ownRating in myrating.mjs). Never who rated, how many, or any one rater's values.
 import { ownRating } from '../../site/js/myrating.mjs';
-import { caller, json, rest } from '../lib/supabase.mjs';
+import { activeRaters, caller, json, rest } from '../lib/supabase.mjs';
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -16,9 +16,11 @@ export default async (req) => {
   const [profile] = body.player != null ? [{ player_id: body.player }] : await rest(`profiles?id=eq.${me.id}&select=*`);
   const pid = Number(profile?.player_id);
   if (!profile?.player_id || !Number.isInteger(pid)) return json({ linked: false });
-  const [ratings, history] = await Promise.all([
+  const [ratings, history, rating] = await Promise.all([
     rest(`ratings?player_id=eq.${pid}&select=*`),
     rest(`rating_history?player_id=eq.${pid}&select=rater_id,skill,old_value,new_value,changed_at&order=changed_at.asc`).catch(() => []),
+    activeRaters(),
   ]);
-  return json({ linked: true, ...ownRating(ratings, history) });
+  const keep = r => rating.has(r.rater_id);
+  return json({ linked: true, ...ownRating(ratings.filter(keep), history.filter(keep)) });
 };

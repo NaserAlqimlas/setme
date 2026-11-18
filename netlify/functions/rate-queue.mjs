@@ -8,7 +8,7 @@
 //   anchors: anchor players (players.anchor), for new raters to rate first
 // Ratings older than STALE_DAYS are worked out in the browser from the caller's own rows.
 import { resultAdjustments, playerStats, analyze } from '../../site/js/scores.mjs';
-import { caller, json, rest } from '../lib/supabase.mjs';
+import { activeRaters, caller, json, rest } from '../lib/supabase.mjs';
 
 const NEEDS_GAMES = 10, SHIFT = .25, MIN_RATERS = 2;
 
@@ -17,11 +17,13 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['rater', 'organizer', 'super'].includes(me.role)) return json({ error: 'Raters only' }, 403);
   // select=* so it works before the anchor column exists.
-  const [players, ratings, games] = await Promise.all([
+  const [players, allRatings, games, rating] = await Promise.all([
     rest('players?active=eq.true&select=*'),
     rest('ratings?select=rater_id,player_id'),
     rest('games?select=session_id,players_a,players_b,score_a,score_b,predicted').catch(() => []),
+    activeRaters(),
   ]);
+  const ratings = allRatings.filter(r => rating.has(r.rater_id));
   const active = new Set(players.map(p => p.id));
   const adj = resultAdjustments(games);
   const played = new Map(analyze(games).n ? playerStats(games, 1).map(p => [p.id, p.games]) : []);

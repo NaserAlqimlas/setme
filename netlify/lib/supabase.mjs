@@ -29,3 +29,10 @@ export async function caller(req) {
   const [profile] = await rest(`profiles?id=eq.${user.id}&select=role,email,display_name`);
   return profile ? { id: user.id, ...profile } : null;
 }
+
+// Only ratings by people who rate now count: raters, organizers and the super. Someone moved to player (or removed)
+// keeps their rating rows, but they're left out everywhere (also in the database's read rules, active_raters.sql).
+export const RATER_ROLES = ['rater', 'organizer', 'super'];
+export async function activeRaters() {
+  return new Set((await rest(`profiles?role=in.(${RATER_ROLES.join(',')})&select=id`)).map(p => p.id));
+}
