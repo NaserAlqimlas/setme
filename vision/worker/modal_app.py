@@ -42,6 +42,13 @@ def reel(reel_id: str, clips: list, output: str, callback: str):
     run_reel(reel_id, clips, output, callback)
 
 
+# Sound scores for a video analysed before they existed: reads only the sound of its viewing copy, a minute or so.
+@app.function(image=image, secrets=[secret], cpu=1, memory=2048, timeout=1800)
+def sound(job: str, source: str, callback: str):
+    from worker.job import run_sound
+    run_sound(job, source, callback)
+
+
 @app.function(image=image, secrets=[secret])
 @modal.fastapi_endpoint(method='POST')
 async def start(request: Request):
@@ -52,7 +59,9 @@ async def start(request: Request):
     if not verify(body, request.headers, os.environ['VIDEO_WORKER_SECRET']):
         raise HTTPException(status_code=401, detail='Not signed')
     j = json.loads(body)
-    if j.get('kind') == 'reel':
+    if j.get('kind') == 'sound':
+        await sound.spawn.aio(j['job'], j['source'], j['callback'])
+    elif j.get('kind') == 'reel':
         await reel.spawn.aio(j['reel'], j['clips'], j['output'], j['callback'])
     else:
         await analyse.spawn.aio(j['job'], j['source'], j['viewing'], j['callback'])

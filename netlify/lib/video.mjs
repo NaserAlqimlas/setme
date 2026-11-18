@@ -39,11 +39,12 @@ export function canSeeDay(me, games, session) {
 }
 // The reel's clips, in the order played: games by when they were saved, then by time in the video. Only games with
 // a finished viewing copy. games: [{ id, created_at, video_ref }], jobs: Map video_ref -> job, highlights: rows.
-export function reelClips(games, jobs, highlights) {
+export const KINDS = ['highlight', 'blooper'];
+export function reelClips(games, jobs, highlights, kind = 'highlight') {
   const order = [...games].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.id - b.id);
   const n = new Map(order.map((g, i) => [g.id, i + 1]));
   const ok = new Set(order.filter(g => { const j = jobs.get(g.video_ref); return j?.status === 'done' && j.viewing_key; }).map(g => g.id));
-  return highlights.filter(x => ok.has(x.game_id))
+  return highlights.filter(x => ok.has(x.game_id) && (x.kind ?? 'highlight') === kind)
     .map(x => ({ id: x.id, game: x.game_id, n: n.get(x.game_id), start: Number(x.start_t), end: Math.min(Number(x.end_t), Number(x.start_t) + MAX_CLIP_SECONDS), label: x.label ?? null }))
     .sort((a, b) => a.n - b.n || a.start - b.start);
 }
@@ -81,12 +82,27 @@ export function applyUpdate(job, u) {
       .map(r => ({ start: Number(r.start), end: Number(r.end), confidence: Number(r.confidence ?? 0) }))
       .filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start) : [];
     if (!u.viewing) return { status: 'failed', error: 'The copy to watch wasn\'t made. Try again; if it keeps failing, export the video again as MP4.', finished_at: new Date().toISOString() };
+    const sound = cleanSound(u.result?.sound);
+    const { sound: _s, ...rest } = u.result ?? {};
     return { status: 'done', progress: 1, error: null, finished_at: new Date().toISOString(),
-      result: { ...(u.result ?? {}), rallies }, viewing_key: viewingKey(job.id) };
+      result: { ...rest, rallies, ...(sound ? { sound } : {}) }, viewing_key: viewingKey(job.id) };
   }
   if (u.status === 'failed') return { status: 'failed', error: String(u.error || 'The video couldn\'t be analysed.').slice(0, 300), finished_at: new Date().toISOString() };
   return null;
 }
+// Sound scores from the worker (vision/worker/sound.py) -> { version, hop, lift: [tenths of a dB] }, or null if they
+// don't look right. At most 6 hours of them.
+export function cleanSound(x) {
+  const hop = Number(x?.hop);
+  if (!(hop >= .1 && hop <= 5) || !Array.isArray(x.lift) || x.lift.length > 6 * 3600 / hop) return null;
+  return { version: Number(x.version) || 1, hop, lift: x.lift.map(v => Math.max(-600, Math.min(600, Math.round(Number(v) || 0)))) };
+}
+// Sound scores for a video analysed before they existed ({ job, status: 'sound', sound }) -> the patch, or null.
+export function soundPatch(job, u) {
+  const sound = cleanSound(u.sound);
+  return job.status === 'done' && sound ? { result: { ...(job.result ?? {}), sound } } : null;
+}
+
 const clamp01 = v => Number.isFinite(Number(v)) ? Math.min(1, Math.max(0, Number(v))) : null;
 
 // The daily clean-up's decisions for one job -> { delete: [keys], abort, patch, drop }.

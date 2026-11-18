@@ -1,8 +1,9 @@
 // POST /.netlify/functions/game-view — the Games page (site/js/pages/games.mjs).
-//   { action: 'days' }        -> { days, me, highlights: { [session_id]: count } }   game days and games the caller may
+//   { action: 'days' }        -> { days, me, highlights: { [session_id]: count }, bloopers: {...}, unscored }   game days and games the caller may
 //      see (netlify/lib/gamedays.mjs), and how many highlights each day's reel has (every game that day; see highlights.mjs)
-//   { action: 'game', game }  -> { rallies, video: { url, rallies } | null, highlights: [{ id, start, end, label }] | null }
-//      highlights: null before highlights.sql.
+//   { action: 'game', game }  -> { rallies, video: { url, rallies, sound } | null, highlights: [{ id, start, end, label, kind }] | null,
+//      dismissed: [{ t, kind }] | null }   highlights: null before highlights.sql. sound (the worker's sound scores) and
+//      dismissed (suggestions the super turned down) are for suggesting highlights; dismissed only for the super.
 //      rallies: the game's tags with touches, as stored (everyone's, for the box score); video: the uploaded copy to
 //      watch (a link that expires) and the rally times found in it.
 // Organizers and the super: every game. Players: games they played in, on published game days.
@@ -49,15 +50,19 @@ export default async (req) => {
         allRows(`rallies?game_id=in.(${ids.join(',')})&won_by=not.is.null&select=game_id&order=game_id`).catch(() => []),
         rest(`video_jobs?game_id=in.(${ids.join(',')})&status=eq.done&viewing_key=not.is.null&select=id,game_id`).catch(() => []),
         isPlayer ? [] : rest(`games?not_recorded=is.true&select=id`).catch(() => []),   // before not_recorded.sql: none
-        allRows(`highlights?game_id=in.(${ids.join(',')})&select=game_id&order=game_id`).catch(() => []),   // before highlights.sql: none
+        // before suggestions.sql there's no kind: all highlights. Before highlights.sql: none.
+        allRows(`highlights?game_id=in.(${ids.join(',')})&select=game_id,kind&order=game_id`)
+          .catch(() => allRows(`highlights?game_id=in.(${ids.join(',')})&select=game_id&order=game_id`)).catch(() => []),
       ]);
-      const dayOf = new Map(merged.map(g => [g.id, g.session_id])), highlights = {};
-      for (const m of marks) { const sid = dayOf.get(m.game_id); highlights[sid] = (highlights[sid] ?? 0) + 1; }
+      const dayOf = new Map(merged.map(g => [g.id, g.session_id])), highlights = {}, bloopers = {};
+      for (const m of marks) { const sid = dayOf.get(m.game_id), to = m.kind === 'blooper' ? bloopers : highlights; to[sid] = (to[sid] ?? 0) + 1; }
+      // The super: how many videos have no sound scores yet (analysed before they existed), to score them from Games.
+      const unscored = me.role === 'super' ? await rest('video_jobs?status=eq.done&viewing_key=not.is.null&game_id=not.is.null&result->sound=is.null&select=id').then(r => r.length, () => 0) : 0;
       const tagged = new Map();
       for (const r of rallies) tagged.set(r.game_id, (tagged.get(r.game_id) ?? 0) + 1);
       const videos = new Set(jobs.filter(j => merged.find(g => g.id === j.game_id && g.video_kind === 'upload' && g.video_ref === j.id)).map(j => j.game_id));
       const days = buildDays({ sessions, rounds, games: merged, players, tagged, videos, unrecorded: new Set(unrecorded.map(g => g.id)), me });
-      return json({ days, me: { role: me.role, player_id: me.player_id }, highlights });
+      return json({ days, me: { role: me.role, player_id: me.player_id }, highlights, bloopers, unscored });
     }
 
     if (body.action === 'game') {
@@ -68,11 +73,15 @@ export default async (req) => {
       if (g.video_kind === 'upload' && g.video_ref) {
         const [job] = await rest(`video_jobs?id=eq.${enc(g.video_ref)}&select=status,viewing_key,result`).catch(() => []);
         const bucket = r2();
-        if (job?.status === 'done' && job.viewing_key && bucket) video = { url: bucket.getUrl(job.viewing_key, LINK_SECONDS), rallies: job.result?.rallies ?? [] };
+        if (job?.status === 'done' && job.viewing_key && bucket) video = { url: bucket.getUrl(job.viewing_key, LINK_SECONDS), rallies: job.result?.rallies ?? [],
+          sound: isPlayer ? null : job.result?.sound ?? null };
       }
-      const highlights = await rest(`highlights?game_id=eq.${g.id}&select=id,start_t,end_t,label&order=start_t`)
-        .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null })), () => null);
-      return json({ rallies, video, highlights, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null } });
+      const hl = f => rest(`highlights?game_id=eq.${g.id}&select=${f}&order=start_t`);
+      const highlights = await hl('id,start_t,end_t,label,kind').catch(() => hl('id,start_t,end_t,label'))
+        .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null, kind: x.kind ?? 'highlight' })), () => null);
+      // Suggestions the super dismissed; null before suggestions.sql (then no suggestions are shown).
+      const dismissed = me.role === 'super' ? await rest(`highlight_dismissed?game_id=eq.${g.id}&select=t,kind`).then(r => r.map(x => ({ t: Number(x.t), kind: x.kind })), () => null) : null;
+      return json({ rallies, video, highlights, dismissed, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null } });
     }
   } catch (e) {
     return json({ error: e.message }, 400);

@@ -1,22 +1,23 @@
 // POST /.netlify/functions/highlights — highlight reels (supabase/highlights.sql, netlify/lib/video.mjs).
 // Anyone who may see the game day (canSeeDay: organizers, the super, players who played that day once it's published):
-//   { action: 'reel', session, game? } -> { played_on, game_n?, clips: [{ id, game, n, start, end, label }],
+// kind: 'highlight' (default) or 'blooper': each has its own reel and video file.
+//   { action: 'reel', session, game?, kind? } -> { played_on, game_n?, clips: [{ id, game, n, start, end, label }],
 //        videos: { [game]: url }, file: { status, progress, error, current, url? } | null }
 //      The day's highlights (or one game's), in the order played, with a link to each game's viewing copy, and the
 //      reel's video file if one was made (current: it still matches the highlights; url: a download link).
 // Super only:
-//   { action: 'make', session, game? } -> { file }   has the worker cut the clips and join them into one video file
+//   { action: 'make', session, game?, kind? } -> { file }   has the worker cut the clips and join them into one video file
 // The worker reports back to video-worker (with { reel }), which saves the result.
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
-import { canSeeDay, LINK_SECONDS, reelClips, reelKey, sameClips, sign } from '../lib/video.mjs';
+import { canSeeDay, KINDS, LINK_SECONDS, reelClips, reelKey, sameClips, sign } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
 const NO_TABLE = 'Highlights need the database upgrade first: run supabase/highlights.sql in the Supabase SQL Editor.';
 const NOT_SET_UP = 'Video files aren\'t set up yet: the storage and worker keys go in Netlify\'s environment variables (see vision/architecture.md).';
 
 // The day (or game) and its clips, or { error, status }.
-async function load(me, sessionId, gameId) {
+async function load(me, sessionId, gameId, kind) {
   const [session] = await rest(`sessions?id=eq.${Number(sessionId)}&select=id,played_on,published`);
   if (!session) return { error: 'That game day is gone', status: 404 };
   const games = await rest(`games?session_id=eq.${session.id}&select=id,created_at,video_kind,video_ref,players_a,players_b&order=created_at`);
@@ -26,22 +27,28 @@ async function load(me, sessionId, gameId) {
   const refs = games.filter(g => g.video_kind === 'upload' && g.video_ref).map(g => g.video_ref);
   const [jobs, marks] = await Promise.all([
     refs.length ? rest(`video_jobs?id=in.(${refs.map(enc).join(',')})&select=id,status,viewing_key`) : [],
-    rest(`highlights?game_id=in.(${games.map(g => g.id).join(',') || 0})&select=id,game_id,start_t,end_t,label`),
+    rest(`highlights?game_id=in.(${games.map(g => g.id).join(',') || 0})&select=id,game_id,start_t,end_t,label,kind`)
+      .catch(() => rest(`highlights?game_id=in.(${games.map(g => g.id).join(',') || 0})&select=id,game_id,start_t,end_t,label`)),   // before suggestions.sql
   ]);
   const job = new Map(jobs.map(j => [j.id, j]));
-  const clips = reelClips(games, job, marks).filter(c => !game || c.game === game.id);
+  const clips = reelClips(games, job, marks, kind).filter(c => !game || c.game === game.id);
   return { session, games, game, job, clips };
 }
 
-const latestReel = (session, game) =>
-  rest(`highlight_reels?session_id=eq.${session.id}&game_id=${game ? `eq.${game.id}` : 'is.null'}&select=*&order=created_at.desc&limit=1`).then(r => r[0] ?? null);
+// The newest file of this kind. Before suggestions.sql there's no kind column: every file is a highlight reel.
+const latestReel = (session, game, kind) => {
+  const base = `highlight_reels?session_id=eq.${session.id}&game_id=${game ? `eq.${game.id}` : 'is.null'}&select=*&order=created_at.desc&limit=1`;
+  return rest(`${base}&kind=eq.${kind}`)
+    .catch(e => kind === 'highlight' ? rest(base) : Promise.reject(e))
+    .then(r => r[0] ?? null);
+};
 
 function fileOf(reel, clips, bucket, name) {
   if (!reel) return null;
   return { status: reel.status, progress: reel.progress, error: reel.error, current: sameClips(reel.clips, clips),
     ...(reel.status === 'done' && reel.file_key && bucket ? { url: bucket.getUrl(reel.file_key, LINK_SECONDS, name) } : {}) };
 }
-const fileName = (session, game) => `SetMe highlights ${session.played_on}${game ? ` game ${game.n}` : ''}.mp4`;
+const fileName = (session, game, kind) => `SetMe ${kind === 'blooper' ? 'bloopers' : 'highlights'} ${session.played_on}${game ? ` game ${game.n}` : ''}.mp4`;
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
@@ -50,10 +57,11 @@ export default async (req) => {
   me.player_id = await rest(`profiles?id=eq.${me.id}&select=player_id`).then(r => r[0]?.player_id ?? null, () => null);
   const body = await req.json().catch(() => ({}));
   const bucket = r2();
+  const kind = KINDS.includes(body.kind) ? body.kind : 'highlight';
 
   try {
     if (body.action === 'reel') {
-      const d = await load(me, body.session, body.game ?? null);
+      const d = await load(me, body.session, body.game ?? null, kind);
       if (d.error) return json({ error: d.error }, d.status);
       if (!bucket && d.clips.length) return json({ error: NOT_SET_UP }, 503);
       const videos = Object.fromEntries([...new Set(d.clips.map(c => c.game))].map(id => {
@@ -61,22 +69,23 @@ export default async (req) => {
         return [id, bucket.getUrl(d.job.get(g.video_ref).viewing_key, LINK_SECONDS)];
       }));
       const n = d.game ? d.games.findIndex(g => g.id === d.game.id) + 1 : null;
-      const reel = await latestReel(d.session, d.game).catch(() => null);
-      return json({ played_on: d.session.played_on, game_n: n, clips: d.clips, videos,
-        file: fileOf(reel, d.clips, bucket, fileName(d.session, d.game && { n })) });
+      const reel = await latestReel(d.session, d.game, kind).catch(() => null);
+      return json({ played_on: d.session.played_on, game_n: n, kind, clips: d.clips, videos,
+        file: fileOf(reel, d.clips, bucket, fileName(d.session, d.game && { n }, kind)) });
     }
 
     if (body.action === 'make') {
       if (me.role !== 'super') return json({ error: 'Only the super makes video files' }, 403);
       if (!bucket || !process.env.MODAL_VIDEO_URL || !process.env.VIDEO_WORKER_SECRET) return json({ error: NOT_SET_UP }, 503);
-      const d = await load(me, body.session, body.game ?? null);
+      const d = await load(me, body.session, body.game ?? null, kind);
       if (d.error) return json({ error: d.error }, d.status);
-      if (!d.clips.length) return json({ error: 'There are no highlights to put in a file yet' }, 400);
-      const busy = await latestReel(d.session, d.game);
+      if (!d.clips.length) return json({ error: `There are no ${kind}s to put in a file yet` }, 400);
+      const busy = await latestReel(d.session, d.game, kind);
       if (busy && ['queued', 'processing'].includes(busy.status) && Date.now() - Date.parse(busy.updated_at) < 30 * 60e3)
         return json({ error: 'That video file is already being made' }, 409);
       const [reel] = await rest('highlight_reels', { method: 'POST', headers: { prefer: 'return=representation' },
-        body: JSON.stringify({ session_id: d.session.id, game_id: d.game?.id ?? null, clips: d.clips.map(({ id, game, start, end }) => ({ id, game, start, end })), created_by: me.id }) });
+        body: JSON.stringify({ session_id: d.session.id, game_id: d.game?.id ?? null, clips: d.clips.map(({ id, game, start, end }) => ({ id, game, start, end })), created_by: me.id,
+          ...(kind === 'blooper' ? { kind } : {}) }) });
       const send = JSON.stringify({
         kind: 'reel', reel: reel.id,
         clips: d.clips.map(c => ({ source: bucket.getUrl(d.job.get(d.games.find(g => g.id === c.game).video_ref).viewing_key, 12 * 3600), start: c.start, end: c.end })),

@@ -1,6 +1,7 @@
 import { ask, avatar, callFn, choose, fill, firstName, fmt, h, LABEL, me, missing, pageHead, profileLink, q, render, sb, seg, bigVideoButton, isBigVideo, spinner, stacked, TEAM_COLORS, toast, today, toggle, withSpinner } from '../ui.mjs';
 import { jumpTo, parseRallyTimes, playAt, rallyAt } from '../rallytimes.mjs';
 import { highlightBox } from '../highlights.mjs';
+import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
@@ -476,12 +477,21 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // the same game opened here has the same times. null list: before highlights.sql.
   const hlSlot = h('div');
   let hlBox = null;
-  const hlList = await q(sb.from('highlights').select('id,start_t,end_t,label').eq('game_id', g.id).order('start_t'))
-    .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null })), () => null);
+  // Before suggestions.sql there's no kind (all highlights) and no dismissed list (no suggestions).
+  const hlRows = f => q(sb.from('highlights').select(f).eq('game_id', g.id).order('start_t'));
+  const [hlList, hlDismissed] = await Promise.all([
+    hlRows('id,start_t,end_t,label,kind').catch(() => hlRows('id,start_t,end_t,label'))
+      .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null, kind: x.kind ?? 'highlight' })), () => null),
+    me.role === 'super' ? q(sb.from('highlight_dismissed').select('t,kind').eq('game_id', g.id)).then(r => r.map(x => ({ t: Number(x.t), kind: x.kind })), () => null) : null,
+  ]);
+  let sound = null;   // the upload's sound scores (video 'watch'), for suggestions
   const paintHighlights = () => {
     if (video?.kind !== 'upload') { hlBox = null; return hlSlot.replaceChildren(); }
-    if (hlBox) return;
-    hlBox = highlightBox(g, { now: () => player?.now() ?? 0, seek: t => player?.seek(t) }, () => found?.rallies ?? [], hlList, { reel: false });
+    if (hlBox) return hlBox.refresh?.();
+    hlBox = highlightBox(g, { now: () => player?.now() ?? 0, seek: t => player?.seek(t) }, () => found?.rallies ?? [], hlList, {
+      reel: false, nameOf: id => pname.get(id),
+      // Suggestions follow the tags as they're entered: how each rally ended decides highlight or blooper.
+      suggestions: () => ({ sound, moments: moments(rallies, found?.rallies ?? []), dismissed: hlDismissed }) });
     hlSlot.replaceChildren(hlBox ?? '');
   };
   const pad = h('div', { class: 'tag-pad' });
@@ -529,7 +539,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   };
   const paintFound = () => {
     const n = found ? (ro ? ' · N next rally' : ' · N next rally (Shift N back)') : '';
-    const hk = hlBox && me.role === 'super' ? ' · H highlight' : '';
+    const hk = hlBox && me.role === 'super' ? ' · H highlight (Shift H blooper)' : '';
     keyHint.textContent = ro ? `Keys: space play/pause · ← → skip 2 s${n}${hk} · tap a rally or touch to watch it`
       : `Keys: space play/pause · ← → skip 2 s${n}${hk} · 0–3 grade · S P T A B D action · U undo · Esc clear`;
     if (!found) return foundBar.replaceChildren();
@@ -616,6 +626,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     catch (e) { jobBar.replaceChildren(h('p', { class: 'warn small' }, e.message)); return; }
     job = w.job;
     if (w.url && !player) player = urlVideo(videoBox, w.url);   // a file being tagged from this device keeps playing
+    sound = w.sound ?? null;
     if (w.rallies?.length) found = { video: job?.file_name ?? null, rallies: w.rallies.map(r => ({ start: r.start, end: r.end })).sort((a, b) => a.start - b.start) };
     paintJob(); paintSource(); paintHighlights(); paintFound();
     if (['queued', 'processing'].includes(job?.status)) polling = setTimeout(loadUpload, 8000);
@@ -715,7 +726,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
     () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
-  const paint = () => { paintScore(); if (!ro) { paintPad(); paintMiddle(); } paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); };
+  const paint = () => { paintScore(); if (!ro) { paintPad(); paintMiddle(); } paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); hlBox?.refresh?.(); };
 
   const loadYt = paintSource();
   paintHighlights();
@@ -731,7 +742,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     if (k === ' ') { e.preventDefault(); player?.toggle(); }
     else if (k === 'arrowleft' || k === 'arrowright') { e.preventDefault(); player?.seek(player.now() + (k === 'arrowright' ? 1 : -1) * (e.shiftKey ? 5 : 2)); }
     else if (k === 'n' && found) { e.preventDefault(); go(e.shiftKey ? -1 : 1); }
-    else if (k === 'h' && hlBox?.hotkey) { e.preventDefault(); hlBox.hotkey(); }
+    else if (k === 'h' && hlBox?.hotkey) { e.preventDefault(); hlBox.hotkey(e.shiftKey ? 'blooper' : 'highlight'); }
     else if (ro) return;
     else if (k === 'escape') { sel = null; paintPad(); }
     else if (k === 'u') undo();

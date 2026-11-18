@@ -1,5 +1,5 @@
-// A highlight reel (#reel/<session> for a game day, #reel/<session>/<game> for one game): the highlights marked on
-// Games, played back to back from each game's video. Everyone who played that day can watch the day's reel
+// A highlight reel (#reel/<session> for a game day, #reel/<session>/<game> for one game), or a blooper reel
+// (#bloopers/...): the highlights (or bloopers) marked on Games, played back to back from each game's video. Everyone who played that day can watch the day's reel
 // (netlify/functions/highlights.mjs). The reel can be made into one video file to download: the super makes it,
 // anyone watching downloads it once it's ready.
 import { callFn, fill, h, me, pageHead, toast, withSpinner } from '../ui.mjs';
@@ -9,15 +9,16 @@ import { dayTitle } from './teams.mjs';
 const clock = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 let poll = null;
 
-export async function reelPage(session, game) {
+export async function reelPage(session, game, kind = 'highlight') {
   clearTimeout(poll);
   let d;
-  try { d = await callFn('highlights', { action: 'reel', session, game }); }
+  try { d = await callFn('highlights', { action: 'reel', session, game, kind }); }
   catch (e) { return h('div', {}, back(), h('p', { class: 'warn' }, e.message)); }
-  const title = d.game_n ? `Game ${d.game_n} highlights` : 'Highlights';
+  const word = kind === 'blooper' ? 'bloopers' : 'highlights';
+  const title = d.game_n ? `Game ${d.game_n} ${word}` : word[0].toUpperCase() + word.slice(1);
   const head = pageHead(title, dayTitle(d.played_on));
   if (!d.clips.length) return h('div', {}, back(), head, h('div', { class: 'card empty' },
-    me.role === 'super' ? 'No highlights yet. Open a game on Games and mark them under its video.' : 'No highlights from this day yet.'));
+    me.role === 'super' ? `No ${word} yet. Open a game on Games and mark them under its video.` : `No ${word} from this day yet.`));
 
   const clips = d.clips, video = h('video', { controls: true, playsinline: true, preload: 'metadata' });
   let at = -1;
@@ -44,7 +45,7 @@ export async function reelPage(session, game) {
     const c = clips[at];
     fill(now, c ? h('span', {}, h('b', {}, `${at + 1} of ${clips.length}`), ` · Game ${c.n} at ${clock(c.start)}`, c.label && ` · ${c.label}`)
       : at >= clips.length ? h('span', {}, h('b', {}, 'That\'s the reel.'), ' ', h('button', { class: 'ghost sm', onclick: () => go(0) }, '↺ Play again'))
-        : h('span', { class: 'muted' }, `${clips.length} highlight${clips.length === 1 ? '' : 's'}`));
+        : h('span', { class: 'muted' }, `${clips.length} ${kind}${clips.length === 1 ? '' : 's'}`));
     fill(list, clips.map((c, i) => h('li', { class: i === at ? 'on' : null },
       h('button', { type: 'button', onclick: () => go(i) }, h('span', { class: 'muted small' }, `Game ${c.n}`), ` ${clock(c.start)}`, c.label && h('span', { class: 'muted small' }, ` · ${c.label}`)))));
   };
@@ -54,9 +55,9 @@ export async function reelPage(session, game) {
   playAt(video, clips[0].start, false);
   const total = clips.reduce((t, c) => t + c.end - c.start, 0);
   const full = () => (video.requestFullscreen?.() ?? video.webkitRequestFullscreen?.() ?? video.webkitEnterFullscreen?.())?.catch?.(() => {});
-  const start = h('button', { class: 'reel-start', onclick: () => go(0) }, `▶ Play the reel · ${clock(total)}`);
+  const start = h('button', { class: 'reel-start', onclick: () => go(0) }, `▶ Play the ${kind === 'blooper' ? 'bloopers' : 'reel'} · ${clock(total)}`);
   const fileBox = h('div', { class: 'card' });
-  paintFile(fileBox, d.file, { session, game, clips: clips.length });
+  paintFile(fileBox, d.file, { session, game, kind, clips: clips.length });
 
   return h('div', {}, back(), head,
     h('div', { class: 'card reel-card' },
@@ -73,12 +74,13 @@ const back = () => h('p', {}, h('a', { href: '#games' }, '← Games'));
 
 // The video file: download it when it's ready; the super makes it (again, once highlights change). While it's being
 // made, this checks back every few seconds.
-function paintFile(box, file, { session, game, clips }) {
+function paintFile(box, file, { session, game, kind, clips }) {
+  const opts = { session, game, kind, clips };
   clearTimeout(poll);
   const sup = me.role === 'super';
   const make = async btn => {
     btn.disabled = true; btn.textContent = 'Starting…';
-    try { paintFile(box, (await callFn('highlights', { action: 'make', session, game })).file, { session, game, clips }); }
+    try { paintFile(box, (await callFn('highlights', { action: 'make', session, game, kind })).file, opts); }
     catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Try again'; }
   };
   const makeBtn = label => { const b = h('button', { class: 'ghost sm' }, label); b.onclick = () => make(b); return b; };
@@ -86,17 +88,17 @@ function paintFile(box, file, { session, game, clips }) {
   box.hidden = !file && !sup;
   if (box.hidden) return;
   fill(box, h('h3', {}, 'Video file'),
-    !file ? [h('p', { class: 'muted small' }, `Joins the ${clips} highlight${clips === 1 ? '' : 's'} into one video to download and share. It takes a few minutes.`), makeBtn('Make video file')]
+    !file ? [h('p', { class: 'muted small' }, `Joins the ${clips} ${kind}${clips === 1 ? '' : 's'} into one video to download and share. It takes a few minutes.`), makeBtn('Make video file')]
       : busy ? [h('p', {}, file.status === 'queued' ? 'Starting…' : `Making it… ${Math.round((file.progress ?? 0) * 100)}%`), h('progress', { max: 1, value: file.progress ?? 0 })]
         : file.status === 'failed' ? [h('p', { class: 'warn' }, `It couldn't be made: ${file.error ?? 'something went wrong'}`), sup && makeBtn('Try again')]
           : [h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;align-items:center' },
             file.url && h('a', { class: 'button', href: file.url, download: '' }, '⬇ Download video'),
-            !file.current && h('span', { class: 'muted small' }, 'Highlights have changed since it was made.'),
+            !file.current && h('span', { class: 'muted small' }, `The ${kind}s have changed since it was made.`),
             sup && !file.current && makeBtn('Make it again'))]);
   if (busy) poll = setTimeout(async () => {
     if (!box.isConnected) return;
-    try { paintFile(box, (await callFn('highlights', { action: 'reel', session, game })).file, { session, game, clips }); }
-    catch { poll = setTimeout(() => paintFile(box, file, { session, game, clips }), 10000); }
+    try { paintFile(box, (await callFn('highlights', { action: 'reel', session, game, kind })).file, opts); }
+    catch { poll = setTimeout(() => paintFile(box, file, opts), 10000); }
   }, 5000);
 }
 

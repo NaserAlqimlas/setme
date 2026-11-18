@@ -3,7 +3,7 @@
 //   { action: 'list' }               -> { videos: [{ game, played_on, n, score_a, score_b, a: [names], b: [names], rallies }] }
 //                                       the videos the caller may watch, newest first: every game's for organizers and
 //                                       the super; a player only games they played in, on published game days
-//   { action: 'watch', game }        -> { job: { id, status, progress, error, file_name }, url?, rallies? }
+//   { action: 'watch', game }        -> { job: { id, status, progress, error, file_name }, url?, rallies?, sound? }
 //                                       url: the copy to watch, a link that works for LINK_SECONDS. Players only get
 //                                       finished videos; organizers and the super also see the status while it's analysed.
 // Super only (uploading goes straight from the browser to storage, in parts, with these links):
@@ -12,6 +12,8 @@
 //   { action: 'finish', job, parts: [{ n, etag }] } -> { job: {...} }  joins the parts, starts the analysis
 //   { action: 'retry', job }         -> { job: {...} }              analyses the upload again (kept for 7 days)
 //   { action: 'cancel', job }        -> { ok }
+//   { action: 'sound', games? }      -> { started }   score the sound (for highlight suggestions) of videos analysed
+//                                       before that existed: the given games', or every one still without, 25 at a time
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
 import { canWatch, LINK_SECONDS, originalKey, PART_BYTES, parts as partsOf, sign, viewingKey } from '../lib/video.mjs';
@@ -82,11 +84,12 @@ export default async (req) => {
         if (!bucket) return json({ error: NOT_SET_UP }, 503);
         out.url = bucket.getUrl(job.viewing_key, LINK_SECONDS);
         out.rallies = job.result?.rallies ?? [];
+        out.sound = job.result?.sound ?? null;
       }
       return json(out);
     }
 
-    if (!['start', 'resume', 'finish', 'retry', 'cancel'].includes(body.action)) return json({ error: 'Unknown action' }, 400);
+    if (!['start', 'resume', 'finish', 'retry', 'cancel', 'sound'].includes(body.action)) return json({ error: 'Unknown action' }, 400);
     if (me.role !== 'super') return json({ error: 'Only the super uploads videos' }, 403);
     if (!ready) return json({ error: NOT_SET_UP }, 503);
 
@@ -101,6 +104,18 @@ export default async (req) => {
         body: JSON.stringify({ id, game_id: g.id, uploaded_by: me.id, file_name: name, size_bytes: size, original_key: key, upload_id: uploadId }) })
         .catch(async e => { await bucket.abortUpload(key, uploadId).catch(() => {}); throw e; });
       return json({ job: id, partBytes: PART_BYTES, parts: nums.map(n => ({ n, url: bucket.partUrl(key, uploadId, n) })) });
+    }
+
+    if (body.action === 'sound') {
+      const only = Array.isArray(body.games) ? body.games.map(Number).filter(Number.isInteger) : null;
+      const jobs = await rest(`video_jobs?status=eq.done&viewing_key=not.is.null&result->sound=is.null&select=id,viewing_key${only ? `&game_id=in.(${only.join(',') || 0})` : '&game_id=not.is.null'}&limit=25`);
+      let started = 0;
+      for (const j of jobs) {
+        const send = JSON.stringify({ kind: 'sound', job: j.id, source: bucket.getUrl(j.viewing_key, 12 * 3600), callback: `${origin}/.netlify/functions/video-worker` });
+        const res = await fetch(process.env.MODAL_VIDEO_URL, { method: 'POST', headers: { 'content-type': 'application/json', ...sign(send, process.env.VIDEO_WORKER_SECRET) }, body: send }).catch(() => null);
+        if (res?.ok) started++;
+      }
+      return json({ started });
     }
 
     const job = await jobOf(body.job);
