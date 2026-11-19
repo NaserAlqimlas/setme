@@ -385,7 +385,7 @@ export async function profilePage(id) {
     const sg = await q(sb.from('signups').select('event_id,player_id,created_at').in('event_id', ev.map(e => e.id)).order('created_at')).catch(() => []);
     const lines = ev.map(e => { const list = sg.filter(x => x.event_id === e.id); const at = list.findIndex(x => x.player_id === id);
       return at < 0 ? null : h('li', {}, h('b', {}, dayTitle(e.played_on)), ': ', at < e.cap ? 'you\'re in' : `number ${at - e.cap + 1} on the waitlist`); }).filter(Boolean);
-    parts.push(h('div', { class: 'card' }, h('h3', {}, 'Signed up for'), lines.length ? h('ul', {}, lines) : h('p', { class: 'muted' }, 'Nothing coming up.', id === me.player_id ? [' ', h('a', { href: '#signup' }, 'Sign up')] : [])));
+    parts.push(h('div', { class: 'card' }, h('h3', {}, 'Signed up for'), lines.length ? h('ul', {}, lines) : h('p', { class: 'muted' }, 'Nothing coming up.')));
   }
 
   // Super only: ratings, results against ratings, match stats.

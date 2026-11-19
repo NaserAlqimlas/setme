@@ -15,7 +15,8 @@ const app = document.getElementById('app');
 const PAGES = [
   { id: 'rate', label: 'Rate', roles: ['rater', 'organizer', 'super'], view: ratePage },
   // club: only once supabase/club.sql has run (profiles then have player_id), so nothing changes before it.
-  { id: 'signup', label: 'Sign up', roles: ['player', 'rater', 'organizer', 'super'], view: signupPage, club: true },
+  // hidden: not in the nav (no one used it), but #signup still opens it.
+  { id: 'signup', label: 'Sign up', roles: ['player', 'rater', 'organizer', 'super'], view: signupPage, club: true, hidden: true },
   { id: 'lineup', label: 'Lineup', roles: ['player', 'rater'], view: lineupPage, club: true },
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
@@ -98,7 +99,7 @@ async function render() {
   } catch {
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
-  // Players (linked to a player) start on Me, then Lineup, Games, then Sign up, which few use. Everyone else keeps PAGES order.
+  // Players (linked to a player) start on Me, then Lineup and Games. Everyone else keeps PAGES order.
   const playerFirst = me.role === 'player' && !!me.player_id;
   const PLAYER_ORDER = ['lineup', 'games', 'signup'];
   const pages = PAGES.filter(p => p.roles.includes(me.role) && (!p.club || 'player_id' in me))
@@ -107,11 +108,12 @@ async function render() {
   const reel = location.hash.match(/^#(reel|bloopers)\/(\d+)(?:\/(\d+))?$/);
   // #player/12 opens a player's profile (not in the nav, except your own as "Me").
   const profileId = reel ? null : Number(location.hash.match(/^#player\/(\d+)$/)?.[1]) || (playerFirst && !pages.some(p => '#' + p.id === location.hash) ? me.player_id : null);
+  const shown = pages.filter(p => !p.hidden);
   const current = reel && pages.some(p => p.id === 'games') ? { ...pages.find(p => p.id === 'games'), view: () => reelPage(Number(reel[2]), reel[3] ? Number(reel[3]) : null, reel[1] === 'bloopers' ? 'blooper' : 'highlight') }
-    : profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || pages[0];
+    : profileId ? { id: 'profile', view: () => profilePage(profileId) } : pages.find(p => '#' + p.id === location.hash) || shown[0] || pages[0];
   const meLink = () => nav.append(h('a', { href: `#player/${me.player_id}`, class: profileId === me.player_id ? 'on' : null }, 'Me'));
   if (playerFirst) meLink();
-  if (pages.length > 1 || me.player_id) for (const p of pages) nav.append(h('a', { href: '#' + p.id, class: p.id === current.id ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
+  if (shown.length > 1 || me.player_id) for (const p of shown) nav.append(h('a', { href: '#' + p.id, class: p.id === current.id ? 'on' : null }, typeof p.label === 'function' ? p.label(me.role) : p.label));
   if (me.player_id && !playerFirst) meLink();
   who.append(accountMenu());
   if (me.role === 'super') mountTray();
