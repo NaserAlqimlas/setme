@@ -948,6 +948,14 @@ function repeatLine(repeats = [], days) {
 }
 
 // ---------- drafts (organizers) ----------
+
+const PENCIL = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+const BIN = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>';
+function iconBtn(svg, label, title, onclick, extra = '') {
+  const b = h('button', { type: 'button', class: `up-icon ${extra}`.trim(), 'aria-label': label, title, onclick });
+  b.innerHTML = svg;
+  return b;
+}
 // Lineups kept to compare or come back to (supabase/club.sql). Returns true once saved.
 async function saveDraft(teams, opts, label) {
   const name = prompt('Name this draft', `${label} · ${dayTitle(gameDate) || 'no date'}`);
@@ -996,24 +1004,21 @@ function draftsCard(ownTeams, checkOptions) {
     if (!drafts.length) return card.replaceChildren();
     const body = h('tbody');
     const nowRes = new Map(); // draft id -> its check with the raters picked above (Gap now), for Compare
-    // Open, Rename and Delete as a dropdown. A native <select>: a pop-up menu would be cut off by the table's scroll box.
+    // Open as its own button; rename (pencil) and delete (bin) as icons beside it.
     const draftActions = d => {
-      const actions = {
-        open: () => ownTeams.load(d.teams, d.name, d.id),
-        rename: async () => {
-          const name = prompt('Rename this draft', d.name)?.trim();
-          if (!name || name === d.name) return;
-          try { await q(sb.from('drafts').update({ name }).eq('id', d.id)); ownTeams.renamed(d.id, name); card.refresh(); } catch (e) { toast(e.message); }
-        },
-        delete: async () => {
-          if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
-          try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
-        },
+      const rename = async () => {
+        const name = prompt('Rename this draft', d.name)?.trim();
+        if (!name || name === d.name) return;
+        try { await q(sb.from('drafts').update({ name }).eq('id', d.id)); ownTeams.renamed(d.id, name); card.refresh(); } catch (e) { toast(e.message); }
       };
-      const sel = h('select', { class: 'draft-actions', 'aria-label': `Actions for ${d.name}` },
-        h('option', { value: '' }, 'Actions'), h('option', { value: 'open' }, 'Open'), h('option', { value: 'rename' }, 'Rename'), h('option', { value: 'delete' }, 'Delete'));
-      sel.onchange = () => { const act = actions[sel.value]; sel.value = ''; act?.(); };
-      return sel;
+      const remove = async () => {
+        if (!await ask(`Delete the draft "${d.name}"?`, 'Teams saved for a day aren\'t affected.', 'Delete draft')) return;
+        try { await q(sb.from('drafts').delete().eq('id', d.id)); card.refresh(); } catch (e) { toast(e.message); }
+      };
+      return h('div', { class: 'draft-acts' },
+        h('button', { type: 'button', class: 'ghost sm', 'aria-label': `Open ${d.name}`, onclick: () => ownTeams.load(d.teams, d.name, d.id) }, 'Open'),
+        iconBtn(PENCIL, `Rename ${d.name}`, 'Rename', rename),
+        iconBtn(BIN, `Delete ${d.name}`, 'Delete', remove, 'danger-icon'));
     };
     const row = d => {
       const cells = { was: h('td', { class: 'num muted' }, '…'), gap: h('td', { class: 'num muted' }, '…'), off: h('td', { class: 'num muted' }, '…'), rep: h('td', { class: 'num muted' }, '…') };
