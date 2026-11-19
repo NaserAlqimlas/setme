@@ -782,8 +782,10 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
     const tn = teamNames(opt.teams.map(t => t.players));
     const text = opt.teams.map((t, k) => `${tn[k]}: ${t.players.map(p => p.name + setterMark(p.setting)).join(', ')}`).join('\n');
     // Whose numbers the cards show. null = combined (what the teams were judged on), else one rater's alone.
-    const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null },
-      ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed }))];
+    // shares[k][j]: what player j adds to team k's total (null from an older server: not shown).
+    const views = [{ id: null, name: 'Combined', totals: opt.teams.map(t => t.weighted), sums: opt.teams.map(t => t.sums), guessed: null,
+      shares: opt.teams.map(t => t.players.map(p => p.strength ?? null)) },
+      ...(opt.byRater ?? []).map(r => ({ id: r.rater_id, name: r.name, totals: r.totals, sums: r.sums, guessed: r.guessed, shares: r.players ?? null }))];
     let view = views.find(v => v.id === viewId) ?? views[0];
     const withSet = opt.teams.some(t => t.players.some(p => p.allGame));
     // One short line under the tabs; the full story folds into Details.
@@ -877,10 +879,12 @@ function showTeams(res, { title, locked, onLock, view: viewId = null, onView, on
       grid.replaceChildren(...opt.teams.map((t, k) => h('article', { class: `team${picked?.[0] === k ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k]), detail && h('span', { class: 'total', title: view.guessed?.[k] ? `${view.guessed[k]} not rated by ${view.name}; their level until rated was used` : null },
           h('small', {}, 'Total'), num2(totals[k]), view.guessed?.[k] ? '*' : '')),
-        h('ul', {}, t.players.map(p => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
+        h('ul', {}, t.players.map((p, j) => h('li', { class: hints?.some(x => x.id === p.id) ? 'suggested' : null }, ...name(k, p),
           hints && rank(p.id),
           off.has(p.id) && h('span', { class: 'badge off-list', title: `${p.name} isn't on the playing list. Tap them to replace them.` }, 'Not playing'),
           setterBadge(p, onSetter),
+          detail && view.shares?.[k]?.[j] != null && h('span', { class: 'share', title: `${p.name} adds ${num2(view.shares[k][j])} to ${tn[k]}'s total${view.id ? ` (${view.name.split(/[\s.@]/)[0]}'s ratings)` : ''}` },
+            h('span', { class: 'visually-hidden' }, 'adds '), num2(view.shares[k][j])),
           onLock && lk && p.id != null && h('button', { type: 'button', class: 'lock', 'data-lock': p.id, 'aria-pressed': String(lk.has(p.id)),
             title: lk.has(p.id) ? `${p.name} stays on this team (tap to unlock)` : `Keep ${p.name} on this team`,
             'aria-label': lk.has(p.id) ? `Unlock ${p.name}` : `Lock ${p.name} on this team`, onclick: () => { focusAfterDraw(`[data-lock="${p.id}"]`); onLock(p.id, i); } }, lockIcon(lk.has(p.id)))))),
