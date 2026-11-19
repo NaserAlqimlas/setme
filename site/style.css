@@ -274,6 +274,8 @@ button.badge-btn[aria-pressed=false] { background: transparent; color: var(--fg)
 .team li .lock:hover { background: var(--surface-2); color: var(--fg); filter: none; }
 .team li .lock[aria-pressed=true] { background: var(--surface-2); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .team li .badge + .lock { margin-left: 6px; }
+.team li .share { margin-left: auto; padding-left: 8px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
+.team li .share + .lock { margin-left: 6px; }
 .suggestions { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .problems { margin: 0 0 12px; padding-left: 20px; color: var(--warn-fg); }
 .problems li + li { margin-top: 2px; }

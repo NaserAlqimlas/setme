@@ -367,7 +367,9 @@ export function describeTeam(members, skills) {
   // sums.setting: setting of the team's all-game setters (0 when nobody sets all game).
   const sums = Object.fromEntries([...SKILLS.map(s => [s, ps.reduce((a, p) => a + skills.get(p.id)[s], 0)]), ['setting', ps.reduce((a, p) => a + (skills.get(p.id).setEff ?? 0), 0)]]);
   return {
-    players: ps.map(p => ({ id: p.id, name: p.name, setting: p.setting, gender: p.gender, weak: weakPasser(skills.get(p.id)), allGame: !!skills.get(p.id).allGame })),
+    // strength: what the player adds to the team's total (weighted). Organizers see it on the team cards.
+    players: ps.map(p => ({ id: p.id, name: p.name, setting: p.setting, gender: p.gender, weak: weakPasser(skills.get(p.id)), allGame: !!skills.get(p.id).allGame,
+      strength: strength(skills.get(p.id)) })),
     sums,
     weighted: ps.reduce((a, p) => a + strength(skills.get(p.id)), 0),
   };

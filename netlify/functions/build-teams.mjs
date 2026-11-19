@@ -7,7 +7,8 @@
 // Organizers and super can add suggestRater: id to work out problems and suggestions from that one rater's ratings (cards still get all).
 // POST { predict: true, teams } returns only each team's numbers ({ teams: [{ weighted, sums, size, women, setters, unrated }] }),
 // stored with a game's score on the Scores page. Team totals only, like everything organizers get.
-// Organizers get team numbers, combined and per rater (byRater). Player-level ratings never leave the server for organizers.
+// Organizers get team numbers, combined and per rater (byRater), and what each player adds to their team's total
+// (players[].strength, and byRater[].players). The skill-by-skill ratings of a player never leave the server for organizers.
 // variety (default on): the last game days' teams before playedOn (sessions) are passed to the builder so the same
 // teammates don't keep landing together; each option lists its repeat pairs (names only, nothing from ratings).
 // spreadWomen (default on): split women evenly across teams (and flag it when they aren't); false ignores gender.
@@ -194,6 +195,7 @@ export default async (req) => {
       opt.byRater = per.map(({ id, name, c, sk }) => ({
         rater_id: id, name,
         totals: opt.teams.map(t => t.players.reduce((a, p) => a + strength(sk.get(p.id)), 0)),
+        players: opt.teams.map(t => t.players.map(p => strength(sk.get(p.id)))),   // each player's share, in team order
         sums: opt.teams.map(t => Object.fromEntries([...SKILLS.map(s => [s, t.players.reduce((a, p) => a + sk.get(p.id)[s], 0)]), ['setting', t.players.reduce((a, p) => a + sk.get(p.id).setEff, 0)]])),
         guessed: opt.teams.map(t => t.players.filter(p => c.get(p.id).guess).length),
       }));
