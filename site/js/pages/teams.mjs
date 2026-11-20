@@ -996,7 +996,7 @@ let draftsOk = false;
 // switches picked above and today's setters, exactly as opening it would, so "Gap now" is the gap you see when you open
 // it and drafts compare on the same ratings). Issues and repeats are from now.
 let raterNames = null; // id -> name, from build-teams (organizers can't read profiles)
-// Compare two drafts: whether the panel is open and which two, kept while the card refreshes.
+// Compare drafts: whether the panel is open and which ones (2 to 4), kept while the card refreshes.
 let compareOpen = false, compareIds = [];
 function draftsCard(ownTeams, checkOptions) {
   const card = h('div', { class: 'card', hidden: true });
@@ -1085,38 +1085,49 @@ function draftsCard(ownTeams, checkOptions) {
   return card;
 }
 
-// Two drafts side by side: the numbers (with the raters picked above, like Gap now), then the teams paired up by
-// shared players, so it's clear who moves between them. live(): false once the card has refreshed.
+// Two to four drafts side by side: the numbers (with the raters picked above, like Gap now), then their teams in
+// columns. Each draft's teams are lined up with the first draft's by shared players, so it's clear who moves.
+// live(): false once the card has refreshed.
+const COMPARE_MAX = 4;
 function compareDrafts(drafts, nowRes, raters, live) {
   const ids = drafts.map(d => d.id);
-  if (!ids.includes(compareIds[0])) compareIds[0] = ids[0];
-  if (!ids.includes(compareIds[1]) || compareIds[1] === compareIds[0]) compareIds[1] = ids.find(id => id !== compareIds[0]);
+  // Keep the picks that still exist, no repeats; at least two, at most four (or as many drafts as there are).
+  compareIds = [...new Set(compareIds.filter(id => ids.includes(id)))].slice(0, COMPARE_MAX);
+  while (compareIds.length < 2) compareIds.push(ids.find(id => !compareIds.includes(id)));
   const box = h('div', { class: 'draft-compare' });
   const out = h('div');
+  const ORD = ['First', 'Second', 'Third', 'Fourth'];
   const picker = k => {
-    const sel = h('select', { 'aria-label': k ? 'Second draft' : 'First draft' }, drafts.map(d => h('option', { value: d.id, selected: d.id === compareIds[k] }, d.name)));
+    const sel = h('select', { 'aria-label': `${ORD[k]} draft` }, drafts.map(d => h('option', { value: d.id, selected: d.id === compareIds[k], disabled: d.id !== compareIds[k] && compareIds.includes(d.id) }, d.name)));
     sel.onchange = () => { compareIds[k] = drafts.find(d => String(d.id) === sel.value).id; paint(); };
-    return sel;
+    return h('div', { class: 'compare-slot' }, sel,
+      compareIds.length > 2 && h('button', { type: 'button', class: 'up-icon', 'aria-label': `Stop comparing ${drafts.find(d => d.id === compareIds[k])?.name}`, title: 'Remove from the comparison',
+        onclick: () => { compareIds.splice(k, 1); paint(); } }, '✕'));
   };
-  const toggleBtn = h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(compareOpen) }, compareOpen ? 'Hide comparison' : 'Compare two drafts');
-  toggleBtn.onclick = () => { compareOpen = !compareOpen; toggleBtn.textContent = compareOpen ? 'Hide comparison' : 'Compare two drafts'; toggleBtn.setAttribute('aria-expanded', String(compareOpen)); paint(); };
+  const addBtn = () => {
+    const next = ids.find(id => !compareIds.includes(id));
+    if (compareIds.length >= COMPARE_MAX || next == null) return null;
+    return h('button', { type: 'button', class: 'ghost sm', onclick: () => { compareIds.push(next); paint(); } }, '+ Add a draft');
+  };
+  const label = () => compareOpen ? 'Hide comparison' : 'Compare drafts';
+  const toggleBtn = h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(compareOpen) }, label());
+  toggleBtn.onclick = () => { compareOpen = !compareOpen; toggleBtn.textContent = label(); toggleBtn.setAttribute('aria-expanded', String(compareOpen)); paint(); };
 
   const paint = async () => {
     if (!compareOpen) return box.replaceChildren(toggleBtn);
-    const [a, b] = compareIds.map(id => drafts.find(d => d.id === id));
-    box.replaceChildren(toggleBtn, h('div', { class: 'row compare-pick' }, picker(0), h('span', { class: 'muted' }, 'vs'), picker(1)), out);
-    if (a.id === b.id) return out.replaceChildren(h('p', { class: 'muted' }, 'Pick two different drafts.'));
+    const picked = [...compareIds], ds = picked.map(id => drafts.find(d => d.id === id)), n = ds.length;
+    box.replaceChildren(toggleBtn, h('div', { class: 'row compare-pick' }, picked.map((_, k) => picker(k)), addBtn()), out);
     out.replaceChildren(h('p', { class: 'muted small' }, 'Checking…'));
-    let ra, rb;
-    try { [ra, rb] = await Promise.all([nowRes.get(a.id), nowRes.get(b.id)]); }
+    let rs;
+    try { rs = await Promise.all(ds.map(d => nowRes.get(d.id))); }
     catch (e) { return out.replaceChildren(h('p', { class: 'warn' }, e.message)); }
-    if (!live() || compareIds[0] !== a.id || compareIds[1] !== b.id) return;
-    const ta = ra.options[0].teams, tb = rb.options[0].teams;
-    const m = matchTeams(ta.map(t => t.players.map(p => p.id)), tb.map(t => t.players.map(p => p.id)));
-    const name = new Map([...ta, ...tb].flatMap(t => t.players.map(p => [p.id, p.name])));
-    const spread = (ts, f) => { const v = ts.map(f); return Math.max(...v) - Math.min(...v); };
+    if (!live() || picked.join() !== compareIds.join()) return;
+    const ts = rs.map(r => r.options[0].teams);
+    const idsOf = t => t.map(x => x.players.map(p => p.id));
+    const name = new Map(ts.flat().flatMap(t => t.players.map(p => [p.id, p.name])));
+    const spread = (t, f) => { const v = t.map(f); return Math.max(...v) - Math.min(...v); };
 
-    // The numbers: lower is better in every row, and the better one is marked.
+    // The numbers: lower is better in every row, and the best is marked (when they aren't all the same).
     const rows = [
       ['Gap', 'Strongest team minus weakest', t => spread(t, x => x.weighted), r => r.options[0].teams],
       ['Issues', 'Problems: setters, weak passers bunched, combos…', null, r => r.problems?.length ?? 0],
@@ -1124,43 +1135,65 @@ function compareDrafts(drafts, nowRes, raters, live) {
       'Spread between teams',
       ...[...SKILLS, 'setting'].map(s => [s === 'setting' ? 'Setting' : LABEL[s], `Best team's ${s === 'setting' ? 'setting' : LABEL[s].toLowerCase()} minus worst team's`, t => spread(t, x => x.sums[s]), r => r.options[0].teams]),
     ];
-    const cellOf = (val, other) => h('td', { class: `num${val != null && other != null && val < other - 1e-9 ? ' better' : ''}` }, val == null ? '–' : Number.isInteger(val) ? String(val) : fmt(val));
-    const numbers = h('table', { class: 'compare-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', { class: 'num' }, a.name), h('th', { class: 'num' }, b.name))),
+    const numbers = h('div', { class: 'compare-scroll' }, h('table', { class: 'compare-table', 'data-n': n },
+      h('thead', {}, h('tr', {}, h('th', {}, ''), ds.map(d => h('th', { class: 'num' }, d.name)))),
       h('tbody', {}, rows.map(row => {
-        if (typeof row === 'string') return h('tr', { class: 'group' }, h('th', { colspan: 3, scope: 'colgroup' }, row));
+        if (typeof row === 'string') return h('tr', { class: 'group' }, h('th', { colspan: n + 1, scope: 'colgroup' }, row));
         const [label, tip, f, get] = row;
-        const va = f ? f(get(ra)) : get(ra), vb = f ? f(get(rb)) : get(rb);
-        return h('tr', {}, h('th', { scope: 'row', title: tip }, label), cellOf(va, vb), cellOf(vb, va));
-      })));
+        const vals = rs.map(r => f ? f(get(r)) : get(r));
+        const known = vals.filter(v => v != null), lo = Math.min(...known), hi = Math.max(...known);
+        return h('tr', {}, h('th', { scope: 'row', title: tip }, label), vals.map(v =>
+          h('td', { class: `num${v != null && known.length > 1 && hi - lo > 1e-9 && v < lo + 1e-9 ? ' better' : ''}` }, v == null ? '–' : Number.isInteger(v) ? String(v) : fmt(v))));
+      }))));
 
-    // The teams paired up: who stays, who leaves (and for which team), who joins.
-    const teamOfB = new Map(tb.flatMap((t, j) => t.players.map(p => [p.id, j])));
-    const teamOfA = new Map(ta.flatMap((t, i) => t.players.map(p => [p.id, i])));
-    const side = (t, i, stay, which) => !t ? h('div', { class: 'compare-team empty muted small' }, 'No team') :
-      h('div', { class: 'compare-team' },
-        h('div', { class: 'compare-team-head' }, h('b', {}, `Team ${i + 1}`), h('span', { class: 'muted small' }, `total ${fmt(t.weighted)}`)),
+    // The teams in columns, each draft's lined up with the first draft's teams (extra teams at the end).
+    const base = ts[0];
+    const matches = ts.map((t, k) => k ? matchTeams(idsOf(base), idsOf(t)) : null);
+    const order = ts.map((t, k) => {
+      if (!k) return base.map((_, i) => i);
+      return matches[k].pairs.map(p => p.b);   // pair i lines up with the first draft's team i (or an extra row)
+    });
+    const rowsN = Math.max(...order.map(o => o.length));
+    const baseTeam = new Map(base.flatMap((t, i) => t.players.map(p => [p.id, i])));
+    const homeIn = ts.map(t => new Map(t.flatMap((x, j) => x.players.map(p => [p.id, j]))));
+    const cell = (k, i) => {
+      const j = order[k][i], t = j == null ? null : ts[k][j];
+      if (!t) return h('div', { class: 'compare-team empty muted small' }, 'No team');
+      return h('div', { class: 'compare-team' },
+        h('div', { class: 'compare-team-head' }, h('b', {}, `Team ${j + 1}`), h('span', { class: 'muted small' }, `total ${fmt(t.weighted)}`)),
         h('ul', {}, t.players.map(p => {
-          const moving = !stay.includes(p.id);
-          const where = which === 'a' ? teamOfB.get(p.id) : teamOfA.get(p.id);
-          const note = !moving ? null : where == null ? (which === 'a' ? 'not in the other draft' : 'new to this draft')
-            : which === 'a' ? `to Team ${where + 1}` : `from Team ${where + 1}`;
-          return h('li', { class: moving ? 'moving' : null }, p.name, note && h('span', { class: 'muted small' }, ` · ${note}`));
+          let note = null;
+          if (k) {
+            // Against the first draft: where this player was there.
+            const was = baseTeam.get(p.id);
+            if (was == null) note = 'not in the first draft';
+            else if (was !== i) note = `Team ${was + 1} in the first draft`;
+          } else if (n === 2) {
+            // With just two drafts the first column says where each mover goes, too.
+            const to = homeIn[1].get(p.id);
+            if (to == null) note = 'not in the other draft';
+            else if (order[1][i] !== to) note = `to Team ${to + 1}`;
+          }
+          return h('li', { class: note ? 'moving' : null }, p.name, note && h('span', { class: 'muted small' }, ` · ${note}`));
         })));
-    const teams = h('div', { class: 'compare-teams' },
-      h('div', { class: 'compare-team-labels' }, h('b', {}, a.name), h('b', {}, b.name)),
-      m.pairs.map(p => h('div', { class: 'compare-pair' },
-        side(p.a == null ? null : ta[p.a], p.a, p.stay, 'a'),
-        side(p.b == null ? null : tb[p.b], p.b, p.stay, 'b'))));
-    const moves = m.moved === 0 && !m.onlyA.length && !m.onlyB.length ? 'Same teams: nobody changes team.'
-      : [m.moved && `${m.moved} ${m.moved === 1 ? 'player changes' : 'players change'} team`,
-        m.onlyA.length && `${m.onlyA.map(id => name.get(id)).join(', ')} only in ${a.name}`,
-        m.onlyB.length && `${m.onlyB.map(id => name.get(id)).join(', ')} only in ${b.name}`].filter(Boolean).join(' · ') + '.';
-    const issues = [[a, ra], [b, rb]].filter(([, r]) => r.problems?.length);
+    };
+    const teams = h('div', { class: 'compare-scroll' }, h('div', { class: 'compare-grid', style: `--cols: ${n}` },
+      ds.map(d => h('b', { class: 'compare-col-label' }, d.name)),
+      Array.from({ length: rowsN }, (_, i) => ds.map((_, k) => cell(k, i))).flat()));
+    const movesOf = k => {
+      const m = matches[k];
+      return m.moved === 0 && !m.onlyA.length && !m.onlyB.length ? 'same teams'
+        : [m.moved && `${m.moved} ${m.moved === 1 ? 'player changes' : 'players change'} team`,
+          m.onlyA.length && `${m.onlyA.map(id => name.get(id)).join(', ')} only in ${ds[0].name}`,
+          m.onlyB.length && `${m.onlyB.map(id => name.get(id)).join(', ')} only in ${ds[k].name}`].filter(Boolean).join(', ');
+    };
+    const moves = n === 2 ? h('p', {}, h('b', {}, (s => s[0].toUpperCase() + s.slice(1))(movesOf(1)) + '.'))
+      : h('ul', { class: 'compare-moves small' }, ds.slice(1).map((d, k) => h('li', {}, h('b', {}, d.name), ` vs ${ds[0].name}: ${movesOf(k + 1)}.`)));
+    const issues = ds.map((d, k) => [d, rs[k]]).filter(([, r]) => r.problems?.length);
     out.replaceChildren(
-      h('p', { class: 'muted small' }, `Both checked with ${raters} and today's setters, like Gap now. Lower is more even; the better number is marked.`),
+      h('p', { class: 'muted small' }, `${n === 2 ? 'Both' : `All ${n}`} checked with ${raters} and today's setters, like Gap now. Lower is more even; the best number is marked.`),
       numbers,
-      h('p', {}, h('b', {}, moves)),
+      moves,
       teams,
       ...issues.map(([d, r]) => h('div', {}, h('p', { class: 'small', style: 'margin:10px 0 2px' }, h('b', {}, `Issues in ${d.name}`)), h('ul', { class: 'problems' }, r.problems.map(x => h('li', {}, x))))));
   };
