@@ -213,16 +213,19 @@ export async function teamsPage() {
   // Organizers can only read their own rating rows, so the server says who has rated.
   const raterList = me.role === 'super' ? undefined
     : await callFn('build-teams', { listRaters: true }).then(({ raters }) => ({ ratings: raters.map(r => ({ rater_id: r.id })), profiles: raters })).catch(() => null);
+  // Raters or switches changed: whatever teams are on screen stay, judged again with them (built options or your own).
+  let rejudgeBuilt = () => {};
+  const refreshShown = () => { if (out.dataset.shows === 'built') rejudgeBuilt(); else ownTeams.refresh(); drafts.refresh(); };
   const raterPick = raterList === null ? null : await raterPicker(ids => {
     raterIds = ids;
-    ownTeams.refresh(); drafts.refresh();
+    if (ids?.length !== 0) refreshShown(); else drafts.refresh();
     const none = ids?.length === 0;
     btn.disabled = none || !playing.length; needRater.hidden = !none;
     if (none) options.open = true;
     if (!none) newPlayers.refresh();
     paintOptions();
   }, raterList);
-  const switched = (set) => v => { set(v); ownTeams.refresh(); drafts.refresh(); paintOptions(); };
+  const switched = (set) => v => { set(v); refreshShown(); paintOptions(); };
   options.body.append(
     raterPick ?? '', needRater,
     h('div', { class: 'switches' },
@@ -279,7 +282,8 @@ export async function teamsPage() {
   paintSizes();
   const sendCombos = () => combos.map(({ player_a, player_b, kind }) => ({ player_a, player_b, kind }));
   // Built options on screen. Once you swap someone in an option it's checked like Your own teams (same numbers, problems,
-  // suggestions, locks); the earlier version is kept for Undo. The raters and setters it was built with stay.
+  // suggestions, locks); the earlier version is kept for Undo. Changing raters or switches keeps the teams and judges
+  // them again with the new ones (rejudgeBuilt); Build teams makes new ones.
   // Per option i: checked[i] = the last check's response, undos[i] = earlier [option, check] pairs, locks[i] = locked ids.
   let built = null, builtWith = null, view = null, pool = null, open = 0;
   let checked = [], undos = [], locks = [], changes = [];
@@ -294,6 +298,15 @@ export async function teamsPage() {
     catch (e) { toast(e.message); draw(); }
   };
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
+  rejudgeBuilt = async () => {
+    if (!built) return;
+    builtWith = { ...builtWith, raters: raterIds, allGame: allGameIds(playing), ...buildExtras() };
+    if (view && raterIds && !raterIds.includes(view)) view = null;
+    out.classList.add('busy');
+    try { await Promise.all(built.options.map((_, i) => check(i, ids(i)))); draw(); }
+    catch (e) { toast(e.message); }
+    out.classList.remove('busy');
+  };
   // Kept after each change. Undo goes back 10 steps per option at most, and is dropped if storage is full.
   const keepBuilt = () => {
     const state = { built, builtWith, checked, locks: locks.map(l => l ? [...l] : null), view, open };
@@ -322,6 +335,8 @@ export async function teamsPage() {
   })); };
   const undo = i => { [built.options[i], checked[i]] = undos[i].pop(); changes[i] = null; focusAfterDraw(FOCUS_VERDICT); draw(); };
   ownTeams.builtEdited = () => undos.some(u => u?.length);
+  const onSetterPlan = () => { if (!out.isConnected) return document.removeEventListener('setterplan', onSetterPlan); if (out.dataset.shows === 'built') rejudgeBuilt(); };
+  document.addEventListener('setterplan', onSetterPlan);
   btn.onclick = async () => {
     if (out.dataset.shows === 'built' && ownTeams.builtEdited() && !await ask('Build new teams?', 'The swaps you made on the options below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
     if (out.dataset.shows === 'own' && ownTeams.edited() && !await ask('Build new teams?', 'The swaps you made on your own teams below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
@@ -508,7 +523,8 @@ function ownTeamsCard(out, getOptions) {
         check),
       preview));
   // Ratings from changed at the top: re-check teams already on screen.
-  card.refresh = () => { if (current && out.isConnected) run().catch(e => toast(e.message)); };
+  // Not while built options are on screen: those are judged again on their own (rejudgeBuilt), never replaced by these.
+  card.refresh = () => { if (current && out.isConnected && out.dataset.shows !== 'built') run().catch(e => toast(e.message)); };
   // Open a saved draft: checked like pasted teams (swaps, suggestions, locks, Save for scores).
   card.load = async (teams, title, id = null) => {
     if (!await okToReplace(`Open "${title}"`, 'Open draft')) return;
