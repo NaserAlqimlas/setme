@@ -18,10 +18,16 @@ let sessionCombos = [];
 // how their teams have done against their ratings (off), and split women evenly across teams (on).
 let mixTeammates = true, adjustResults = false, spreadWomen = true;
 const buildExtras = () => ({ variety: mixTeammates, resultsAdjust: adjustResults, spreadWomen, playedOn: gameDate || null });
-// Which setters set all game, for this session (not saved): player id -> true / false. Not set yet = main setters do.
+// Which setters set all game, for this session (not saved): player id -> true / false, or 'off' for a setter who
+// doesn't want to set today (built like anyone else: not spread as a setter, setting doesn't count). Not set yet =
+// main setters set all game. For good, a player's Setter is set to No on Players.
 const setterPlan = new Map();
-const setsAllGame = p => setterPlan.get(p.id) ?? p.setting === 'M';
+const notSetting = p => setterPlan.get(p.id) === 'off';
+const setsAllGame = p => !notSetting(p) && (setterPlan.get(p.id) ?? p.setting === 'M') === true;
 const allGameIds = players => players.filter(p => p.setting && p.setting !== 'N' && setsAllGame(p)).map(p => p.id);
+const noSetIds = players => players.filter(p => p.setting && p.setting !== 'N' && notSetting(p)).map(p => p.id);
+// The setter plan as build-teams takes it.
+const setterSend = players => ({ allGame: allGameIds(players), noSet: noSetIds(players) });
 const setterPlanChanged = () => document.dispatchEvent(new Event('setterplan'));
 
 // A card that folds: the title and a line saying how it's set now; tap to open.
@@ -41,13 +47,16 @@ function settersCard(playing) {
   const paint = () => {
     if (!card.isConnected && card.dataset.drawn) return document.removeEventListener('setterplan', paint);
     card.dataset.drawn = '1';
-    const all = setters.filter(setsAllGame).map(p => firstName(p.name));
-    card.state.textContent = all.length ? `${all.length > 2 ? all.length : all.join(' and ')} set${all.length === 1 ? 's' : ''} all game${all.length < setters.length ? `, ${setters.length - all.length} rotate${setters.length - all.length === 1 ? 's' : ''}` : ''}` : 'Everyone rotates';
+    const all = setters.filter(setsAllGame).map(p => firstName(p.name)), off = setters.filter(notSetting).map(p => firstName(p.name));
+    const rot = setters.length - all.length - off.length;
+    card.state.textContent = [all.length && `${all.length > 2 ? all.length : all.join(' and ')} set${all.length === 1 ? 's' : ''} all game`,
+      rot > 0 && (all.length ? `${rot} rotate${rot === 1 ? 's' : ''}` : 'Everyone else rotates'),
+      off.length && `${off.length > 2 ? off.length : off.join(' and ')} not setting`].filter(Boolean).join(', ') || 'Everyone rotates';
     card.body.replaceChildren(
-      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'A setter who sets the whole game counts for their setting; their hitting and passing count for less. Setters who rotate count like everyone else.'),
+      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'A setter who sets the whole game counts for their setting; their hitting and passing count for less. Setters who rotate count like everyone else. Not setting: built as a regular player today, so teams don\'t count on them to set. For good, set their Setter to No on Players.'),
       h('div', { class: 'new-players' }, setters.map(p => h('div', { class: 'new-player' },
         h('span', {}, h('b', {}, p.name), ' ', h('span', { class: `badge ${p.setting === 'M' ? 'set' : 'backup'}` }, p.setting === 'M' ? 'Setter' : 'Backup')),
-        seg([[true, 'All game'], [false, 'Rotates']], setsAllGame(p), v => { setterPlan.set(p.id, v); setterPlanChanged(); }, `${p.name} sets`)))));
+        seg([[true, 'All game'], [false, 'Rotates'], ['off', 'Not setting']], notSetting(p) ? 'off' : setsAllGame(p), v => { setterPlan.set(p.id, v); setterPlanChanged(); }, `${p.name} sets`)))));
   };
   paint();
   document.addEventListener('setterplan', paint);
@@ -300,7 +309,7 @@ export async function teamsPage() {
   const recheck = i => check(i, ids(i)).then(draw).catch(e => toast(e.message));
   rejudgeBuilt = async () => {
     if (!built) return;
-    builtWith = { ...builtWith, raters: raterIds, allGame: allGameIds(playing), ...buildExtras() };
+    builtWith = { ...builtWith, raters: raterIds, ...setterSend(playing), ...buildExtras() };
     if (view && raterIds && !raterIds.includes(view)) view = null;
     out.classList.add('busy');
     try { await Promise.all(built.options.map((_, i) => check(i, ids(i)))); draw(); }
@@ -323,7 +332,7 @@ export async function teamsPage() {
     view, onSwap: edit, pool, open, onOpen: i => { open = i; keepBuilt(); },
     edited: i => undos[i]?.length > 0,
     notice: i => changes[i] && changeLine(changes[i], built.options[i], () => undo(i)),
-    onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, source: checked[i] ? 'edited' : 'built' }),
+    onSave: i => saveLineup(ids(i), { raters: builtWith.raters, allGame: builtWith.allGame, noSet: builtWith.noSet, source: checked[i] ? 'edited' : 'built' }),
     onDraft: i => saveDraft(ids(i), builtWith, `Option ${i + 1}${checked[i] ? ' (swapped)' : ''}`).then(ok => ok && document.dispatchEvent(new Event('drafts'))),
     onView: id => { view = id; checked.forEach((c, i) => c && recheck(i)); },
     locked: i => checked[i] && (locks[i] ??= new Set()),
@@ -342,7 +351,7 @@ export async function teamsPage() {
     if (out.dataset.shows === 'own' && ownTeams.edited() && !await ask('Build new teams?', 'The swaps you made on your own teams below will be lost. Teams already saved for the day stay saved.', 'Build new teams', 'ball')) return;
     btn.disabled = true; btn.textContent = 'Building…'; out.classList.add('busy');
     try {
-      builtWith = { useCombos, raters: raterIds, allGame: allGameIds(playing), combos: sendCombos(), ...buildExtras() };
+      builtWith = { useCombos, raters: raterIds, ...setterSend(playing), combos: sendCombos(), ...buildExtras() };
       [built, pool] = await Promise.all([callFn('build-teams', { numTeams, ...builtWith }), ownTeams.roster().catch(() => null)]);
       checked = []; undos = []; locks = []; changes = []; view = null;
       // Open the most even option first.
@@ -470,7 +479,7 @@ function ownTeamsCard(out, getOptions) {
     const opts = getOptions();
     if (opts.raters?.length === 0) return out.replaceChildren(h('p', { class: 'warn' }, 'Please select at least one rater.'));
     if (viewRater && opts.raters && !opts.raters.includes(viewRater)) viewRater = null;
-    const res = await callFn('build-teams', { teams: current, locked: [...locked], suggestRater: viewRater, allGame: allGameIds(await roster()), ...opts });
+    const res = await callFn('build-teams', { teams: current, locked: [...locked], suggestRater: viewRater, ...setterSend(await roster()), ...opts });
     const toggleLock = id => { locked.has(id) ? locked.delete(id) : locked.add(id); run().catch(e => toast(e.message)); };
     const onView = id => { viewRater = id; run().catch(e => toast(e.message)); };
     const onSetter = async id => {
@@ -479,7 +488,7 @@ function ownTeamsCard(out, getOptions) {
     };
     const onSwap = (_, teams) => { history.push(current); changedFrom = lastOpt; current = teams; run().catch(e => { current = history.pop(); changedFrom = null; toast(e.message); run().catch(() => {}); }); };
     const undo = history.length > 0 && (() => { current = history.pop(); changedFrom = null; focusAfterDraw(FOCUS_VERDICT); run().catch(e => toast(e.message)); });
-    const onSave = async () => saveLineup(current, { raters: opts.raters, allGame: allGameIds(await roster()), source: 'own' });
+    const onSave = async () => saveLineup(current, { raters: opts.raters, ...setterSend(await roster()), source: 'own' });
     const onDraft = async () => { if (await saveDraft(current, { ...opts, allGame: allGameIds(await roster()) }, teamsTitle ?? 'Your teams')) document.dispatchEvent(new Event('drafts')); };
     const onUpdateDraft = draftId != null && (async () => {
       try {
@@ -1011,7 +1020,7 @@ function draftsCard(ownTeams, checkOptions) {
     if (mine !== asked) return; // the date changed while this was loading
     const opts = checkOptions();
     raterNames ??= callFn('build-teams', { listRaters: true }).then(({ raters, people }) => new Map((people ?? raters).map(r => [r.id, r.display_name ?? '?'])), () => new Map());
-    const [allGame, names] = await Promise.all([ownTeams.roster().then(allGameIds), raterNames]);
+    const [setters, names] = await Promise.all([ownTeams.roster().then(setterSend), raterNames]);
     if (mine !== asked) return;
     // First names, unless two raters share one.
     const first = id => (names.get(id) ?? 'Removed rater').split(/[\s.@]/)[0];
@@ -1046,7 +1055,7 @@ function draftsCard(ownTeams, checkOptions) {
       callFn('build-teams', { teams: d.teams, raters: d.raters, allGame: d.all_game, combos: d.combos, useCombos: true, ...buildExtras(), playedOn: d.played_on })
         .then(res => { if (mine === asked) { cells.was.textContent = fmt(gapOf(res)); cells.was.className = 'num'; } })
         .catch(e => { cells.was.textContent = '!'; cells.was.title = e.message; });
-      const now = opts.raters?.length === 0 ? Promise.reject(new Error('Turn on at least one rater')) : callFn('build-teams', { teams: d.teams, ...opts, allGame });
+      const now = opts.raters?.length === 0 ? Promise.reject(new Error('Turn on at least one rater')) : callFn('build-teams', { teams: d.teams, ...opts, ...setters });
       nowRes.set(d.id, now);
       now.then(res => {
           if (mine !== asked) return;
@@ -1278,12 +1287,16 @@ export async function raterPicker(onchange, preload) {
 // Teams saved from the Teams page (Save for scores) become the game day's lineup. Each game stores who played on
 // each side and the team numbers the ratings predicted at that moment, so late changes and rating changes don't
 // rewrite history. Insights compare predictions with results to tune the team builder.
-async function saveLineup(teams, { raters, allGame, source }) {
+// Saved with or without no_set (setters not setting): before nosetters.sql the column and the start_round argument
+// don't exist, so it's tried again without them.
+const noSetMissing = e => /no_set|p_no_set|start_round/i.test(e.message) && /column|schema cache|function|does not exist/i.test(e.message);
+const tryNoSet = async (withIt, without) => { try { return await withIt(); } catch (e) { if (!noSetMissing(e)) throw e; return without(); } };
+async function saveLineup(teams, { raters, allGame, noSet = [], source }) {
   const day = gameDate;
   if (!day) return toast('Pick a date first');
   try {
     const [existing] = await q(sb.from('sessions').select('id').eq('played_on', day));
-    const row = { played_on: day, teams, raters: raters ?? null, all_game: allGame ?? [], source };
+    const base = { played_on: day, teams, raters: raters ?? null, all_game: allGame ?? [], source }, row = { ...base, no_set: noSet };
     if (existing) {
       // Rounds (rounds.sql): null before the upgrade. The round playing now is one past the last one kept.
       const kept = await q(sb.from('rounds').select('n').eq('session_id', existing.id)).catch(() => null);
@@ -1297,7 +1310,8 @@ async function saveLineup(teams, { raters, allGame, source }) {
           [['round', `Start round ${cur + 1}`, 'ball'], ['replace', `Replace ${roundWord}`, 'ghost']]);
         if (!pick) return;
         if (pick === 'round') {
-          const r = await q(sb.rpc('start_round', { p_session: existing.id, p_teams: teams, p_raters: raters ?? null, p_all_game: allGame ?? [], p_source: source }));
+          const args = { p_session: existing.id, p_teams: teams, p_raters: raters ?? null, p_all_game: allGame ?? [], p_source: source };
+          const r = await tryNoSet(() => q(sb.rpc('start_round', { ...args, p_no_set: noSet })), () => q(sb.rpc('start_round', args)));
           toast(`Round ${r} saved for ${dayTitle(day)}`);
           return document.dispatchEvent(new Event('lineupsaved'));
         }
@@ -1305,8 +1319,8 @@ async function saveLineup(teams, { raters, allGame, source }) {
         const upgrade = me.role === 'super' ? ' To keep them as round 1 instead, run supabase/rounds.sql.' : '';
         if (await choose(`${dayTitle(day)} already has ${n} game${n > 1 ? 's' : ''}`, `Replace the teams? Saved games keep the players they had.${upgrade}`, [[true, 'Replace the teams', 'danger']]) !== true) return;
       } else if (await choose(`Teams are already saved for ${dayTitle(day)}`, `Replace ${roundWord} with these? No games have been entered${cur > 1 ? ' in this round' : ''} yet.`, [[true, 'Replace', 'danger']]) !== true) return;
-      await q(sb.from('sessions').update(row).eq('id', existing.id));
-    } else await q(sb.from('sessions').insert(row));
+      await tryNoSet(() => q(sb.from('sessions').update(row).eq('id', existing.id)), () => q(sb.from('sessions').update(base).eq('id', existing.id)));
+    } else await tryNoSet(() => q(sb.from('sessions').insert(row)), () => q(sb.from('sessions').insert(base)));
     toast(`Saved as the teams for ${dayTitle(day)}`);
     document.dispatchEvent(new Event('lineupsaved'));
   } catch (e) { toast(/relation|does not exist|schema cache/i.test(e.message) ? needsSql('Scores', 'scores.sql') : `Not saved: ${e.message}`); }

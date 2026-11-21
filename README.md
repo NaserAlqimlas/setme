@@ -86,6 +86,8 @@ SetMe's exact numbers: paste and run `supabase/setme_exact.sql` (ratings accept 
 
 Highlights: paste and run `supabase/highlights.sql` after `video.sql` (adds `highlights` and `highlight_reels`). Safe to run again. Until then the ★ highlight buttons on a game's video say the SQL is needed. Making a reel into a video file also needs the worker redeployed (`modal deploy worker/modal_app.py` from the vision folder).
 
+Setters not setting: paste and run `supabase/nosetters.sql` after `rounds.sql` (adds `no_set` to game days and rounds) so the Scores page predicts games with the setters who sat out setting. Safe to run again. Until then saving works as before.
+
 Highlight suggestions and bloopers: paste and run `supabase/suggestions.sql` after `highlights.sql` (adds `kind` to highlights and reels, and `highlight_dismissed`). Safe to run again. Until then highlights work as before, without suggestions or bloopers. The worker scores the sound of new uploads; redeploy it (`.venv/bin/modal deploy worker/modal_app.py` from the vision folder) for that and for scoring older videos (Score older videos on Games).
 
 Organizers see All ratings: paste and run `supabase/organizer_ratings.sql` (everyone's ratings and rating history, and raters' names, for organizers). Safe to run again. Until then organizers' All ratings page only has their own ratings.
