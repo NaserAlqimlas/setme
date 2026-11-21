@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -287,6 +287,29 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('setter: most sets', usualSetter(sets, g, 'b') === 9, usualSetter(sets, g, 'b'));
   ok('setter: nobody yet', usualSetter(rs, g, 'b') === null);
   ok('pass spots start with back middle and back left', passSpots([], g, 'a').join() === '6,5', passSpots([], g, 'a'));
+}
+
+// Late players: 6 wasn't there at first; came in from rally 4, after 2 in the serving order.
+{
+  const R = (seq, serve, won, ...touches) => ({ seq, serve, won, touches });
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12], joins: [{ p: 6, side: 'a', from: 4, after: 2 }] };
+  ok('not on court before', lineupAt(g, 'a', 3).join() === '1,2,3,4,5');
+  ok('on court from rally 4', lineupAt(g, 'a', 4).includes(6));
+  ok('not here yet: off court', lineupAt({ ...g, joins: [{ p: 6, side: 'a', from: null }] }, 'a', 50).length === 5);
+  // a served by 1, 2, 3 (each losing the serve); b served in between.
+  const rs = [R(1, 'a', 'b', T(1, 'serve', 1)), R(2, 'b', 'a', T(7, 'serve', 1)), R(3, 'a', 'b', T(2, 'serve', 1)), R(4, 'b', 'a', T(8, 'serve', 1))];
+  ok('the late player serves after the one they came in after', nextServer(rs, 'a', lineupAt(g, 'a', 5), null, g.joins) === 6, nextServer(rs, 'a', lineupAt(g, 'a', 5), null, g.joins));
+  ok('without the join, a new player would be the fresh one anyway: 3', nextServer(rs, 'a', [1, 2, 3, 4, 5], null, []) === 3);
+  const cyc = serveCycle([...rs, R(5, 'a', 'b', T(6, 'serve', 1))], g, 'a');
+  ok('serving order puts them after 2', cyc.order.join() === '1,2,6', cyc.order);
+  ok('no front middle guessed from a lap of five', cyc.fixed === null);
+  const pos = positions([...rs, R(5, 'a', 'b', T(6, 'serve', 1))], g);
+  const counted = [...pos.a.players.values()].reduce((n, rows) => n + rows.reduce((m, r) => m + r.rallies, 0), 0);
+  ok('positions only count rallies with six (rally 4 on: 2 rallies x 6 players... only those with a known order)', counted % 6 === 0 && counted <= 12, counted);
+  ok('court: five a side has no layout', courtNow(rs.slice(0, 2), g, 'a') === null);
+  const gm = { ...g, middle_set: true, middle_a: 6, middle_b: null };
+  const cm = courtNow([...rs, R(5, 'b', 'a', T(9, 'serve', 1))], gm, 'a', 3);
+  ok('a late front-middle player is only in 3', Object.values(cm.spots).filter(p => p === 6).length === 1 && cm.spots[3] === 6, cm.spots);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

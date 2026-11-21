@@ -1033,3 +1033,8 @@ body:has(.up-tray:not([hidden])) #toast { bottom: 90px; }
 .view-as { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px;
   padding: 8px 16px; background: var(--primary); color: var(--primary-fg); font-size: .9rem; }
 .view-as button { background: var(--primary-fg); color: var(--primary); border-color: transparent; }
+/* Late players on the tag screen (scores.mjs paintLate) */
+.tag-late { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.tag-late-team { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tag-late-item { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; border: 1px solid var(--line); border-radius: 999px; }
+.tag-late select { width: auto; margin: 0; padding: 4px 8px; font-size: .88rem; }

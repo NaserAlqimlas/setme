@@ -83,7 +83,7 @@ export default async (req) => {
         .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null, kind: x.kind ?? 'highlight' })), () => null);
       // Suggestions the super dismissed; null before suggestions.sql (then no suggestions are shown).
       const dismissed = me.role === 'super' ? await rest(`highlight_dismissed?game_id=eq.${g.id}&select=t,kind`).then(r => r.map(x => ({ t: Number(x.t), kind: x.kind })), () => null) : null;
-      return json({ rallies, video, highlights, dismissed, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null } });
+      return json({ rallies, video, highlights, dismissed, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null }, joins: Array.isArray(g.joins) ? g.joins : [] });
     }
   } catch (e) {
     return json({ error: e.message }, 400);
