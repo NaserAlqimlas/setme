@@ -5,7 +5,7 @@ import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, courtNow, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
+import { ACTIONS, courtNow, endsRally, joinsOf, lineupAt, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -481,7 +481,10 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   };
   // At the start of a rally the expected server is ready to grade. After a pass or dig, the team's usual setter
   // (front middle, or whoever has done most of its setting) is ready with Set.
-  const upNext = () => nextServer(rallies, serving(), lineup[serving()], serveCycle(rallies, g, serving()).fixed);
+  // The rally being tagged (or the next one), and who is on court for it: late players only once they came in.
+  const curSeq = () => open()?.seq ?? Math.max(0, ...rallies.map(r => r.seq)) + 1;
+  const here = s => lineupAt(g, s, curSeq());
+  const upNext = () => nextServer(rallies, serving(), here(serving()), serveCycle(rallies, g, serving()).fixed, joinsOf(g, serving()));
   const autoSel = () => {
     if (sel || skipAuto) return;
     const r = open(), last = r?.touches.at(-1);
@@ -737,6 +740,58 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     fill(middleEl, h('span', { class: 'muted' }, 'Stayed front middle'), pick('a'), pick('b'));
   };
 
+  // Late players: mark who isn't here yet; when they arrive, say who they came in after in the serving order. They
+  // count from the next rally. Someone not on the team who joined it is added to the game's lineup.
+  const lateEl = h('div', { class: 'tag-late small' });
+  let arriving = null;   // player id whose "came in after" is being picked
+  const saveJoins = async (joins, extra = {}) => {
+    const { error } = await sb.from('games').update({ joins, ...extra }).eq('id', g.id);
+    if (error) { paintLate(); toast(/joins/.test(error.message) ? 'This needs the database upgrade first: run supabase/late_players.sql in the Supabase SQL Editor.' : error.message); return false; }
+    Object.assign(g, { joins }, extra);
+    if (sel?.auto) sel = null;
+    arriving = null; paintPad(); paintLate(); paintMiddle();
+    return true;
+  };
+  const paintLate = () => {
+    if (ro) return fill(lateEl);
+    const all = Array.isArray(g.joins) ? g.joins : [];
+    const team = s => {
+      const js = joinsOf(g, s);
+      const items = js.map(j => {
+        if (j.from == null && arriving === j.p) {
+          const after = h('select', { 'aria-label': `${pn(j.p)} came in after` }, nextServerOrder(s).map(p => h('option', { value: p }, pn(p))));
+          return h('span', { class: 'tag-late-item' }, h('b', {}, pn(j.p)), ' came in after ', after,
+            h('button', { class: 'sm', onclick: () => {
+              const from = open() ? open().seq + 1 : curSeq();
+              saveJoins(all.map(x => x === j ? { ...j, from, after: Number(after.value) } : x)).then(ok => ok && toast(`${pn(j.p)} plays from rally ${from}`));
+            } }, 'Save'),
+            h('button', { class: 'ghost sm', onclick: () => { arriving = null; paintLate(); } }, 'Cancel'));
+        }
+        return h('span', { class: 'tag-late-item' },
+          j.from == null ? [h('b', {}, pn(j.p)), ' not here yet ', h('button', { class: 'sm', onclick: () => { arriving = j.p; paintLate(); } }, 'Arrived')]
+            : [h('b', {}, pn(j.p)), ` came in at rally ${j.from}${j.after != null ? `, after ${pn(j.after)}` : ''}`],
+          h('button', { class: 'ghost sm', 'aria-label': `${pn(j.p)} was there all game`, title: 'Undo: they were there all game', onclick: () => saveJoins(all.filter(x => x !== j)) }, '×'));
+      });
+      const listed = new Set(js.map(j => j.p));
+      const others = [...pname.keys()].filter(p => !lineup.a.includes(p) && !lineup.b.includes(p)).sort((x, y) => (pname.get(x) ?? '').localeCompare(pname.get(y) ?? ''));
+      const add = h('select', { 'aria-label': `Someone not here yet for ${name[s]}` }, h('option', { value: '' }, 'Not here yet…'),
+        h('optgroup', { label: name[s] }, lineup[s].filter(p => !listed.has(p)).map(p => h('option', { value: p }, pname.get(p) ?? '?'))),
+        others.length > 0 && h('optgroup', { label: 'Joining from outside the team' }, others.map(p => h('option', { value: p }, pname.get(p) ?? '?'))));
+      add.onchange = () => {
+        const p = Number(add.value); if (!p) return;
+        const key = `players_${s}`, extra = lineup[s].includes(p) ? {} : { [key]: [...g[key], p] };
+        saveJoins([...all, { p, side: s, from: null, after: null }], extra).then(ok => { if (ok && extra[key]) lineup[s] = g[key]; });
+      };
+      return h('div', { class: 'tag-late-team' }, h('span', { style: `color:${color[s]}`, class: 'tag-middle-team' }, name[s]), items, add);
+    };
+    fill(lateEl, h('span', { class: 'muted' }, 'Late players'), team('a'), team('b'));
+  };
+  // A team's players in serving order (who's on court now), for picking who a late player came in after.
+  const nextServerOrder = s => {
+    const order = serveCycle(rallies, g, s).order.filter(p => here(s).includes(p));
+    return [...order, ...here(s).filter(p => !order.includes(p))];
+  };
+
   // A team's player buttons laid out like its half of the court, seen from behind its own end line: front row
   // (4 3 2) at the net, back row (5 6 1) behind. Players without a known spot yet go in a row below; with no
   // rotation known at all, the plain list.
@@ -745,7 +800,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const btn = (p, spot) => h('button', { type: 'button', class: `tag-player${likely.has(p) ? ' likely' : ''}`, 'aria-pressed': String(sel?.p === p), onclick: () => pick(p),
       title: likely.has(p) ? 'Often passes from here' : null },
       avatar(pname.get(p) ?? '?', 26), h('span', {}, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
-    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: 'tag-players' }, lineup[s].map(p => btn(p)));
+    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: 'tag-players' }, here(s).map(p => btn(p)));
     const cell = k => court.spots[k] != null ? btn(court.spots[k], k) : h('span', { class: 'tag-empty muted small' }, `${k}`);
     return h('div', { class: 'tag-court' },
       h('div', { class: 'tag-row' }, h('span', { class: 'tag-row-label muted small' }, 'Net'), [4, 3, 2].map(cell)),
@@ -827,7 +882,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
     () => [{ round: roundOf(g), teams: [{ k: g.team_a, ids: g.players_a }, { k: g.team_b, ids: g.players_b }] }]);
-  const paint = () => { paintScore(); if (!ro) { paintPad(); paintMiddle(); } paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); hlBox?.refresh?.(); };
+  const paint = () => { paintScore(); if (!ro) { paintPad(); paintMiddle(); paintLate(); } paintList(); paintFound(); gameRecap.refresh([{ game: g, rallies }]); hlBox?.refresh?.(); };
 
   const loadYt = paintSource();
   paintHighlights();
@@ -894,7 +949,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
         h('div', { class: 'card' }, h('div', { class: 'video-frame' }, videoBox, bigVideoButton(() => wrap)), sourceRow, jobBar, foundBar,
           keyHint, hlSlot)),
       h('div', { class: 'tag-right' },
-        !ro && h('div', { class: 'card' }, pad, middleEl),
+        !ro && h('div', { class: 'card' }, pad, middleEl, lateEl),
         h('div', { class: 'card' }, h('h3', {}, 'Rallies'), summary, list))));
   return wrap;
 }
