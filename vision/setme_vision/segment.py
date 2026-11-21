@@ -17,9 +17,11 @@ class Flight:
 
 @dataclass
 class Settings:
-    gap: float = 3.0          # seconds without a flight that still counts as the same rally
+    gap: float = 2.5          # seconds without a flight that still counts as the same rally (more joins the next serve on)
     min_len: float = 2.0      # shortest rally kept, in seconds
     min_speed: float = 0.5    # a rally needs at least one flight this fast (frame heights per second): a serve or a hit
+    short_speed: float = 1.0  # shorter than min_len still counts with a flight this fast: a serve error or an ace,
+                              # over in a second (checked on four tagged games, Nov 2026: most misses were these)
     min_rise: float = 0.0     # ... and a flight that climbs at least this much of the frame (off: speed was enough)
     pad_before: float = 1.0   # seconds kept before the first flight: the serve toss is often missed
     pad_after: float = 1.0    # seconds kept after the last flight: the ball landing
@@ -50,7 +52,8 @@ def segment(flights, duration=None, s=None):
     for g in groups:
         start, end = g[0].start, max(f.end for f in g)
         lively = [f for f in g if f.speed >= s.min_speed and f.rise >= s.min_rise]
-        if end - start < s.min_len or not lively:
+        fastest = max(f.speed for f in g)
+        if not lively or (end - start < s.min_len and fastest < s.short_speed):
             continue
         seen = sum(f.end - f.start for f in g)
         # How sure: how much of the rally the ball was actually seen, and how many real hits it had.

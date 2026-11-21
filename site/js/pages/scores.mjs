@@ -5,7 +5,7 @@ import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary } from '../stats.mjs';
+import { ACTIONS, courtNow, endsRally, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -342,10 +342,12 @@ const loadYouTube = () => ytReady ??= new Promise((res, rej) => {
   document.head.append(s);
 });
 // One interface for a local file, an uploaded video or a YouTube embed. Each is put in `box` before use.
+// rate / play / pause / paused are for Replay (slow motion) and skipping the time between rallies.
+const controls = v => ({ rate: r => { v.playbackRate = r; }, play: () => v.play()?.catch(() => {}), pause: () => v.pause(), paused: () => v.paused });
 function urlVideo(box, url) {
   const v = h('video', { controls: true, playsinline: true, preload: 'metadata', src: url });
   box.replaceChildren(withSpinner(v));
-  return { uploaded: true, now: () => v.currentTime, seek: t => playAt(v, t, false), toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); } };
+  return { uploaded: true, now: () => v.currentTime, seek: t => playAt(v, t, false), toggle: () => v.paused ? v.play() : v.pause(), dispose: () => { v.removeAttribute('src'); v.load(); }, ...controls(v) };
 }
 function fileVideo(box, file) {
   const v = h('video', { controls: true, playsinline: true, preload: 'auto' });
@@ -354,7 +356,7 @@ function fileVideo(box, file) {
   v.onerror = () => box.replaceChildren(h('p', { class: 'muted small' }, `This browser can't play ${file.name} from your device. `,
     'If it\'s uploading, the upload carries on, and the uploaded copy plays here once it\'s analysed. To tag from the file now, open SetMe in Safari.'));
   box.replaceChildren(v);
-  return { now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => URL.revokeObjectURL(v.src) };
+  return { now: () => v.currentTime, seek: t => { v.currentTime = Math.max(0, t); }, toggle: () => v.paused ? v.play() : v.pause(), dispose: () => URL.revokeObjectURL(v.src), ...controls(v) };
 }
 async function youtubeVideo(box, id) {
   const YT = await loadYouTube();
@@ -363,7 +365,8 @@ async function youtubeVideo(box, id) {
   const p = await new Promise((res, rej) => {
     const pl = new YT.Player(host, { videoId: id, playerVars: { playsinline: 1, rel: 0 }, events: { onReady: () => res(pl), onError: () => rej(new Error('YouTube could not play that video')) } });
   });
-  return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy() };
+  return { now: () => p.getCurrentTime(), seek: t => p.seekTo(Math.max(0, t), true), toggle: () => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo(), dispose: () => p.destroy(),
+    rate: r => p.setPlaybackRate(r), play: () => p.playVideo(), pause: () => p.pauseVideo(), paused: () => p.getPlayerState() !== 1 };
 }
 
 // ro (read only): tagging has closed for this game day; the tags, video and recap can be looked at, not changed.
@@ -403,7 +406,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const lineup = { a: g.players_a, b: g.players_b };
   const pn = id => firstName(pname.get(id) ?? '?');
   const side = p => sideOf(g, p);
-  let player = null, sel = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = !!draft?.rallies;
+  let player = null, sel = null, skipAuto = false, editing = null, firstServe = 'a', history = [], saveTimer = null, saving = null, dirty = !!draft?.rallies;
   const now = () => player ? Math.round(player.now() * 10) / 10 : null;
   const open = () => { const r = rallies.at(-1); return r && !r.won ? r : null; };
   const serving = () => open()?.serve ?? (rallies.length ? rallies.at(-1).won : firstServe);
@@ -441,7 +444,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     paint();
   };
   const snapshot = () => { history.push(JSON.stringify(rallies)); if (history.length > 100) history.shift(); };
-  const undo = () => { if (!history.length) return toast('Nothing to undo'); rallies = JSON.parse(history.pop()); sel = null; changed(); };
+  const undo = () => { if (!history.length) return toast('Nothing to undo'); rallies = JSON.parse(history.pop()); sel = null; skipAuto = false; editing = null; changed(); };
 
   // ----- tagging -----
   const newRally = () => ({ id: crypto.randomUUID(), seq: Math.max(0, ...rallies.map(r => r.seq)) + 1, t: now(), serve: serving(), won: null, touches: [] });
@@ -452,21 +455,49 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     r.touches.push({ p, a, g: grade, t: now() });
     const end = endsRally(a, grade);
     if (end) r.won = end === 'won' ? side(p) : other(side(p));
-    sel = null; changed();
+    sel = null; skipAuto = false; editing = null; changed();
     if (end) toast(`Point ${name[r.won]}`);
   };
   const point = s => {
     snapshot();
     const r = open() ?? (rallies.push(newRally()), rallies.at(-1));
-    r.won = s; sel = null; changed();
+    r.won = s; sel = null; skipAuto = false; editing = null; changed();
   };
   // Picking a player suggests the likely action (serve first, then pass, set, attack…).
-  const pick = p => { sel = sel?.p === p ? null : { p, a: suggestAction(open() ?? { serve: serving(), touches: [] }, side(p), g) }; paintPad(); };
-  // At the start of a rally the expected server is ready to grade.
+  // Unpicking (or Esc) leaves nobody picked until the next touch, instead of the suggestion coming straight back.
+  const pick = p => { sel = sel?.p === p ? null : { p, a: suggestAction(open() ?? { serve: serving(), touches: [] }, side(p), g) }; skipAuto = !sel; paintPad(); };
+  // The team expected to touch the ball next, for keys 1–6: the server's team at the start, the other team after a
+  // serve or an attack (or a block, which mostly comes back), the same team after a pass, dig or set.
+  const keySide = () => {
+    const last = open()?.touches.at(-1);
+    if (!last) return serving();
+    return ['pass', 'dig', 'set'].includes(last.a) ? side(last.p) : other(side(last.p));
+  };
+  const pickSpot = (spot, otherTeam) => {
+    const s = otherTeam ? other(keySide()) : keySide();
+    const p = courtOf(s)?.spots[spot];
+    if (p == null) return toast(`Nobody known in ${spot} for ${name[s]} yet: click them`);
+    sel = null; pick(p);
+  };
+  // At the start of a rally the expected server is ready to grade. After a pass or dig, the team's usual setter
+  // (front middle, or whoever has done most of its setting) is ready with Set.
+  const upNext = () => nextServer(rallies, serving(), lineup[serving()], serveCycle(rallies, g, serving()).fixed);
   const autoSel = () => {
-    if (sel || open()?.touches.length) return;
-    const p = nextServer(rallies, serving(), lineup[serving()], serveCycle(rallies, g, serving()).fixed);
-    if (p != null) sel = { p, a: 'serve', auto: true };
+    if (sel || skipAuto) return;
+    const r = open(), last = r?.touches.at(-1);
+    if (!last) { const p = upNext(); if (p != null) sel = { p, a: 'serve', auto: 'serve' }; return; }
+    if ((last.a === 'pass' || last.a === 'dig') && !endsRally(last.a, last.g)) {
+      const p = usualSetter(rallies, g, side(last.p));
+      if (p != null && p !== last.p) sel = { p, a: 'set', auto: 'set' };
+    }
+  };
+  // Who stands where this rally, per team (courtNow), and after the serve, the receiving team's likely passers.
+  const courtOf = s => courtNow(rallies, g, s, s === serving() ? open()?.touches.find(t => t.a === 'serve')?.p ?? upNext() : null);
+  const passersOf = (s, court) => {
+    const ts = open()?.touches ?? [];
+    if (!court || ts.length !== 1 || ts[0].a !== 'serve' || side(ts[0].p) === s) return new Set();
+    // The front-middle player sets, so they aren't counted on to pass.
+    return new Set(passSpots(rallies, g, s, 6).map(k => court.spots[k]).filter(p => p != null && p !== court.fixed).slice(0, 2));
   };
 
   // ----- layout -----
@@ -533,6 +564,31 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
         !ro && h('button', { class: 'ghost sm', onclick: () => setEnd(null) }, 'Not the end'))] : []));
   };
 
+  // R: the last 3 seconds again at half speed, then paused where you were (to see who touched it).
+  let replaying = null;
+  const replay = () => {
+    if (!player?.rate) return;
+    const back = replaying?.to ?? player.now();
+    clearInterval(replaying?.timer);
+    player.seek(Math.max(0, back - 3)); player.rate(.5); player.play();
+    replaying = { to: back, timer: setInterval(() => {
+      if (!wrap.isConnected || player.now() < back - .05) return;
+      clearInterval(replaying.timer); replaying = null; player.rate(1); player.pause(); player.seek(back);
+    }, 100) };
+  };
+  // Between the rallies found in the video, play at 4× (not skipped: the rally finder misses one now and then, and
+  // a missed rally still goes past to be seen). Kept on this device.
+  const FAST = 4, skipKey = 'setme-tag-fast';
+  let fast = (() => { try { return localStorage.getItem(skipKey) !== 'off'; } catch { return true; } })(), speeding = false, shown = false;
+  const gapTimer = setInterval(() => {
+    if (!wrap.isConnected) { if (shown) clearInterval(gapTimer); return; }
+    shown = true;
+    if (!player?.rate || replaying || !found) return;
+    const t = player.now();
+    const inGap = fast && !player.paused() && !found.rallies.some(r => t >= r.start - 1.5 && t <= r.end + 1)
+      && found.rallies.some(r => r.start > t);   // after the last rally found, normal speed
+    if (inGap !== speeding) { speeding = inGap; player.rate(inGap ? FAST : 1); paintFound(); }
+  }, 200);
   // Jump to the next (dir 1) or previous (-1) rally the vision tool found.
   const go = dir => {
     if (!found || !player) return;
@@ -544,13 +600,14 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const paintFound = () => {
     const n = found ? (ro ? ' · N next rally' : ' · N next rally (Shift N back)') : '';
     const hk = hlBox && me.role === 'super' ? ' · H highlight (Shift H blooper)' : '';
-    keyHint.textContent = ro ? `Keys: space play/pause · ← → skip 2 s${n}${hk} · tap a rally or touch to watch it`
-      : `Keys: space play/pause · ← → skip 2 s${n}${hk} · 0–3 grade · S P T A B D action · U undo · Esc clear`;
+    keyHint.textContent = ro ? `Keys: space play/pause · ← → skip 2 s · R replay slowly${n}${hk} · tap a rally or touch to watch it`
+      : `Keys: space play/pause · ← → skip 2 s · R replay slowly${n}${hk} · 1–6 player in that spot (Shift: other team) · 0–3 grade · S P T A B D action · U undo · Esc clear · tap a touch to fix it`;
     if (!found) return foundBar.replaceChildren();
     const at = player ? rallyAt(found.rallies, player.now()) : -1;
     foundBar.replaceChildren(
-      h('span', { class: 'small' }, h('b', {}, `${found.rallies.length} rallies found`), at >= 0 ? ` · watching ${at + 1}` : '', ` · ${rallies.length} tagged`),
+      h('span', { class: 'small' }, h('b', {}, `${found.rallies.length} rallies found`), at >= 0 ? ` · watching ${at + 1}` : speeding ? ` · between rallies, ${FAST}×` : '', ` · ${rallies.length} tagged`),
       h('span', { class: 'grow' }),
+      player?.rate && toggle(`${FAST}× between rallies`, fast, v => { fast = v; try { localStorage.setItem(skipKey, v ? 'on' : 'off'); } catch { /* this visit only */ } if (!v && speeding) { speeding = false; player.rate(1); } paintFound(); }),
       h('button', { class: 'ghost sm', onclick: () => go(-1), disabled: !player }, '◀ Previous'),
       h('button', { class: 'ghost sm', onclick: () => go(1), disabled: !player }, 'Next rally ▶'),
       h('button', { class: 'ghost sm', 'aria-label': 'Forget the rally times', title: 'Forget the rally times', onclick: () => {
@@ -680,16 +737,32 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     fill(middleEl, h('span', { class: 'muted' }, 'Stayed front middle'), pick('a'), pick('b'));
   };
 
+  // A team's player buttons laid out like its half of the court, seen from behind its own end line: front row
+  // (4 3 2) at the net, back row (5 6 1) behind. Players without a known spot yet go in a row below; with no
+  // rotation known at all, the plain list.
+  const players = s => {
+    const court = courtOf(s), likely = passersOf(s, court);
+    const btn = (p, spot) => h('button', { type: 'button', class: `tag-player${likely.has(p) ? ' likely' : ''}`, 'aria-pressed': String(sel?.p === p), onclick: () => pick(p),
+      title: likely.has(p) ? 'Often passes from here' : null },
+      avatar(pname.get(p) ?? '?', 26), h('span', {}, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
+    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: 'tag-players' }, lineup[s].map(p => btn(p)));
+    const cell = k => court.spots[k] != null ? btn(court.spots[k], k) : h('span', { class: 'tag-empty muted small' }, `${k}`);
+    return h('div', { class: 'tag-court' },
+      h('div', { class: 'tag-row' }, h('span', { class: 'tag-row-label muted small' }, 'Net'), [4, 3, 2].map(cell)),
+      h('div', { class: 'tag-row' }, h('span', { class: 'tag-row-label muted small' }, 'Back'), [5, 6, 1].map(cell)),
+      court.unplaced.length > 0 && h('div', { class: 'tag-players' }, court.unplaced.map(p => btn(p))));
+  };
+
   const paintPad = () => {
     autoSel();
     const r = open(), sv = serving();
     const col = s => h('div', { class: 'tag-team', style: `--tc:${color[s]}` },
-      h('div', { class: 'tag-team-head' }, h('b', {}, name[s]), sv === s && h('span', { class: 'badge set' }, 'Serving')),
-      h('div', { class: 'tag-players' }, lineup[s].map(p => h('button', { type: 'button', class: 'tag-player', 'aria-pressed': String(sel?.p === p), onclick: () => pick(p) },
-        avatar(pname.get(p) ?? '?', 26), h('span', {}, pn(p))))),
+      h('div', { class: 'tag-team-head' }, h('b', {}, name[s]), sv === s && h('span', { class: 'badge set' }, 'Serving'), h('span', { class: 'grow' }),
+        !sel && courtOf(s) && h('span', { class: 'muted small tag-keys' }, keySide() === s ? 'keys 1–6' : 'Shift 1–6')),
+      players(s),
       h('button', { type: 'button', class: 'ghost sm tag-point', onclick: () => point(s) }, `Point ${name[s]}`));
     const choose = sel && h('div', { class: 'tag-choose' },
-      h('div', { class: 'muted small' }, h('b', {}, pname.get(sel.p)), sel.auto ? ' is up to serve' : '', ' · pick what they did'),
+      h('div', { class: 'muted small' }, h('b', {}, pname.get(sel.p)), sel.auto === 'serve' ? ' is up to serve' : sel.auto === 'set' ? ' usually sets' : '', ' · pick what they did'),
       seg(Object.entries(ACTIONS).map(([a, d]) => [a, d.label]), sel.a, a => { sel = { ...sel, a, auto: false }; paintPad(); }, 'Action'),
       h('div', { class: 'tag-grades' }, ACTIONS[sel.a].grades.map(([gr, label, end]) => h('button', { type: 'button', class: `tag-grade${end ? ` ${end}` : ''}`, onclick: () => addTouch(sel.p, sel.a, gr) },
         h('small', {}, String(gr)), label))));
@@ -704,6 +777,28 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       ...(choose ? [choose] : []));
   };
 
+  // Fixing a tagged touch: pick the right player and action, then a grade to save. The rally's point follows when
+  // the fixed touch is the rally's last and its grade ends a rally.
+  const touchEditor = (r, j) => {
+    const t = r.touches[j];
+    let p = t.p, a = t.a;
+    const who = h('select', { 'aria-label': 'Player', onchange: () => { p = Number(who.value); } },
+      ['a', 'b'].map(s => h('optgroup', { label: name[s] }, lineup[s].map(id => h('option', { value: id, selected: id === p }, pname.get(id) ?? '?')))));
+    const grades = h('div', { class: 'tag-grades' });
+    const paintGrades = () => grades.replaceChildren(...ACTIONS[a].grades.map(([gr, label, end]) => h('button', { type: 'button', class: `tag-grade${end ? ` ${end}` : ''}${gr === t.g && a === t.a ? ' current' : ''}`,
+      onclick: () => {
+        snapshot();
+        Object.assign(t, { p, a, g: gr });
+        if (j === r.touches.length - 1) { const e = endsRally(a, gr); if (e) r.won = e === 'won' ? side(p) : other(side(p)); }
+        toast('Touch fixed'); editing = null; changed();
+      } }, h('small', {}, String(gr)), label)));
+    paintGrades();
+    return h('div', { class: 'touch-edit' },
+      h('div', { class: 'row' }, h('b', { class: 'small' }, `Fix touch ${j + 1}`), who, h('span', { class: 'grow' }),
+        h('button', { type: 'button', class: 'ghost sm', onclick: () => { editing = null; paintList(); } }, 'Cancel')),
+      seg(Object.entries(ACTIONS).map(([k, d]) => [k, d.label]), a, v => { a = v; paintGrades(); }, 'Action'),
+      h('p', { class: 'muted small' }, 'Pick the grade to save.'), grades);
+  };
   const paintList = () => {
     const shown = [...rallies.entries()].reverse();
     const markable = hasEnd && !ro && end == null && rallies.filter(r => r.won).length > g.score_a + g.score_b;
@@ -724,8 +819,10 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
           snapshot(); rallies.splice(i, 1); changed();
         } }, '×')),
       h('div', { class: 'chips' }, r.touches.map((t, j) => h('span', { class: `chip tag-touch ${endsRally(t.a, t.g) ?? ''}`, style: `--tc:${color[side(t.p)] ?? 'var(--muted)'}` },
-        h('button', { type: 'button', class: 'touch-btn', onclick: () => t.t != null && player?.seek(t.t - 1) }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
-        !ro && h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))))]));
+        h('button', { type: 'button', class: 'touch-btn', 'aria-expanded': ro ? null : String(editing?.r === r.id && editing.j === j),
+          onclick: () => { if (t.t != null) player?.seek(t.t - 1); if (!ro) { editing = editing?.r === r.id && editing.j === j ? null : { r: r.id, j }; paintList(); } } }, `${pn(t.p)} · ${ACTIONS[t.a].label} ${gradeLabel(t.a, t.g)}`),
+        !ro && h('button', { type: 'button', 'aria-label': 'Delete this touch', onclick: () => { snapshot(); r.touches.splice(j, 1); changed(); } }, '×')))),
+      editing?.r === r.id && r.touches[editing.j] && touchEditor(r, editing.j))]));
     if (!rallies.length) list.replaceChildren(h('li', { class: 'muted' }, 'No rallies tagged yet.'));
   };
   const gameRecap = recapButton('Share recap', `Game ${n} recap`, `${name.a} v ${name.b}`, `recap-game-${g.id}.png`, pname, k => tname(g.session_id, k, roundOf(g)),
@@ -738,7 +835,8 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   if (video?.kind === 'youtube') loadYt();
   if (activeUpload(g.id)) follow(activeUpload(g.id)); else loadUpload();
 
-  // Keys: space play/pause, ←/→ 2 s (shift 5 s), 0–3 grade, s/p/t/a/b/d action, Esc clear, u undo.
+  // Keys: space play/pause, ←/→ 2 s (shift 5 s), R replay slowly, 1–6 player in that spot (shift: other team),
+  // 0–3 grade, s/p/t/a/b/d action, Esc clear, u undo.
   const keys = e => {
     if (!wrap.isConnected) return document.removeEventListener('keydown', keys);
     if (e.target.closest('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -747,9 +845,11 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     else if (k === 'arrowleft' || k === 'arrowright') { e.preventDefault(); player?.seek(player.now() + (k === 'arrowright' ? 1 : -1) * (e.shiftKey ? 5 : 2)); }
     else if (k === 'n' && found) { e.preventDefault(); go(e.shiftKey ? -1 : 1); }
     else if (k === 'h' && hlBox?.hotkey) { e.preventDefault(); hlBox.hotkey(e.shiftKey ? 'blooper' : 'highlight'); }
+    else if (k === 'r') { e.preventDefault(); replay(); }
     else if (ro) return;
-    else if (k === 'escape') { sel = null; paintPad(); }
+    else if (k === 'escape') { if (editing) { editing = null; paintList(); } sel = null; skipAuto = true; paintPad(); }
     else if (k === 'u') undo();
+    else if (!sel && /^Digit[1-6]$/.test(e.code)) { e.preventDefault(); pickSpot(Number(e.code.slice(5)), e.shiftKey); }
     else if (sel && /^[0-3]$/.test(k) && ACTIONS[sel.a].grades.some(x => x[0] === Number(k))) addTouch(sel.p, sel.a, Number(k));
     else if (sel) { const a = Object.keys(ACTIONS).find(x => ACTIONS[x].key === k); if (a) { sel = { ...sel, a, auto: false }; paintPad(); } }
   };

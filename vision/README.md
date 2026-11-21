@@ -22,6 +22,12 @@ laptop.
 | IMG_5290 | 37 of 48 | 11 | 10 | |
 | IMG_0300 | 73 of 83 | 10 | 21 | |
 
+**Nov 2026 change:** most misses were rallies over in a second (a serve error or an ace) and rallies run into the
+next one when the next serve came quickly. Now a short burst with one fast flight counts, and rallies join only
+across gaps under 2.5 s (was 3). On four tagged games from Nov 14 (186 rallies; tuned on IMG_5303 and IMG_5306):
+missed 33 → 20, extra 21 → 59. On the two it wasn't tuned on: missed 16 → 11. Extras cost little on the tag screen,
+which plays the time between rallies at 4× instead of skipping it, so a rally it missed still goes past.
+
 **Filming tip:** keep plenty of room above the net in the frame. The ball spends most of a rally up there; a camera
 tilted down (IMG_5278) loses it and misses half the rallies.
 

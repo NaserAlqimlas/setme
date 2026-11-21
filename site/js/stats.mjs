@@ -230,6 +230,55 @@ export function positions(rallies, game) {
   return out;
 }
 
+// Where a team stands in the rally being tagged, for laying out the tag screen like the court. Same rules as
+// positions(); `server` is who serves this rally when the team serves (tagged, or the suggested next server).
+// -> { spots: { 1..6: pid }, unplaced: [pid], fixed } or null when it can't be told (not six a side, nobody served yet).
+export function courtNow(rallies, game, s, server = null) {
+  const lineup = game[`players_${s}`] ?? [];
+  if (lineup.length !== 6) return null;
+  const { order: served, fixed, serverOf } = serveCycle(rallies, game, s);
+  const order = [...served];
+  const rot = lineup.filter(p => p !== fixed);
+  const current = rallies.at(-1)?.won ? null : rallies.at(-1);
+  const serving = (current ? current.serve : rallies.at(-1)?.won ?? null) === s;
+  // A new server this rally joins the order (servers are listed in the order they first served).
+  if (serving && server != null && server !== fixed && rot.includes(server) && !order.includes(server)) order.push(server);
+  if (order.length === rot.length - 1) order.push(rot.find(p => !order.includes(p)));
+  if (!order.length && fixed == null) return null;
+  const spotsList = fixed != null ? [1, 2, 4, 5, 6] : [1, 2, 3, 4, 5, 6], n = spotsList.length;
+  let slot = null;
+  for (const r of rallies) if (r.won && r.serve === s) { const p = serverOf(r); if (p != null && p !== fixed && order.includes(p)) slot = order.indexOf(p); }
+  if (serving && server != null && server !== fixed && order.includes(server)) slot = order.indexOf(server);
+  const at = slot ?? (order.length === n ? n - 1 : null);
+  const spots = {};
+  if (at != null) for (const [i, p] of order.entries()) spots[spotsList[(i - at + n) % n]] = p;
+  if (fixed != null) spots[3] = fixed;
+  const placed = new Set(Object.values(spots));
+  return { spots, unplaced: lineup.filter(p => !placed.has(p)), fixed };
+}
+
+// Who usually sets for a team in this game: the front-middle player, or else whoever has made at least 3 of the
+// team's sets and most of them. null when nobody stands out.
+export function usualSetter(rallies, game, s) {
+  const { fixed } = serveCycle(rallies, game, s);
+  if (fixed != null) return fixed;
+  const sets = new Map();
+  let all = 0;
+  for (const r of rallies) for (const t of r.touches) if (t.a === 'set' && sideOf(game, t.p) === s) { sets.set(t.p, (sets.get(t.p) ?? 0) + 1); all++; }
+  const [p, n] = [...sets].sort((a, b) => b[1] - a[1])[0] ?? [null, 0];
+  return n >= 3 && n > all / 2 ? p : null;
+}
+
+// The court spots passes most often come from: this game's passes by spot (from positions()), on top of a starting
+// guess from the club's tagged games so far (back middle, then back left, back right, front left).
+const PASS_PRIOR = { 1: .14, 2: .1, 3: .05, 4: .14, 5: .2, 6: .34 };
+export function passSpots(rallies, game, s, k = 2) {
+  const pos = positions(rallies, game)[s];
+  const score = { ...Object.fromEntries(Object.entries(PASS_PRIOR).map(([spot, w]) => [spot, w * 6])) };
+  if (pos?.ok) for (const rows of pos.players.values()) rows.forEach((row, i) => { score[i + 1] += sum(row.counts.pass); });
+  return Object.entries(score).sort((a, b) => b[1] - a[1]).slice(0, k).map(([spot]) => Number(spot));
+}
+
 // More team numbers for one game, per side:
 //   from: how its points came: kills, aces, blocks, the other team's errors, and other (the rally's end wasn't tagged)
 //   run: its longest streak of points in a row
