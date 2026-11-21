@@ -34,7 +34,12 @@ def test_a_long_gap_starts_a_new_rally():
 def test_slow_or_short_movement_is_not_a_rally():
     slow = Flight(10, 14, speed=0.3, rise=0.02)          # ball rolled back to the server
     assert segment([slow]) == []
-    assert segment([fast(10, 11)]) == []                 # too short on its own
+    assert segment([Flight(10, 11, speed=0.8, rise=0.1)]) == []   # short and not fast: a toss or a catch
+
+
+def test_a_short_fast_flight_is_a_serve_that_ended_the_rally():
+    r = segment([fast(10, 11)])                          # a serve into the net, or an ace: over in a second
+    assert len(r) == 1 and r[0].start == pytest.approx(9.0)
 
 
 def test_padding_never_overlaps_and_stays_in_the_video():

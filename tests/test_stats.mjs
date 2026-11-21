@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -256,6 +256,37 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('holds with middle', nextServer(rs.slice(0, 5), 'a', g.players_a, 6) === 6);
   const lap = [1, 2, 3, 4, 5].flatMap(pid => [S('a', 'b', pid), S('b', 'a', 7)]);
   ok('wraps after five', nextServer(lap, 'a', g.players_a, 6) === 1, nextServer(lap, 'a', g.players_a, 6));
+}
+
+// The tag screen's court: who stands where this rally.
+{
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12], middle_set: true, middle_a: 6, middle_b: null };
+  const R = (serve, won, ...touches) => ({ serve, won, touches });
+  // a: 1 serves and loses; b: 7 serves and loses; a: 2 serves (rally open).
+  const rs = [R('a', 'b', T(1, 'serve', 1)), R('b', 'a', T(7, 'serve', 1)), R('a', null, T(2, 'serve', 1))];
+  const c = courtNow(rs, g, 'a', 2);
+  ok('serving team: server in 1', c.spots[1] === 2, c.spots);
+  ok('front middle stays in 3', c.spots[3] === 6, c.spots);
+  ok('two of five not served yet are unplaced', c.unplaced.length === 3 && c.unplaced.includes(1) === false, c.unplaced);
+  ok('the server before 2 (1) is in 6', c.spots[6] === 1, c.spots);
+  const cb = courtNow(rs, g, 'b');
+  ok('receiving team keeps its last server in 1', cb.spots[1] === 7, cb.spots);
+  ok('six rotating: nobody fixed', cb.fixed === null);
+  ok('not six a side: no court', courtNow(rs, { ...g, players_a: [1, 2, 3] }, 'a', 2) === null);
+  // Once five of a's rotating players have served, everyone has a spot.
+  const lap = [1, 2, 3, 4].map(p => R('a', 'b', T(p, 'serve', 1)));
+  const full = courtNow([...lap, R('a', null, T(5, 'serve', 1))], g, 'a', 5);
+  ok('full rotation: 5 in 1, 1 in 2, 2 in 4, 3 in 5, 4 in 6', full.spots[1] === 5 && full.spots[2] === 1 && full.spots[4] === 2 && full.spots[5] === 3 && full.spots[6] === 4 && full.unplaced.length === 0, full.spots);
+  // Before a's rally starts, the suggested server places the team.
+  ok('receiving: last server stays in 1', courtNow(lap, g, 'a', null).spots[1] === 4);
+  const next = courtNow([...lap, R('b', 'a', T(7, 'serve', 1))], g, 'a', 5);
+  ok('upcoming rally after a side-out uses the suggested server', next.spots[1] === 5, next.spots);
+  // Usual setter: front middle; else most sets (3+ and over half).
+  ok('setter: front middle', usualSetter(rs, g, 'a') === 6);
+  const sets = [R('b', 'a', T(7, 'serve', 1), T(1, 'pass', 2), T(9, 'set', 2)), R('b', 'a', T(7, 'serve', 1), T(9, 'set', 2)), R('b', 'a', T(9, 'set', 2), T(8, 'set', 2), T(9, 'set', 1))];
+  ok('setter: most sets', usualSetter(sets, g, 'b') === 9, usualSetter(sets, g, 'b'));
+  ok('setter: nobody yet', usualSetter(rs, g, 'b') === null);
+  ok('pass spots start with back middle and back left', passSpots([], g, 'a').join() === '6,5', passSpots([], g, 'a'));
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

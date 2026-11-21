@@ -522,6 +522,19 @@ tr.dim td { color: var(--muted); }
 .tag-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .tag-team { border-top: 3px solid var(--tc); padding-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .tag-team-head { display: flex; align-items: center; gap: 8px; }
+/* The tag screen's court layout (scores.mjs players): front row at the net, back row behind; 1–6 = position. */
+.tag-court { display: flex; flex-direction: column; gap: 6px; }
+.tag-row { display: grid; grid-template-columns: 2.6em repeat(3, minmax(0, 1fr)); gap: 6px; align-items: stretch; }
+.tag-row + .tag-row { padding-top: 6px; border-top: 1px dashed var(--line); }
+.tag-row-label { align-self: center; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.tag-court button.tag-player { position: relative; min-width: 0; padding: 6px 8px; gap: 6px; }
+.tag-spot { position: absolute; top: 2px; right: 5px; font-size: .66rem; font-weight: 600; color: var(--muted); }
+.tag-empty { display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 8px; min-height: 40px; }
+.touch-edit { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.touch-edit select { width: auto; }
+.tag-grade.current { box-shadow: inset 0 0 0 2px var(--primary); }
+.tag-keys { font-size: .72rem; }
+button.tag-player.likely { border-style: dashed; border-color: var(--tc); background: color-mix(in srgb, var(--tc) 8%, var(--surface-2)); }
 .tag-players { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
 button.tag-player { display: flex; align-items: center; gap: 8px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); padding: 6px 10px; text-align: left; font-weight: 600; }
 button.tag-player span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -549,6 +562,7 @@ button.tag-grade.lost { border-color: var(--danger); background: color-mix(in sr
 @media (max-width: 640px) {
   .tag-teams { grid-template-columns: 1fr; }
   .tag-players { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  .tag-court button.tag-player .avatar { display: none; }
 }
 
 /* ---------- club: sign-ups, lineup, profiles, attendance, season ---------- */
