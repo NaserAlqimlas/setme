@@ -96,15 +96,17 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   let editing = scoresEditNext; scoresEditNext = false;
   // Swapping while changing players: the player tapped first, as [team index, player id].
   let picked = null;
-  // Setters who set all game: as saved with the teams; a main setter who arrived later does by default.
-  const allGameFor = ids => { const known = new Set(ses.all_game); return [...known, ...ids.filter(id => !known.has(id) && players.find(p => p.id === id)?.setting === 'M')]; };
+  // Setters who set all game: as saved with the teams; a main setter who arrived later does by default, unless they
+  // weren't setting that day (no_set, nosetters.sql; those count as regular players in predictions).
+  const noSet = ses.no_set ?? [];
+  const allGameFor = ids => { const known = new Set(ses.all_game); return [...known, ...ids.filter(id => !known.has(id) && !noSet.includes(id) && players.find(p => p.id === id)?.setting === 'M')]; };
   // While changing players: how even the teams are now, from the same ratings the lineup was built with.
   const balance = h('p', { class: 'small verdict', 'aria-live': 'polite' });
   const paintBalance = async () => {
     const teams = ses.teams;
     if (!editing || teams.length < 2 || teams.some(t => !t.length)) return balance.replaceChildren();
     try {
-      const r = await callFn('build-teams', { predict: true, teams, raters: ses.raters, allGame: allGameFor(teams.flat()) });
+      const r = await callFn('build-teams', { predict: true, teams, raters: ses.raters, allGame: allGameFor(teams.flat()), noSet });
       if (teams !== ses.teams) return; // changed again meanwhile
       const t = r.teams.map(x => x.weighted), gap = Math.max(...t) - Math.min(...t);
       balance.replaceChildren(h('b', {}, evenness(gap)), h('span', { class: 'muted' }, ` · team totals ${num2(Math.min(...t))} to ${num2(Math.max(...t))}, a gap of ${num2(gap)}. ${GAP_SCALE}`));
@@ -183,7 +185,9 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     if (pick === 'teams') { setGameDate(ses.played_on); location.hash = '#teams'; return; }
     if (pick !== 'here') return;
     try {
-      await q(sb.rpc('start_round', { p_session: ses.id, p_teams: ses.teams, p_raters: ses.raters ?? null, p_all_game: ses.all_game ?? [], p_source: ses.source ?? null }));
+      const args = { p_session: ses.id, p_teams: ses.teams, p_raters: ses.raters ?? null, p_all_game: ses.all_game ?? [], p_source: ses.source ?? null };
+      // The new round keeps who isn't setting; before nosetters.sql start_round has no p_no_set.
+      await q(sb.rpc('start_round', { ...args, p_no_set: noSet })).catch(e => /p_no_set|function/i.test(e.message) ? q(sb.rpc('start_round', args)) : Promise.reject(e));
       toast(`Round ${cur + 1} started. Swap players, then tap Done.`);
       scoresEditNext = true; render();
     } catch (e) { toast(e.message); }
@@ -222,7 +226,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       const allGame = allGameFor([...players_a, ...players_b]);
       let predicted = null;
       try {
-        const r = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters: ses.raters, allGame });
+        const r = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters: ses.raters, allGame, noSet });
         predicted = { a: r.teams[0], b: r.teams[1] };
       } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
       try {

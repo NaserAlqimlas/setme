@@ -1,6 +1,7 @@
 // POST /.netlify/functions/build-teams  { numTeams?: number, useCombos?: boolean, combos?: [{ player_a, player_b, kind: 'together'|'apart' }] }
 // raters: [ids] builds from those raters' ratings only. { listRaters: true } returns who has rated anyone, and everyone's names.
 // allGame: [playerId] = setters who set all game (default: every main setter); see teamSkills in teams.mjs.
+// noSet: [playerId] = setters who don't want to set today: treated as non-setters (setting 'N') for this request.
 // POST { check: true } instead lists who's playing with no ratings yet, so the organizer can pick a tier for them.
 // POST { teams: [[playerId, ...], ...], locked?: [playerId] } rates teams you made yourself instead of building them (any active
 // players), lists what's off about them, and suggests up to three small swaps (combos are respected the same way).
@@ -59,13 +60,16 @@ export default async (req) => {
   const me = await caller(req);
   if (!me || !['organizer', 'super'].includes(me.role)) return json({ error: 'Organizers only' }, 403);
 
-  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false, spreadWomen: sentSpread = true } = await req.json().catch(() => ({}));
+  const { numTeams = 4, useCombos = true, check = false, raters = null, combos: sent = [], teams: own = null, locked = [], suggestRater = null, allGame: sentAllGame = null, noSet = [], listRaters = false, predict = false, variety = true, playedOn = null, resultsAdjust = false, spreadWomen: sentSpread = true } = await req.json().catch(() => ({}));
   const [players, allRatings, rating] = await Promise.all([
     rest('players?active=eq.true&select=id,name,gender,setting,playing,tier'),
     rest('ratings?select=*'), // * so it still works before the setting_skill column is added
     activeRaters(),
   ]);
   const ratings = allRatings.filter(r => rating.has(r.rater_id));
+  // Setters not setting today count as regular players for everything below (spreading setters, setting, problems).
+  const off = new Set(Array.isArray(noSet) ? noSet.filter(Number.isInteger) : []);
+  for (const p of players) if (off.has(p.id)) p.setting = 'N';
   // Who has rated anyone, for the Ratings from picker (organizers can't read other people's rating rows), and everyone's
   // name (people), for who made each draft. Names only, never emails.
   if (listRaters) {
