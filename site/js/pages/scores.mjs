@@ -5,7 +5,7 @@ import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, courtNow, endsRally, joinsOf, lineupAt, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
+import { ACTIONS, courtNow, endsRally, inSpot, joinsOf, lineupAt, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -771,8 +771,10 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
 
   // Late players: mark who isn't here yet; when they arrive, say who they came in after in the serving order. They
   // count from the next rally. Someone not on the team who joined it is added to the game's lineup.
+  // Substitutions: a player who went off (hurt, say) and who came on in their spot, from the next rally.
   const lateEl = h('div', { class: 'tag-late small' });
   let arriving = null;   // player id whose "came in after" is being picked
+  let subbing = null;    // { s, off } while picking who came on
   const saveJoins = async (joins, extra = {}) => {
     const { error } = await sb.from('games').update({ joins, ...extra }).eq('id', g.id);
     if (error) { paintLate(); toast(/joins/.test(error.message) ? 'This needs the database upgrade first: run supabase/late_players.sql in the Supabase SQL Editor.' : error.message); return false; }
@@ -786,7 +788,12 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const all = Array.isArray(g.joins) ? g.joins : [];
     const team = s => {
       const js = joinsOf(g, s);
+      const others = [...pname.keys()].filter(p => !lineup.a.includes(p) && !lineup.b.includes(p)).sort((x, y) => (pname.get(x) ?? '').localeCompare(pname.get(y) ?? ''));
+      const nextRally = () => open() ? open().seq + 1 : curSeq();
+      const subItem = j => h('span', { class: 'tag-late-item' }, h('b', {}, pn(j.p)), ` on for ${pn(j.for)} from rally ${j.from}`,
+        h('button', { class: 'ghost sm', 'aria-label': `Undo ${pn(j.p)} on for ${pn(j.for)}`, title: 'Undo this substitution', onclick: () => saveJoins(all.filter(x => x !== j)) }, '×'));
       const items = js.map(j => {
+        if (j.for != null) return subItem(j);
         if (j.from == null && arriving === j.p) {
           const after = h('select', { 'aria-label': `${pn(j.p)} came in after` }, nextServerOrder(s).map(p => h('option', { value: p }, pn(p))));
           return h('span', { class: 'tag-late-item' }, h('b', {}, pn(j.p)), ' came in after ', after,
@@ -801,8 +808,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
             : [h('b', {}, pn(j.p)), ` came in at rally ${j.from}${j.after != null ? `, after ${pn(j.after)}` : ''}`],
           h('button', { class: 'ghost sm', 'aria-label': `${pn(j.p)} was there all game`, title: 'Undo: they were there all game', onclick: () => saveJoins(all.filter(x => x !== j)) }, '×'));
       });
-      const listed = new Set(js.map(j => j.p));
-      const others = [...pname.keys()].filter(p => !lineup.a.includes(p) && !lineup.b.includes(p)).sort((x, y) => (pname.get(x) ?? '').localeCompare(pname.get(y) ?? ''));
+      const listed = new Set(js.flatMap(j => [j.p, j.for]).filter(p => p != null));
       const add = h('select', { 'aria-label': `Someone not here yet for ${name[s]}` }, h('option', { value: '' }, 'Not here yet…'),
         h('optgroup', { label: name[s] }, lineup[s].filter(p => !listed.has(p)).map(p => h('option', { value: p }, pname.get(p) ?? '?'))),
         others.length > 0 && h('optgroup', { label: 'Joining from outside the team' }, others.map(p => h('option', { value: p }, pname.get(p) ?? '?'))));
@@ -811,13 +817,36 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
         const key = `players_${s}`, extra = lineup[s].includes(p) ? {} : { [key]: [...g[key], p] };
         saveJoins([...all, { p, side: s, from: null, after: null }], extra).then(ok => { if (ok && extra[key]) lineup[s] = g[key]; });
       };
-      return h('div', { class: 'tag-late-team' }, h('span', { style: `color:${color[s]}`, class: 'tag-middle-team' }, name[s]), items, add);
+      // Substitution: who went off, then who came on (someone on the team not playing yet, or from outside it).
+      let swap;
+      if (subbing?.s === s) {
+        const bench = lineup[s].filter(p => !here(s).includes(p) && !listed.has(p));
+        const on = h('select', { 'aria-label': `Who came on for ${pn(subbing.off)}` }, h('option', { value: '' }, 'Who came on…'),
+          bench.length > 0 && h('optgroup', { label: name[s] }, bench.map(p => h('option', { value: p }, pname.get(p) ?? '?'))),
+          others.length > 0 && h('optgroup', { label: 'From outside the team' }, others.map(p => h('option', { value: p }, pname.get(p) ?? '?'))));
+        swap = h('span', { class: 'tag-late-item' }, h('b', {}, pn(subbing.off)), ' off, ', on,
+          h('button', { class: 'sm', onclick: () => {
+            const p = Number(on.value); if (!p) return toast('Pick who came on');
+            const off = subbing.off, from = nextRally(), key = `players_${s}`, extra = lineup[s].includes(p) ? {} : { [key]: [...g[key], p] };
+            saveJoins([...all, { p, side: s, from, after: null, for: off }], extra).then(ok => {
+              if (!ok) return;
+              if (extra[key]) lineup[s] = g[key];
+              subbing = null; paintLate(); toast(`${pn(p)} on for ${pn(off)} from rally ${from}`);
+            });
+          } }, 'Save'),
+          h('button', { class: 'ghost sm', onclick: () => { subbing = null; paintLate(); } }, 'Cancel'));
+      } else {
+        swap = h('select', { 'aria-label': `Substitution for ${name[s]}` }, h('option', { value: '' }, 'Substitution…'),
+          h('optgroup', { label: 'Who went off' }, here(s).map(p => h('option', { value: p }, pname.get(p) ?? '?'))));
+        swap.onchange = () => { const p = Number(swap.value); if (p) { subbing = { s, off: p }; paintLate(); } };
+      }
+      return h('div', { class: 'tag-late-team' }, h('span', { style: `color:${color[s]}`, class: 'tag-middle-team' }, name[s]), items, add, swap);
     };
-    fill(lateEl, h('span', { class: 'muted' }, 'Late players'), team('a'), team('b'));
+    fill(lateEl, h('span', { class: 'muted' }, 'Late players and substitutions'), team('a'), team('b'));
   };
   // A team's players in serving order (who's on court now), for picking who a late player came in after.
   const nextServerOrder = s => {
-    const order = serveCycle(rallies, g, s).order.filter(p => here(s).includes(p));
+    const order = serveCycle(rallies, g, s).order.map(p => inSpot(g, s, p, curSeq())).filter(p => here(s).includes(p));
     return [...order, ...here(s).filter(p => !order.includes(p))];
   };
 
