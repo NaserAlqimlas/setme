@@ -48,12 +48,28 @@ export function suggestAction(rally, side, game) {
   return last.a === 'pass' || last.a === 'dig' ? 'set' : last.a === 'set' ? 'attack' : 'set';
 }
 
-// Late players (games.joins, late_players.sql): [{ p, side, from, after }]. from: the first rally (seq) they played,
+// Late players (games.joins, late_players.sql): [{ p, side, from, after, for? }]. from: the first rally (seq) they played,
 // null while they haven't come yet; after: who they came in after in the serving order. Everyone else was there
-// from the start.
+// from the start. A substitute has `for`: the player they replaced (hurt, say), who is off court from rally `from`
+// on; the substitute takes that player's spot in the rotation, so the serving order and positions carry on as before.
 export const joinsOf = (game, s) => (Array.isArray(game?.joins) ? game.joins : []).filter(j => j?.side === s);
+const lateOf = (game, s) => joinsOf(game, s).filter(j => j.for == null);
+export const subsOf = (game, s) => joinsOf(game, s).filter(j => j.for != null && j.from != null);
+// The player whose spot p plays in: p, or for a substitute the player they replaced (and so on back).
+export function rootOf(game, s, p) {
+  const subs = subsOf(game, s);
+  for (let n = 0, j; n < 20 && (j = subs.find(x => x.p === p)); n++) p = j.for;
+  return p;
+}
+// Who plays `root`'s spot in rally seq.
+export function inSpot(game, s, root, seq) {
+  const subs = subsOf(game, s);
+  for (let n = 0, j; n < 20 && (j = subs.find(x => x.for === root && seq >= x.from)); n++) root = j.p;
+  return root;
+}
 // Who was on court for side s in rally seq.
-export const lineupAt = (game, s, seq) => (game[`players_${s}`] ?? []).filter(p => !joinsOf(game, s).some(j => j.p === p && (j.from == null || seq < j.from)));
+export const lineupAt = (game, s, seq) => (game[`players_${s}`] ?? []).filter(p => !joinsOf(game, s).some(j =>
+  (j.p === p && (j.from == null || seq < j.from)) || (j.for === p && j.from != null && seq >= j.from)));
 // A serving order with late players put in where they came in (after `after`, or at the end).
 function withJoins(order, joins) {
   const out = order.filter(p => !joins.some(j => j.p === p));
@@ -70,25 +86,29 @@ const nextSeq = rallies => { const r = rallies.at(-1); return r && !r.won ? r.se
 // front middle (frontMiddle). They're never suggested after a side-out, since serving is up to them; when they do
 // serve, the order carries on from the player who served before them.
 // lineup: who is on court now (lineupAt); joins: the side's late players (joinsOf), put in the order where they came in.
+// Substitutes (joins with `for`) count as the player they replaced: the answer is whoever is on court in that spot.
 export function nextServer(rallies, side, lineup, fixed = null, joins = []) {
-  const turn = lineup.filter(p => p !== fixed);
+  const g = { joins: joins.map(j => ({ ...j, side })) }, root = p => rootOf(g, side, p);
+  const occ = r => lineup.find(p => root(p) === r) ?? r;
+  const late = joins.filter(j => j.for == null);
+  const turn = lineup.map(root).filter(p => p !== root(fixed));
   const first = [];
-  for (const r of rallies) for (const t of r.touches) if (t.a === 'serve' && r.serve === side && !first.includes(t.p)) first.push(t.p);
-  const servers = withJoins(first, joins);
+  for (const r of rallies) for (const t of r.touches) if (t.a === 'serve' && r.serve === side && !first.includes(root(t.p))) first.push(root(t.p));
+  const servers = withJoins(first, late);
   const done = rallies.filter(r => r.won);
   const prev = done.at(-1);
   const serves = [...rallies].reverse().flatMap(r => r.serve === side ? r.touches.filter(t => t.a === 'serve') : []);
   const lastServe = serves[0];
-  if (lastServe && prev && prev.serve === side && prev.won === side) return lastServe.p;
+  if (lastServe && prev && prev.serve === side && prev.won === side) return occ(root(lastServe.p));
   const order = servers.filter(p => turn.includes(p));
   const fresh = turn.find(p => !servers.includes(p));
-  const last = serves.find(t => turn.includes(t.p));
-  if (!last) return fresh ?? turn[0] ?? null;
+  const last = serves.map(t => root(t.p)).find(p => turn.includes(p));
+  if (last == null) return occ(fresh ?? turn[0] ?? null);
   // A late player who came in after the last server and hasn't served yet is up next.
-  const late = joins.find(j => j.from != null && j.after === last.p && turn.includes(j.p) && !first.includes(j.p));
-  if (late) return late.p;
-  if (fresh != null && order.length < turn.length) return fresh;
-  return order[(order.indexOf(last.p) + 1) % order.length] ?? turn[0] ?? null;
+  const comer = late.find(j => j.from != null && root(j.after) === last && turn.includes(j.p) && !first.includes(j.p));
+  if (comer) return comer.p;
+  if (fresh != null && order.length < turn.length) return occ(fresh);
+  return occ(order[(order.indexOf(last) + 1) % order.length] ?? turn[0] ?? null);
 }
 
 // Team numbers for one game: points won serving, side-out rate, aces, kills, stuffs and errors given away.
@@ -125,12 +145,14 @@ export function teamSummary(rallies, game) {
 export function frontMiddle(game, s) {
   return game.middle_set ? game[`middle_${s}`] ?? null : undefined;
 }
+// Everything here is by spot: a substitute counts as the player they replaced (rootOf), so order, fixed and serverOf
+// name the starting player of each spot; inSpot says who was in it in a given rally.
 export function serveCycle(rallies, game, s) {
-  const js = joinsOf(game, s);
-  // Everyone who played at some point (a late player who never came isn't counted).
-  const lineup = (game[`players_${s}`] ?? []).filter(p => !js.some(j => j.p === p && j.from == null));
+  const js = lateOf(game, s), subIn = new Set(subsOf(game, s).map(j => j.p));
+  // Everyone who started a spot (a late player who never came isn't counted; a substitute is in their player's spot).
+  const lineup = (game[`players_${s}`] ?? []).filter(p => !js.some(j => j.p === p && j.from == null) && !subIn.has(p));
   const done = rallies.filter(r => r.won);
-  const serverOf = r => r.serve === s ? r.touches.find(t => t.a === 'serve' && sideOf(game, t.p) === s)?.p ?? null : null;
+  const serverOf = r => { const p = r.serve === s ? r.touches.find(t => t.a === 'serve' && sideOf(game, t.p) === s)?.p ?? null : null; return p == null ? null : rootOf(game, s, p); };
   const build = fixed => {
     const order = [], stints = [];
     let prev = null;
@@ -144,7 +166,7 @@ export function serveCycle(rallies, game, s) {
     }
     return { order: withJoins(order, js.filter(j => j.p !== fixed)), stints };   // front middle never joins the rotation
   };
-  const chosen = frontMiddle(game, s);
+  const picked = frontMiddle(game, s), chosen = picked == null ? picked : rootOf(game, s, picked);
   if (chosen !== undefined) {
     const { order } = build(chosen), rotating = lineup.filter(p => p !== chosen).length;
     return { order, size: order.length >= rotating ? order.length : null, fixed: chosen, how: chosen != null ? 'chosen' : null, serverOf };
@@ -160,7 +182,7 @@ export function serveCycle(rallies, game, s) {
   }
   if (lineup.length === 6 && order.length === 5 && left.length === 1) {
     const sets = new Map();
-    for (const r of done) for (const t of r.touches) if (t.a === 'set' && sideOf(game, t.p) === s) sets.set(t.p, (sets.get(t.p) ?? 0) + 1);
+    for (const r of done) for (const t of r.touches) if (t.a === 'set' && sideOf(game, t.p) === s) sets.set(rootOf(game, s, t.p), (sets.get(rootOf(game, s, t.p)) ?? 0) + 1);
     const top = Math.max(0, ...sets.values());
     const fixed = top >= 3 && sets.get(left[0]) === top ? left[0] : null;
     return { order, size: fixed ? 5 : 6, fixed, how: fixed != null ? 'sets' : null, serverOf };
@@ -225,7 +247,8 @@ export function positions(rallies, game) {
   const done = rallies.filter(r => r.won);
   const blank = () => Object.fromEntries(Object.entries(ACTIONS).map(([a, d]) => [a, Object.fromEntries(d.grades.map(([g]) => [g, 0]))]));
   for (const s of ['a', 'b']) {
-    const lineup = (game[`players_${s}`] ?? []).filter(p => !joinsOf(game, s).some(j => j.p === p && j.from == null));
+    const subIn = new Set(subsOf(game, s).map(j => j.p));
+    const lineup = (game[`players_${s}`] ?? []).filter(p => !joinsOf(game, s).some(j => j.p === p && j.from == null) && !subIn.has(p));
     const { order: served, size, fixed, how, serverOf } = serveCycle(rallies, game, s);
     const order = [...served];
     const none = why => ({ ok: false, why, players: new Map(), unplaced: why === 'none' ? [...lineup] : [], fixed: null, how: null });
@@ -236,7 +259,10 @@ export function positions(rallies, game) {
     // The spots the rotating players go round: all six, or the five around a player fixed in 3.
     const spots = fixed != null ? [1, 2, 4, 5, 6] : [1, 2, 3, 4, 5, 6], n = spots.length;
     const players = new Map([...order, ...(fixed != null ? [fixed] : [])].map(p => [p, POSITIONS.map(() => ({ rallies: 0, won: 0, lost: 0, counts: blank() }))]));
-    const add = (p, spot, r) => {
+    // The spot's player in this rally: a substitute gets their own rows.
+    const add = (root, spot, r) => {
+      const p = inSpot(game, s, root, r.seq);
+      if (!players.has(p)) players.set(p, POSITIONS.map(() => ({ rallies: 0, won: 0, lost: 0, counts: blank() })));
       const row = players.get(p)[spot - 1];
       row.rallies++;
       r.won === s ? row.won++ : row.lost++;
@@ -251,7 +277,7 @@ export function positions(rallies, game) {
       for (const [i, p] of order.entries()) add(p, spots[(i - at + n) % n], r);
       if (fixed != null) add(fixed, 3, r);   // front middle all rally, even when they serve (they run back there)
     }
-    out[s] = { ok: true, players, unplaced: lineup.filter(p => !players.has(p)), fixed, how };
+    out[s] = { ok: true, players, unplaced: (game[`players_${s}`] ?? []).filter(p => !players.has(p) && !joinsOf(game, s).some(j => j.p === p && j.from == null)), fixed, how };
   }
   return out;
 }
@@ -260,8 +286,11 @@ export function positions(rallies, game) {
 // positions(); `server` is who serves this rally when the team serves (tagged, or the suggested next server).
 // -> { spots: { 1..6: pid }, unplaced: [pid], fixed } or null when it can't be told (not six a side, nobody served yet).
 export function courtNow(rallies, game, s, server = null) {
-  const lineup = lineupAt(game, s, nextSeq(rallies));
-  if (lineup.length !== 6) return null;   // five a side: no fixed spots
+  const seq = nextSeq(rallies), here = lineupAt(game, s, seq);
+  if (here.length !== 6) return null;   // five a side: no fixed spots
+  // Worked out by spot (serveCycle), then each spot's player now put in.
+  const lineup = here.map(p => rootOf(game, s, p));
+  if (server != null) server = rootOf(game, s, server);
   const { order: served, fixed, serverOf } = serveCycle(rallies, game, s);
   const order = served.filter(p => lineup.includes(p));
   const rot = lineup.filter(p => p !== fixed);
@@ -279,15 +308,16 @@ export function courtNow(rallies, game, s, server = null) {
   const spots = {};
   if (at != null) for (const [i, p] of order.entries()) spots[spotsList[(i - at + n) % n]] = p;
   if (fixed != null) spots[3] = fixed;
+  for (const k of Object.keys(spots)) spots[k] = inSpot(game, s, spots[k], seq);
   const placed = new Set(Object.values(spots));
-  return { spots, unplaced: lineup.filter(p => !placed.has(p)), fixed };
+  return { spots, unplaced: here.filter(p => !placed.has(p)), fixed: fixed == null ? null : inSpot(game, s, fixed, seq) };
 }
 
 // Who usually sets for a team in this game: the front-middle player, or else whoever has made at least 3 of the
 // team's sets and most of them. null when nobody stands out.
 export function usualSetter(rallies, game, s) {
   const { fixed } = serveCycle(rallies, game, s);
-  if (fixed != null) return fixed;
+  if (fixed != null) return inSpot(game, s, fixed, nextSeq(rallies));
   const sets = new Map();
   let all = 0;
   for (const r of rallies) for (const t of r.touches) if (t.a === 'set' && sideOf(game, t.p) === s) { sets.set(t.p, (sets.get(t.p) ?? 0) + 1); all++; }

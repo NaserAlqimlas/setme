@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt, rootOf, inSpot } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -310,6 +310,35 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   const gm = { ...g, middle_set: true, middle_a: 6, middle_b: null };
   const cm = courtNow([...rs, R(5, 'b', 'a', T(9, 'serve', 1))], gm, 'a', 3);
   ok('a late front-middle player is only in 3', Object.values(cm.spots).filter(p => p === 6).length === 1 && cm.spots[3] === 6, cm.spots);
+}
+
+// Substitution: 3 got hurt; 13 (not on the team) came on in their spot from rally 5.
+{
+  const R = (seq, serve, won, ...touches) => ({ seq, serve, won, touches });
+  const g = { players_a: [1, 2, 3, 4, 5, 6, 13], players_b: [7, 8, 9, 10, 11, 12], joins: [{ p: 13, side: 'a', from: 5, after: null, for: 3 }] };
+  ok('sub: before, the starter plays', lineupAt(g, 'a', 4).join() === '1,2,3,4,5,6', lineupAt(g, 'a', 4));
+  ok('sub: from rally 5, the sub plays instead', lineupAt(g, 'a', 5).join() === '1,2,4,5,6,13', lineupAt(g, 'a', 5));
+  ok('sub: their spot is the starter\'s', rootOf(g, 'a', 13) === 3 && inSpot(g, 'a', 3, 4) === 3 && inSpot(g, 'a', 3, 6) === 13);
+  // a served 1, 2, 3 (each losing it), b in between; then after the sub, a wins the serve back.
+  const rs = [R(1, 'a', 'b', T(1, 'serve', 1)), R(2, 'b', 'a', T(7, 'serve', 1)), R(3, 'a', 'b', T(2, 'serve', 1)), R(4, 'b', 'a', T(8, 'serve', 1)),
+    R(5, 'a', 'b', T(13, 'serve', 1)), R(6, 'b', 'a', T(9, 'serve', 1))];
+  const cyc = serveCycle(rs, g, 'a');
+  ok('sub: serving order keeps the spot', cyc.order.join() === '1,2,3', cyc.order);
+  ok('sub: next after the sub is 4', nextServer(rs, 'a', lineupAt(g, 'a', 7), null, g.joins) === 4, nextServer(rs, 'a', lineupAt(g, 'a', 7), null, g.joins));
+  const more = [...rs, R(7, 'a', 'b', T(4, 'serve', 1)), R(8, 'b', 'a', T(10, 'serve', 1)), R(9, 'a', 'b', T(5, 'serve', 1)), R(10, 'b', 'a', T(11, 'serve', 1)), R(11, 'a', 'b', T(6, 'serve', 1))];
+  const lap = [...more, R(12, 'b', 'a', T(12, 'serve', 1)), R(13, 'a', 'b', T(1, 'serve', 1)), R(14, 'b', 'a', T(7, 'serve', 1)), R(15, 'a', 'b', T(2, 'serve', 1)), R(16, 'b', 'a', T(8, 'serve', 1))];
+  ok('sub: on the next lap the sub serves in the starter\'s turn', nextServer(lap, 'a', lineupAt(g, 'a', 17), null, g.joins) === 13, nextServer(lap, 'a', lineupAt(g, 'a', 17), null, g.joins));
+  // The sub came on while the starter's spot was serving: they carry on the serve.
+  const mid = { ...g, joins: [{ p: 13, side: 'a', from: 6, after: null, for: 3 }] };
+  ok('sub: takes over a serve in progress', nextServer([...rs.slice(0, 4), R(5, 'a', 'a', T(3, 'serve', 1))], 'a', lineupAt(mid, 'a', 6), null, mid.joins) === 13);
+  const court = courtNow(more, g, 'a');
+  ok('sub: on the court in the starter\'s place, starter gone', Object.values(court.spots).includes(13) && !Object.values(court.spots).includes(3), court.spots);
+  const pos = positions(more, g);
+  ok('sub: positions work with six a side', pos.a.ok, pos.a);
+  ok('sub: both get their own rows', pos.a.players.has(3) && pos.a.players.has(13), [...pos.a.players.keys()]);
+  ok('sub: the starter played rallies 1-4 only', pos.a.players.get(3).reduce((n, r) => n + r.rallies, 0) === 0 || pos.a.players.get(3).reduce((n, r) => n + r.rallies, 0) <= 4);
+  const gm = { ...g, middle_set: true, middle_a: 3, middle_b: null };
+  ok('sub: a front-middle starter\'s sub stays front middle', courtNow(more, gm, 'a').spots[3] === 13, courtNow(more, gm, 'a').spots);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');
