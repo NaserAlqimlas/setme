@@ -89,3 +89,20 @@ def test_an_unreadable_upload_says_so(tmp_path, storage):
     run('k', f'{storage}/originals/k/x.mov', f'{storage}/viewing/k.mp4', 'unused', report=notes)
     assert notes.sent[-1] == {'status': 'failed', 'error': "The video couldn't be read. Export it again as MP4 (or MOV) and upload that."}
     assert '/viewing/k.mp4' not in Storage.files
+
+
+def test_hdr_is_tone_mapped(tmp_path):
+    """An iPhone-style HDR (HLG, BT.2020, 10-bit) clip comes out as ordinary BT.709 8-bit, not washed out."""
+    from worker.job import is_hdr, make_viewing
+    hdr, sdr, out = tmp_path / 'hdr.mov', tmp_path / 'sdr.mp4', tmp_path / 'out.mp4'
+    base = ['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=1']
+    subprocess.run(base + ['-pix_fmt', 'yuv420p10le', '-c:v', 'libx265', '-tag:v', 'hvc1',
+                           '-x265-params', 'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:log-level=error', str(hdr)], check=True)
+    subprocess.run(base + ['-pix_fmt', 'yuv420p', '-c:v', 'libx264', str(sdr)], check=True)
+    assert is_hdr(hdr) and not is_hdr(sdr)
+    assert 'tonemap' in ' '.join(viewing_command(hdr, out, hdr=True))
+    assert 'tonemap' not in ' '.join(viewing_command(sdr, out))
+    make_viewing(hdr, out, 1.0)
+    s = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_streams', '-of', 'json', str(out)],
+                                  capture_output=True, text=True).stdout)['streams'][0]
+    assert (s['pix_fmt'], s.get('color_transfer'), s.get('color_primaries')) == ('yuv420p', 'bt709', 'bt709')
