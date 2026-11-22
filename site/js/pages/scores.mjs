@@ -242,7 +242,34 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       note);
   };
 
-  // Saved games, newest first. Scores can be fixed in place; the players and prediction stay as saved.
+  // Saved games, newest first. Scores can be fixed in place. The super can also fix which two teams played (picked
+  // wrong when the score went in): the game takes that round's lineups for them and is predicted again.
+  let fixing = null;
+  const fixTeams = (g, n) => {
+    const r = roundOf(g), teams = teamsIn(r);
+    const pick = (v, label) => h('select', { 'aria-label': label }, teams.map((_, i) => h('option', { value: i + 1, selected: i + 1 === v }, teamName(i + 1, r))));
+    const ta = pick(g.team_a, `Game ${n} first team`), tb = pick(g.team_b, `Game ${n} second team`);
+    const save = h('button', { class: 'sm' }, 'Save teams');
+    save.onclick = async () => {
+      const a = Number(ta.value), b = Number(tb.value);
+      if (a === b) return toast('Pick two different teams');
+      if (a === g.team_a && b === g.team_b) { fixing = null; return paintList(); }
+      if (tags?.get(g.id) && !await ask(`Change game ${n}'s teams?`, `It has ${tags.get(g.id)} tagged rallies, tagged with the players saved now. Check its tags afterwards.`, 'Change teams')) return;
+      save.disabled = true; save.textContent = 'Saving…';
+      const players_a = teams[a - 1] ?? [], players_b = teams[b - 1] ?? [];
+      const raters = rounds.find(x => x.n === r)?.raters ?? ses.raters;
+      let predicted = null;
+      try {
+        const p = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters, allGame: allGameFor([...players_a, ...players_b]), noSet });
+        predicted = { a: p.teams[0], b: p.teams[1] };
+      } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
+      const upd = { team_a: a, team_b: b, players_a, players_b, predicted };
+      try { await q(sb.from('games').update(upd).eq('id', g.id)); Object.assign(g, upd); fixing = null; toast('Teams fixed'); paintTeams(); ses.ended ? paintEnded() : paintEntry(); paintList(); paintBalance(); }
+      catch (e) { toast(e.message); save.disabled = false; save.textContent = 'Save teams'; }
+    };
+    return h('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px;align-items:center' }, ta, h('span', { class: 'muted' }, 'v'), tb, save,
+      h('button', { class: 'ghost sm', onclick: () => { fixing = null; paintList(); } }, 'Cancel'));
+  };
   const paintList = () => {
     list.hidden = !games.length;
     if (!games.length) return list.replaceChildren();
@@ -263,7 +290,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       const changed = [lineup(g.players_a, g.team_a, roundOf(g)) && `${teamName(g.team_a, roundOf(g))}${lineup(g.players_a, g.team_a, roundOf(g))}`, lineup(g.players_b, g.team_b, roundOf(g)) && `${teamName(g.team_b, roundOf(g))}${lineup(g.players_b, g.team_b, roundOf(g))}`].filter(Boolean).join(' · ');
       return h('li', {},
         h('span', { class: 'game-no muted' }, String(n)),
-        h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}`),
+        fixing === g.id ? h('div', { class: 'grow' }, fixTeams(g, n)) : h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}`),
           !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
           changed && h('div', { class: 'muted small' }, changed)),
         h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
@@ -273,6 +300,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
           if (!tags) return toast('Match stats need the database upgrade (supabase/match_stats.sql)');
           taggingGame = g.id; render();
         } }, tags?.get(g.id) ? `Tags (${tags.get(g.id)})` : 'Tag'),
+        me.role === 'super' && fixing !== g.id && h('button', { class: 'ghost sm', title: 'Fix which two teams played this game', 'aria-label': `Fix game ${n}'s teams`,
+          onclick: () => { fixing = g.id; paintList(); } }, 'Teams'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
           if (!await ask(`Delete game ${n}?`, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b}${tags?.get(g.id) ? `, and its ${tags.get(g.id)} tagged rallies` : ''}. This can't be undone.`, 'Delete game')) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }

@@ -4,12 +4,15 @@
 //   { action: 'game', game }  -> { rallies, video: { url, rallies, sound } | null, highlights: [{ id, start, end, label, kind }] | null,
 //      dismissed: [{ t, kind }] | null }   highlights: null before highlights.sql. sound (the worker's sound scores) and
 //      dismissed (suggestions the super turned down) are for suggesting highlights; dismissed only for the super.
+//      fix (the super only): the game's round, to fix which teams played: { teams: [{ k, name, ids }], raters, all_game,
+//      no_set, middles } (middles: setters who set all game unless marked not setting, as on Scores).
 //      rallies: the game's tags with touches, as stored (everyone's, for the box score); video: the uploaded copy to
 //      watch (a link that expires) and the rally times found in it.
 // Organizers and the super: every game. Players: every game on published game days.
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
-import { buildDays } from '../lib/gamedays.mjs';
+import { buildDays, teamsOf } from '../lib/gamedays.mjs';
+import { teamNames } from '../../site/js/teams.mjs';
 import { canWatch, LINK_SECONDS } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
@@ -20,6 +23,21 @@ async function allRows(path) {
     rows.push(...page);
     if (page.length < 1000) return rows;
   }
+}
+
+// A game's round as the super needs it to fix which two teams played (see the 'game' action).
+async function fixOf(g) {
+  const [[s], rounds, players] = await Promise.all([
+    rest(`sessions?id=eq.${g.session_id}&select=*`),
+    rest(`rounds?session_id=eq.${g.session_id}&select=*`).catch(() => []),
+    allRows('players?select=id,name,setting&order=id'),
+  ]);
+  if (!s) return null;
+  const t = teamsOf(s, rounds, g.round ?? 1), pl = new Map(players.map(p => [p.id, p]));
+  const teams = (t?.teams ?? []).map(team => (Array.isArray(team) ? team : []));
+  const names = teamNames(teams.map(ids => ids.map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []));
+  return { teams: teams.map((ids, i) => ({ k: i + 1, name: names[i], ids })), raters: t?.raters ?? null, all_game: t?.all_game ?? [], no_set: t?.no_set ?? [],
+    middles: players.filter(p => p.setting === 'M').map(p => p.id) };
 }
 
 export default async (req) => {
@@ -78,7 +96,8 @@ export default async (req) => {
         .then(r => r.map(x => ({ id: x.id, start: Number(x.start_t), end: Number(x.end_t), label: x.label ?? null, kind: x.kind ?? 'highlight' })), () => null);
       // Suggestions the super dismissed; null before suggestions.sql (then no suggestions are shown).
       const dismissed = me.role === 'super' ? await rest(`highlight_dismissed?game_id=eq.${g.id}&select=t,kind`).then(r => r.map(x => ({ t: Number(x.t), kind: x.kind })), () => null) : null;
-      return json({ rallies, video, highlights, dismissed, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null }, joins: Array.isArray(g.joins) ? g.joins : [] });
+      const fix = me.role === 'super' ? await fixOf(g).catch(() => null) : null;
+      return json({ rallies, video, highlights, dismissed, fix, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null }, joins: Array.isArray(g.joins) ? g.joins : [] });
     }
   } catch (e) {
     return json({ error: e.message }, 400);
