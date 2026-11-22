@@ -2,7 +2,7 @@
 // and a box score with everyone's line) and your own. Organizers and the super see every game; a player sees every
 // game on published game days (netlify/functions/game-view.mjs). The super also uploads videos
 // here (Upload several) and can go from a game to tagging it.
-import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
+import { ask, callFn, fill, h, me, pageHead, q, render, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
 import { ACTIONS, bestPlayers, FRONT_ROW, fromRows, gameDetail, gradeLabel, POSITIONS, positions, recap, rotations, serveCycle, tally, teamSummary } from '../stats.mjs';
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
@@ -135,8 +135,45 @@ function dayCard(d, open, highlights = 0, bloopers = 0) {
     })));
 }
 
+// The super fixes a game entered wrong: which two of its round's teams played, and the score. The game takes those
+// teams' lineups and is predicted again (as on Scores), then the page loads again with the fix.
+function fixCard(g, fix, tagged, close) {
+  const pick = (v, label) => h('select', { 'aria-label': label }, fix.teams.map(t => h('option', { value: t.k, selected: t.k === v }, t.name)));
+  const num = (v, label) => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: v, 'aria-label': label });
+  const ta = pick(g.a.k, 'First team'), tb = pick(g.b.k, 'Second team'), sa = num(g.a.score, 'First team score'), sB = num(g.b.score, 'Second team score');
+  const save = h('button', { class: 'sm' }, 'Save');
+  save.onclick = async () => {
+    const a = Number(ta.value), b = Number(tb.value), A = Number(sa.value), B = Number(sB.value);
+    if (a === b) return toast('Pick two different teams');
+    if (sa.value === '' || sB.value === '' || ![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99)) return toast('Scores are whole numbers from 0 to 99');
+    if (A === B) return toast('A game can\'t end in a tie');
+    const teamsChanged = a !== g.a.k || b !== g.b.k;
+    if (!teamsChanged && A === g.a.score && B === g.b.score) return close();
+    if (teamsChanged && tagged && !await ask(`Change game ${g.n}'s teams?`, `It has ${tagged} tagged rallies, tagged with the players saved now. Check its tags afterwards.`, 'Change teams')) return;
+    save.disabled = true; save.textContent = 'Saving…';
+    const upd = { score_a: A, score_b: B };
+    if (teamsChanged) {
+      const players_a = fix.teams[a - 1]?.ids ?? [], players_b = fix.teams[b - 1]?.ids ?? [], ids = [...players_a, ...players_b];
+      const known = new Set(fix.all_game), noSet = fix.no_set ?? [];
+      const allGame = [...known, ...ids.filter(id => !known.has(id) && !noSet.includes(id) && fix.middles.includes(id))];
+      Object.assign(upd, { team_a: a, team_b: b, players_a, players_b, predicted: null });
+      try {
+        const p = await callFn('build-teams', { predict: true, teams: [players_a, players_b], raters: fix.raters, allGame, noSet });
+        upd.predicted = { a: p.teams[0], b: p.teams[1] };
+      } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
+    }
+    try { await q(sb.from('games').update(upd).eq('id', g.id)); toast('Game fixed'); render(); }
+    catch (e) { toast(e.message); save.disabled = false; save.textContent = 'Save'; }
+  };
+  return [h('h3', {}, `Fix game ${g.n}`),
+    h('p', { class: 'muted small' }, 'Picked the wrong teams or typed a wrong score? Choose the teams that played and their score.'),
+    h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;align-items:center' }, ta, sa, h('span', { class: 'muted' }, 'v'), sB, tb, save,
+      h('button', { class: 'ghost sm', onclick: close }, 'Cancel'))];
+}
+
 // One game: video and rallies on the left, the numbers on the right (stacked on a phone).
 function gameView(g, back) {
+  const fix = h('div', { class: 'card', hidden: true }, spinner('Loading…'));
   const left = h('div', { class: 'gd-left' }, h('div', { class: 'card' }, spinner('Loading the game…')));
   const right = h('div', { class: 'gd-right' });
   const view = h('div', { class: `gd-view${isBigVideo() ? ' big' : ''}` },
@@ -146,7 +183,9 @@ function gameView(g, back) {
         h('div', { class: 'gd-score big' },
           h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name, ' ', h('b', {}, String(g.a.score))), h('span', { class: 'muted' }, ' – '),
           h('span', { style: `--tc:${color(g.b.k)}` }, h('b', {}, String(g.b.score)), ' ', g.b.name))),
+      me.role === 'super' && h('button', { class: 'ghost sm', onclick: () => { fix.hidden = !fix.hidden; } }, 'Fix teams or score'),
       me.role === 'super' && h('button', { class: 'ghost sm', onclick: () => openTagging(g.played_on, g.id) }, 'Tag this game')),
+    fix,
     h('div', { class: 'gd-cols' }, left, right));
   load();
   return view;
@@ -155,6 +194,8 @@ function gameView(g, back) {
     let d;
     try { d = await callFn('game-view', { action: 'game', game: g.id }); }
     catch (e) { return fill(left, h('p', { class: 'warn' }, e.message)); }
+    if (d.fix) fill(fix, fixCard(g, d.fix, d.rallies?.length ?? 0, () => { fix.hidden = true; }));
+    else fill(fix, h('p', { class: 'muted' }, 'This game can\'t be fixed here. Fix it on Scores.'));
     const rallies = fromRows(d.rallies ?? []);
     const game = { team_a: g.a.k, team_b: g.b.k, players_a: g.a.players.map(p => p.id), players_b: g.b.players.map(p => p.id), score_a: g.a.score, score_b: g.b.score,
       middle_set: !!d.middle?.set, middle_a: d.middle?.a ?? null, middle_b: d.middle?.b ?? null, joins: d.joins ?? [] };
