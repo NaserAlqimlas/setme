@@ -442,7 +442,6 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
 
   // ----- saving -----
   const status = h('span', { class: 'muted small tag-status' }, ro ? 'Read only: only the super tags' : stored.length ? 'Saved' : '');
-  let told = false;
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
     await saving;
@@ -460,9 +459,6 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       for (const [id, j] of sent) saved.set(id, j);
       if (!dirty) { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } }
       status.textContent = dirty ? 'Unsaved' : 'Saved';
-      // Tags reach the saved score: the club hears the stats are up (once per game; the server checks and decides).
-      const t = score(counted());
-      if (!told && me.role === 'super' && rallies.length && t.a === g.score_a && t.b === g.score_b) { told = true; callFn('notify', { action: 'tagged', game: g.id }).catch(() => { told = false; }); }
     }, e => {
       dirty = true; status.textContent = `Not saved (${e.message}). Kept on this device, retrying…`;
       saveTimer = setTimeout(save, 10e3);
@@ -999,11 +995,36 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     } catch (e) { toast(missing(e) || /move_game_tags/.test(e.message) ? 'Moving tags needs supabase/move_tags.sql run in Supabase first' : e.message); }
   };
 
+  // Done tagging (the super): the game's tags are finished, so everyone who can watch it hears its stats are up
+  // (notify.mjs; once per game, games.tagged_emailed_at). Before emails.sql there's no column and no button.
+  const doneSlot = h('span');
+  const paintDone = () => {
+    if (ro || me.role !== 'super' || !('tagged_emailed_at' in g)) return fill(doneSlot);
+    if (g.tagged_emailed_at) return fill(doneSlot, h('span', { class: 'chip plain', title: `Marked done ${new Date(g.tagged_emailed_at).toLocaleString()}` }, '✓ Done tagging'));
+    const btn = h('button', { class: 'sm' }, 'Done tagging');
+    btn.onclick = async () => {
+      if (!rallies.some(r => r.won)) return toast('Tag some rallies first');
+      const t = score(counted()), off = t.a !== g.score_a || t.b !== g.score_b;
+      if (!await ask(`Done tagging game ${n}?`, `${off ? `The tags give ${t.a}–${t.b}; the saved score is ${g.score_a}–${g.score_b}. ` : ''}Everyone who can watch this game gets an email that its stats are up. It goes once, so mark it when the tags are final.`, 'Done, send it')) return;
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        await save();
+        if (dirty) throw new Error('The tags haven\'t saved yet. Try again in a moment.');
+        const r = await callFn('notify', { action: 'tagged', game: g.id });
+        g.tagged_emailed_at = r.at ?? new Date().toISOString();
+        toast(r.sent ? `Done. Emailed ${r.sent} ${r.sent === 1 ? 'person' : 'people'}.` : 'Marked done');
+        paintDone();
+      } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Done tagging'; }
+    };
+    fill(doneSlot, btn);
+  };
+  paintDone();
+
   const wrap = h('div', { class: `tagger${isBigVideo() ? ' big' : ''}` },
     h('div', { class: 'card tag-top' },
       h('button', { class: 'ghost sm', onclick: leave }, '← Games'),
       h('div', { class: 'grow' }, h('h3', {}, `Game ${n} · ${name.a} v ${name.b}`), status),
-      scoreEl, gameRecap.btn,
+      scoreEl, gameRecap.btn, doneSlot,
       !ro && others.length > 0 && h('button', { class: 'ghost sm', title: 'These tags belong to another game: move them there', onclick: moveTags }, 'Wrong game?')),
     // Wide screens: the video stays on the left while the panels scroll on the right.
     h('div', { class: 'tag-cols' },
