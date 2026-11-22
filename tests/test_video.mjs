@@ -14,7 +14,7 @@ test('organizers and the super watch any game; players only their own', () => {
   assert.ok(canWatch({ role: 'player', player_id: '3' }, game));
   assert.ok(canWatch({ role: 'player', player_id: 9 }, game));       // every player watches every game
   assert.ok(canWatch({ role: 'player', player_id: null }, game));
-  assert.ok(!canWatch({ role: 'rater', player_id: 3 }, game));      // raters aren't players in the club sense
+  assert.ok(canWatch({ role: 'rater', player_id: 3 }, game));       // everyone watches
   assert.ok(!canWatch(null, game));
 });
 
@@ -103,4 +103,29 @@ test('invite and reset emails', async () => {
   assert.equal(inv.html, undefined);
   const reset = accountEmail({ kind: 'reset', name: 'Sara', link: 'l' });
   assert.match(reset.subject, /password reset/); assert.match(reset.text, /^l$/m);
+});
+
+test('club emails: who gets them, what they say, sent in batches', async () => {
+  const { clubRecipients, clubEmail, sendBatch } = await import('../netlify/lib/email.mjs');
+  const profiles = [
+    { id: 's', email: 's@x', role: 'super' }, { id: 'o', email: 'o@x', role: 'organizer' }, { id: 'p', email: 'p@x', role: 'player' },
+    { id: 'r', email: 'r@x', role: 'rater' }, { id: 'q', email: null, role: 'player' }, { id: 'off', email: 'off@x', role: 'player' },
+  ];
+  const prefs = [{ user_id: 'off', videos: false, tags: true }];
+  assert.deepEqual(clubRecipients({ kind: 'videos', profiles, prefs, published: true }), ['s@x', 'o@x', 'p@x', 'r@x']);       // no address, turned off
+  assert.deepEqual(clubRecipients({ kind: 'tags', profiles, prefs, published: true }), ['s@x', 'o@x', 'p@x', 'r@x', 'off@x']);   // only videos turned off
+  assert.deepEqual(clubRecipients({ kind: 'videos', profiles, prefs, published: false }), ['s@x', 'o@x']);              // players wait for the day to be shown
+  assert.deepEqual(clubRecipients({ kind: 'videos', profiles, prefs, published: true, skip: 's' }), ['o@x', 'p@x', 'r@x']);     // the uploader has their own email
+  const m = clubEmail({ kind: 'tags', label: 'Game 2 on Sat, Nov 21', game: { a: 'A', b: '<B>', sa: 25, sb: 20 }, link: 'L', settings: 'S' });
+  assert.equal(m.subject, 'Game 2 on Sat, Nov 21: the stats are up');
+  assert.match(m.text, /\(A 25–20 <B>\)/);
+  assert.match(m.html, /&lt;B&gt;/); assert.doesNotMatch(m.html, /<B>/);   // names are escaped
+  assert.match(m.html, /href="L"/); assert.match(m.html, /href="S"/); assert.match(m.html, /#ffc531/); assert.match(m.text, /^L$/m); assert.match(m.text, /Settings: S/);
+  assert.match(clubEmail({ kind: 'videos', label: 'G', link: 'L', settings: 'S' }).subject, /the video is up/);
+  const calls = [];
+  const n = await sendBatch(Array.from({ length: 150 }, (_, i) => ({ to: `${i}@x`, subject: 's', text: 't' })), { RESEND_API_KEY: 'k' },
+    async (url, init) => { calls.push([url, JSON.parse(init.body).length]); return new Response('{}'); });
+  assert.equal(n, 150);
+  assert.deepEqual(calls, [['https://api.resend.com/emails/batch', 100], ['https://api.resend.com/emails/batch', 50]]);
+  assert.equal(await sendBatch([{ to: 'a' }], {}), 0);   // email not set up
 });

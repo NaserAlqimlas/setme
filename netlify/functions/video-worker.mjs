@@ -6,10 +6,12 @@
 // Or about a highlight reel being made into a file (highlights.mjs): { reel, status: 'processing' | 'done' | 'failed', progress?, error? }.
 // When a reel's file is done, older files of the same reel are deleted.
 // Or sound scores for a video analysed before they existed (video.mjs 'sound'): { job, status: 'sound', sound }.
-// When the job ends, the person who uploaded it gets an email (Resend), if email is set up.
+// When the job ends, the person who uploaded it gets an email (Resend), if email is set up; when it's ready to watch,
+// so does everyone else who may watch it (netlify/lib/news.mjs, unless they turned it off in Settings).
 import { json, rest } from '../lib/supabase.mjs';
 import { sendEmail } from '../lib/email.mjs';
 import { r2 } from '../lib/r2.mjs';
+import { tellClub } from '../lib/news.mjs';
 import { applyReelUpdate, applyUpdate, doneEmail, gameLabel, soundPatch, verify } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
@@ -43,7 +45,9 @@ export default async (req) => {
   const [now] = await rest(`video_jobs?id=eq.${enc(job.id)}`, { method: 'PATCH', headers: { prefer: 'return=representation' }, body: JSON.stringify(patch) });
   if (['done', 'failed'].includes(now.status)) {
     // The email is a courtesy: a failure to send it doesn't undo the result.
-    await tellUploader(now, process.env.URL || new URL(req.url).origin).catch(e => console.error(e.message));
+    const origin = process.env.URL || new URL(req.url).origin;
+    await tellUploader(now, origin).catch(e => console.error(e.message));
+    if (now.status === 'done' && now.game_id) await tellClub({ kind: 'videos', gameId: now.game_id, origin, skip: now.uploaded_by }).catch(e => console.error(e.message));
   }
   return json({ ok: true, status: now.status });
 };

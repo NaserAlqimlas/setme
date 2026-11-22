@@ -88,6 +88,8 @@ Highlights: paste and run `supabase/highlights.sql` after `video.sql` (adds `hig
 
 Setters not setting: paste and run `supabase/nosetters.sql` after `rounds.sql` (adds `no_set` to game days and rounds) so the Scores page predicts games with the setters who sat out setting. Safe to run again. Until then saving works as before.
 
+Club emails: paste and run `supabase/emails.sql` (adds `email_prefs` and `games.tagged_emailed_at`). Safe to run again. Until then no club emails go out and Settings says the upgrade is needed; the uploader's own "ready to watch" email works as before.
+
 Highlight suggestions and bloopers: paste and run `supabase/suggestions.sql` after `highlights.sql` (adds `kind` to highlights and reels, and `highlight_dismissed`). Safe to run again. Until then highlights work as before, without suggestions or bloopers. The worker scores the sound of new uploads; redeploy it (`.venv/bin/modal deploy worker/modal_app.py` from the vision folder) for that and for scoring older videos (Score older videos on Games).
 
 Organizers see All ratings: paste and run `supabase/organizer_ratings.sql` (everyone's ratings and rating history, and raters' names, for organizers). Safe to run again. Until then organizers' All ratings page only has their own ratings.
