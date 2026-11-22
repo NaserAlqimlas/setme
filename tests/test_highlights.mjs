@@ -18,7 +18,8 @@ test('every player sees the whole day, once it is published', () => {
   assert.ok(canSeeDay({ role: 'player', player_id: 99 }, day));       // every player, not only those who played
   assert.ok(!canSeeDay({ role: 'player', player_id: 5 }, { published: false }));
   assert.ok(canSeeDay({ role: 'organizer' }, { published: false }));
-  assert.ok(!canSeeDay({ role: 'rater' }, day));
+  assert.ok(canSeeDay({ role: 'rater' }, day));
+  assert.ok(!canSeeDay({ role: 'rater' }, { published: false }));
 });
 
 test('clips in the order played, only from finished videos, long ones cut short', () => {

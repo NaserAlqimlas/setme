@@ -442,6 +442,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
 
   // ----- saving -----
   const status = h('span', { class: 'muted small tag-status' }, ro ? 'Read only: only the super tags' : stored.length ? 'Saved' : '');
+  let told = false;
   const save = async () => {
     clearTimeout(saveTimer); saveTimer = null;
     await saving;
@@ -459,6 +460,9 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
       for (const [id, j] of sent) saved.set(id, j);
       if (!dirty) { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } }
       status.textContent = dirty ? 'Unsaved' : 'Saved';
+      // Tags reach the saved score: the club hears the stats are up (once per game; the server checks and decides).
+      const t = score(counted());
+      if (!told && me.role === 'super' && rallies.length && t.a === g.score_a && t.b === g.score_b) { told = true; callFn('notify', { action: 'tagged', game: g.id }).catch(() => { told = false; }); }
     }, e => {
       dirty = true; status.textContent = `Not saved (${e.message}). Kept on this device, retrying…`;
       saveTimer = setTimeout(save, 10e3);

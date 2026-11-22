@@ -1,6 +1,6 @@
 // The Games page's data (netlify/functions/game-view.mjs): game days and their games as the caller may see them.
-// Kept apart from the network so it can be tested. Organizers and the super see every game; a player sees every game
-// on published game days (decided 2026-11-22; before, only the games they played in), with everyone's tagged stats.
+// Kept apart from the network so it can be tested. Organizers and the super see every game; players and raters see every
+// game on published game days (decided 2026-11-22; before, only the games they played in), with everyone's tagged stats.
 import { teamNames } from '../../site/js/teams.mjs';
 
 // A round's teams: an earlier round's from rounds, the round playing now from the session (as on Scores).
@@ -11,7 +11,7 @@ export const teamsOf = (session, rounds, n) => rounds.find(r => r.session_id ===
 export function buildDays({ sessions, rounds = [], games, players, tagged = new Map(), videos = new Set(), unrecorded = new Set(), me }) {
   const pl = new Map(players.map(p => [p.id, p]));
   const pid = Number(me.player_id);
-  const isPlayer = me.role === 'player';
+  const isPlayer = me.role === 'player' || me.role === 'rater';   // published game days only
   return sessions
     .filter(s => !isPlayer || s.published)
     .map(s => {

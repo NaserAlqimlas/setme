@@ -8,12 +8,12 @@
 //      no_set, middles } (middles: setters who set all game unless marked not setting, as on Scores).
 //      rallies: the game's tags with touches, as stored (everyone's, for the box score); video: the uploaded copy to
 //      watch (a link that expires) and the rally times found in it.
-// Organizers and the super: every game. Players: every game on published game days.
+// Organizers and the super: every game. Players and raters: every game on published game days.
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
 import { buildDays, teamsOf } from '../lib/gamedays.mjs';
 import { teamNames } from '../../site/js/teams.mjs';
-import { canWatch, LINK_SECONDS } from '../lib/video.mjs';
+import { canWatch, LINK_SECONDS, shownOnly } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
 async function allRows(path) {
@@ -48,8 +48,8 @@ export default async (req) => {
   const body = await req.json().catch(() => ({}));
   // The super looking at the app as another role (site/js/ui.mjs viewingAs) gets what that role would get.
   if (me.role === 'super' && ['organizer', 'rater', 'player'].includes(body.view_as)) me.role = body.view_as;
-  const isPlayer = me.role === 'player';
-  if (!['player', 'organizer', 'super'].includes(me.role)) return json({ error: 'Games are for players, organizers and the super' }, 403);
+  const isPlayer = shownOnly(me);   // players and raters: published game days only
+  if (!canWatch(me)) return json({ error: 'Sign in to see games' }, 403);
 
   try {
     if (body.action === 'days') {
@@ -97,7 +97,7 @@ export default async (req) => {
       // Suggestions the super dismissed; null before suggestions.sql (then no suggestions are shown).
       const dismissed = me.role === 'super' ? await rest(`highlight_dismissed?game_id=eq.${g.id}&select=t,kind`).then(r => r.map(x => ({ t: Number(x.t), kind: x.kind })), () => null) : null;
       const fix = me.role === 'super' ? await fixOf(g).catch(() => null) : null;
-      return json({ rallies, video, highlights, dismissed, fix, joins: Array.isArray(g.joins) ? g.joins : [], tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null }, joins: Array.isArray(g.joins) ? g.joins : [] });
+      return json({ rallies, video, highlights, dismissed, fix, tags_end: g.tags_end ?? null, middle: { set: !!g.middle_set, a: g.middle_a ?? null, b: g.middle_b ?? null }, joins: Array.isArray(g.joins) ? g.joins : [] });
     }
   } catch (e) {
     return json({ error: e.message }, 400);

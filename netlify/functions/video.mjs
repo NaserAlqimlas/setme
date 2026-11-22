@@ -16,7 +16,7 @@
 //                                       before that existed: the given games', or every one still without, 25 at a time
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
-import { canWatch, LINK_SECONDS, originalKey, PART_BYTES, parts as partsOf, sign, viewingKey } from '../lib/video.mjs';
+import { canWatch, shownOnly, LINK_SECONDS, originalKey, PART_BYTES, parts as partsOf, sign, viewingKey } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
 const NOT_SET_UP = 'Video upload isn\'t set up yet: the storage and worker keys go in Netlify\'s environment variables (see vision/architecture.md).';
@@ -52,7 +52,7 @@ export default async (req) => {
   try {
     if (body.action === 'list') {
       const pid = Number(me.player_id);
-      const mine = me.role === 'player';
+      const mine = shownOnly(me);
       if (mine && !Number.isInteger(pid)) return json({ videos: [] });
       const games = await rest(`games?video_kind=eq.upload&select=id,session_id,score_a,score_b,players_a,players_b,video_ref,created_at,sessions(played_on${mine ? ',published' : ''})`
         + '&order=created_at.desc')
@@ -73,12 +73,12 @@ export default async (req) => {
     }
 
     if (body.action === 'watch') {
-      const [g] = await rest(`games?id=eq.${Number(body.game)}&select=id,players_a,players_b,video_kind,video_ref${me.role === 'player' ? ',sessions(published)' : ''}`);
-      if (!g || !canWatch(me) || (me.role === 'player' && !g.sessions?.published)) return json({ error: 'That game day isn\'t published yet' }, 403);
+      const [g] = await rest(`games?id=eq.${Number(body.game)}&select=id,players_a,players_b,video_kind,video_ref${shownOnly(me) ? ',sessions(published)' : ''}`);
+      if (!g || !canWatch(me) || (shownOnly(me) && !g.sessions?.published)) return json({ error: 'That game day isn\'t published yet' }, 403);
       if (g.video_kind !== 'upload' || !g.video_ref) return json({ job: null });
       const job = await jobOf(g.video_ref);
       if (!job) return json({ job: null });
-      if (me.role === 'player' && job.status !== 'done') return json({ error: 'That video isn\'t ready yet' }, 404);
+      if (shownOnly(me) && job.status !== 'done') return json({ error: 'That video isn\'t ready yet' }, 404);
       const out = { job: shown(job) };
       if (job.status === 'done' && job.viewing_key) {
         if (!bucket) return json({ error: NOT_SET_UP }, 503);

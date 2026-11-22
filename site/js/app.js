@@ -8,6 +8,7 @@ import { ratingsPage } from './pages/ratings.mjs';
 import { usersPage } from './pages/users.mjs';
 import { gamesPage } from './pages/games.mjs';
 import { reelPage } from './pages/reel.mjs';
+import { settingsPage } from './pages/settings.mjs';
 import { lineupPage, profilePage, signupPage } from './pages/club.mjs';
 
 const app = document.getElementById('app');
@@ -21,9 +22,11 @@ const PAGES = [
   { id: 'players', label: 'Players', roles: ['organizer', 'super'], view: playersPage },
   { id: 'teams', label: 'Teams', roles: ['organizer', 'super'], view: teamsPage },
   { id: 'scores', label: 'Scores', roles: ['organizer', 'super'], view: scoresPage },
-  { id: 'games', label: 'Games', roles: ['player', 'organizer', 'super'], view: gamesPage },
+  { id: 'games', label: 'Games', roles: ['player', 'rater', 'organizer', 'super'], view: gamesPage },
   { id: 'ratings', label: role => role === 'super' || role === 'organizer' ? 'All ratings' : 'My ratings', roles: ['rater', 'organizer', 'super'], view: ratingsPage },
   { id: 'users', label: 'Users', roles: ['super'], view: usersPage },
+  // In the account menu, not the nav.
+  { id: 'settings', label: 'Settings', roles: ['player', 'rater', 'organizer', 'super'], view: settingsPage, hidden: true },
 ];
 
 // Arriving from an invite or reset link means a password needs setting.
@@ -49,6 +52,7 @@ function accountMenu() {
       me.player_id && h('a', { href: `#player/${me.player_id}`, role: 'menuitem', onclick: () => { box.open = false; } }, 'My profile'),
       me.real_role === 'super' && h('div', { class: 'menu-theme' }, h('span', { class: 'small' }, 'View as'),
         seg(VIEW_ROLES, me.role, v => { box.open = false; setViewAs(v); }, 'View as')),
+      h('a', { href: '#settings', role: 'menuitem', onclick: () => { box.open = false; } }, 'Settings'),
       h('div', { class: 'menu-theme' }, h('span', { class: 'small' }, 'Theme'), seg([['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], themeNow(), setTheme, 'Theme')),
       h('button', { type: 'button', role: 'menuitem', onclick: () => { teamsStore.clear(); sb.auth.signOut(); } }, 'Sign out')));
   return box;
