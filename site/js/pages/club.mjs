@@ -284,7 +284,7 @@ async function ownStatsCard(pending) {
     g.mine != null && g.theirs != null && h('span', { class: 'muted small' }, ` · ${g.mine > g.theirs ? 'Won' : g.mine < g.theirs ? 'Lost' : 'Tied'} ${g.mine}–${g.theirs}`),
     h('div', { class: 'small' }, gameLine(g.tally.counts)));
   return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'),
-    h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these totals; each game's own stats, on Games, are seen by the players in that game.`),
+    h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these totals; each game's own stats, on Games, are seen by every player.`),
     statTiles(m),
     h('h4', {}, 'Game by game'), h('ul', { class: 'own-games' }, first.map(row)),
     ...(rest.length ? [h('details', {}, h('summary', { class: 'small' }, `${plural(rest.length, 'earlier game')}`), h('ul', { class: 'own-games' }, rest.map(row)))] : []));

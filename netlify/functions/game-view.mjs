@@ -6,7 +6,7 @@
 //      dismissed (suggestions the super turned down) are for suggesting highlights; dismissed only for the super.
 //      rallies: the game's tags with touches, as stored (everyone's, for the box score); video: the uploaded copy to
 //      watch (a link that expires) and the rally times found in it.
-// Organizers and the super: every game. Players: games they played in, on published game days.
+// Organizers and the super: every game. Players: every game on published game days.
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
 import { buildDays } from '../lib/gamedays.mjs';
@@ -30,20 +30,15 @@ export default async (req) => {
   const body = await req.json().catch(() => ({}));
   // The super looking at the app as another role (site/js/ui.mjs viewingAs) gets what that role would get.
   if (me.role === 'super' && ['organizer', 'rater', 'player'].includes(body.view_as)) me.role = body.view_as;
-  const isPlayer = me.role === 'player', pid = Number(me.player_id);
+  const isPlayer = me.role === 'player';
   if (!['player', 'organizer', 'super'].includes(me.role)) return json({ error: 'Games are for players, organizers and the super' }, 403);
-  if (isPlayer && !Number.isInteger(pid)) return json({ days: [], me: { role: me.role, player_id: null } });
 
   try {
     if (body.action === 'days') {
-      const games = await allRows(`games?select=id,session_id,team_a,team_b,score_a,score_b,players_a,players_b,created_at,round,video_kind,video_ref${isPlayer ? `&or=(players_a.cs.{${pid}},players_b.cs.{${pid}})` : ''}&order=id`)
-        .catch(() => allRows(`games?select=id,session_id,team_a,team_b,score_a,score_b,players_a,players_b,created_at${isPlayer ? `&or=(players_a.cs.{${pid}},players_b.cs.{${pid}})` : ''}&order=id`));
-      if (!games.length) return json({ days: [], me: { role: me.role, player_id: me.player_id } });
-      const sids = [...new Set(games.map(g => g.session_id))];
-      // For a player, the whole day's games are needed to number them; only theirs are sent back.
-      const dayGames = isPlayer ? await allRows(`games?session_id=in.(${sids.join(',')})&select=id,session_id,team_a,team_b,score_a,score_b,players_a,players_b,created_at&order=id`) : games;
-      const mineById = new Map(games.map(g => [g.id, g]));
-      const merged = dayGames.map(g => mineById.get(g.id) ?? g);
+      const merged = await allRows('games?select=id,session_id,team_a,team_b,score_a,score_b,players_a,players_b,created_at,round,video_kind,video_ref&order=id')
+        .catch(() => allRows('games?select=id,session_id,team_a,team_b,score_a,score_b,players_a,players_b,created_at&order=id'));
+      if (!merged.length) return json({ days: [], me: { role: me.role, player_id: me.player_id } });
+      const sids = [...new Set(merged.map(g => g.session_id))];
       const ids = merged.map(g => g.id);
       const [sessions, rounds, players, rallies, jobs, unrecorded, marks] = await Promise.all([
         rest(`sessions?id=in.(${sids.join(',')})&select=*`),
@@ -69,7 +64,7 @@ export default async (req) => {
 
     if (body.action === 'game') {
       const [g] = await rest(`games?id=eq.${Number(body.game)}&select=*,sessions(published)`);
-      if (!g || !canWatch(me, g) || (isPlayer && !g.sessions?.published)) return json({ error: 'You can only see games you played in' }, 403);
+      if (!g || !canWatch(me) || (isPlayer && !g.sessions?.published)) return json({ error: 'That game day isn\'t published yet' }, 403);
       const rallies = await allRows(`rallies?game_id=eq.${g.id}&select=id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)&order=seq`).catch(() => []);
       let video = null;
       if (g.video_kind === 'upload' && g.video_ref) {

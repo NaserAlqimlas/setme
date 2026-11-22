@@ -55,8 +55,8 @@ export default async (req) => {
       const mine = me.role === 'player';
       if (mine && !Number.isInteger(pid)) return json({ videos: [] });
       const games = await rest(`games?video_kind=eq.upload&select=id,session_id,score_a,score_b,players_a,players_b,video_ref,created_at,sessions(played_on${mine ? ',published' : ''})`
-        + (mine ? `&or=(players_a.cs.{${pid}},players_b.cs.{${pid}})` : '') + '&order=created_at.desc')
-        .then(gs => gs.filter(g => canWatch(me, g) && (!mine || g.sessions?.published)));
+        + '&order=created_at.desc')
+        .then(gs => gs.filter(g => canWatch(me) && (!mine || g.sessions?.published)));
       if (!games.length) return json({ videos: [] });
       const [jobs, all, names] = await Promise.all([
         rest(`video_jobs?id=in.(${games.map(g => enc(g.video_ref)).join(',')})&status=eq.done&select=id,result`),
@@ -74,7 +74,7 @@ export default async (req) => {
 
     if (body.action === 'watch') {
       const [g] = await rest(`games?id=eq.${Number(body.game)}&select=id,players_a,players_b,video_kind,video_ref${me.role === 'player' ? ',sessions(published)' : ''}`);
-      if (!g || !canWatch(me, g) || (me.role === 'player' && !g.sessions?.published)) return json({ error: 'You can only watch games you played in' }, 403);
+      if (!g || !canWatch(me) || (me.role === 'player' && !g.sessions?.published)) return json({ error: 'That game day isn\'t published yet' }, 403);
       if (g.video_kind !== 'upload' || !g.video_ref) return json({ job: null });
       const job = await jobOf(g.video_ref);
       if (!job) return json({ job: null });

@@ -1,5 +1,5 @@
 // A highlight reel (#reel/<session> for a game day, #reel/<session>/<game> for one game), or a blooper reel
-// (#bloopers/...): the highlights (or bloopers) marked on Games, played back to back from each game's video. Everyone who played that day can watch the day's reel
+// (#bloopers/...): the highlights (or bloopers) marked on Games, played back to back from each game's video. Every player can watch the day's reel once the day is published
 // (netlify/functions/highlights.mjs). The reel can be made into one video file to download: the super makes it,
 // anyone watching downloads it once it's ready.
 import { callFn, fill, h, me, pageHead, toast, withSpinner } from '../ui.mjs';

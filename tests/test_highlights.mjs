@@ -12,13 +12,13 @@ const games = [
 ];
 const jobs = new Map([['j1', { status: 'done', viewing_key: 'viewing/j1.mp4' }], ['j2', { status: 'done', viewing_key: 'viewing/j2.mp4' }], ['j3', { status: 'processing' }]]);
 
-test('everyone who played that day sees the whole day, once it is published', () => {
+test('every player sees the whole day, once it is published', () => {
   const day = { published: true };
-  assert.ok(canSeeDay({ role: 'player', player_id: 5 }, games, day));
-  assert.ok(!canSeeDay({ role: 'player', player_id: 99 }, games, day));
-  assert.ok(!canSeeDay({ role: 'player', player_id: 5 }, games, { published: false }));
-  assert.ok(canSeeDay({ role: 'organizer' }, games, { published: false }));
-  assert.ok(!canSeeDay({ role: 'rater' }, games, day));
+  assert.ok(canSeeDay({ role: 'player', player_id: 5 }, day));
+  assert.ok(canSeeDay({ role: 'player', player_id: 99 }, day));       // every player, not only those who played
+  assert.ok(!canSeeDay({ role: 'player', player_id: 5 }, { published: false }));
+  assert.ok(canSeeDay({ role: 'organizer' }, { published: false }));
+  assert.ok(!canSeeDay({ role: 'rater' }, day));
 });
 
 test('clips in the order played, only from finished videos, long ones cut short', () => {

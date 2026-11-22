@@ -20,22 +20,20 @@ export function parts(size) {
   return Array.from({ length: Math.ceil(size / PART_BYTES) }, (_, i) => i + 1);
 }
 
-// Who may watch a game's video: organizers and the super any game, a player only games they played in.
-export function canWatch(me, game) {
-  if (!me) return false;
-  if (me.role === 'super' || me.role === 'organizer') return true;
-  const pid = Number(me.player_id);
-  return me.role === 'player' && Number.isInteger(pid) && [...(game.players_a ?? []), ...(game.players_b ?? [])].map(Number).includes(pid);
+// Who may watch a game's video: organizers, the super and every player (decided 2026-11-22: players watch every
+// game, not only their own). Players only see published game days; the callers check that.
+export function canWatch(me) {
+  return ['super', 'organizer', 'player'].includes(me?.role);
 }
 
-// Highlight reels (supabase/highlights.sql). A game day's reel is open to organizers, the super, and players who
-// played any game that day once it's published (decided 2026-11-17: everyone in the game day sees the day's reel).
+// Highlight reels (supabase/highlights.sql). A game day's reel is open to organizers, the super, and every player
+// once the day is published.
 export const reelKey = reel => `reels/${reel}.mp4`;
 export const MAX_CLIP_SECONDS = 90;   // a highlight longer than this is cut short (a reel is short moments)
-export function canSeeDay(me, games, session) {
+export function canSeeDay(me, session) {
   if (!me) return false;
   if (me.role === 'super' || me.role === 'organizer') return true;
-  return me.role === 'player' && !!session?.published && games.some(g => canWatch(me, g));
+  return me.role === 'player' && !!session?.published;
 }
 // The reel's clips, in the order played: games by when they were saved, then by time in the video. Only games with
 // a finished viewing copy. games: [{ id, created_at, video_ref }], jobs: Map video_ref -> job, highlights: rows.

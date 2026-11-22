@@ -17,7 +17,7 @@ export async function sendEmail({ to, subject, text, html }, env = process.env, 
 }
 
 const ROLE_LINE = {
-  player: 'Sign up for game days, see your teams, and watch videos of the games you played in.',
+  player: 'Sign up for game days, see your teams, and watch videos of the games.',
   rater: 'Rate players so the teams come out even.',
   organizer: 'Build the teams, enter scores, and rate players.',
 };

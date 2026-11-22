@@ -1,5 +1,5 @@
 // POST /.netlify/functions/highlights — highlight reels (supabase/highlights.sql, netlify/lib/video.mjs).
-// Anyone who may see the game day (canSeeDay: organizers, the super, players who played that day once it's published):
+// Anyone who may see the game day (canSeeDay: organizers, the super, every player once it's published):
 // kind: 'highlight' (default) or 'blooper': each has its own reel and video file.
 //   { action: 'reel', session, game?, kind? } -> { played_on, game_n?, clips: [{ id, game, n, start, end, label }],
 //        videos: { [game]: url }, file: { status, progress, error, current, url? } | null }
@@ -21,7 +21,7 @@ async function load(me, sessionId, gameId, kind) {
   const [session] = await rest(`sessions?id=eq.${Number(sessionId)}&select=id,played_on,published`);
   if (!session) return { error: 'That game day is gone', status: 404 };
   const games = await rest(`games?session_id=eq.${session.id}&select=id,created_at,video_kind,video_ref,players_a,players_b&order=created_at`);
-  if (!canSeeDay(me, games, session)) return { error: 'You can only see highlights from game days you played', status: 403 };
+  if (!canSeeDay(me, session)) return { error: 'That game day isn\'t published yet', status: 403 };
   const game = gameId == null ? null : games.find(g => g.id === Number(gameId));
   if (gameId != null && !game) return { error: 'That game is gone', status: 404 };
   const refs = games.filter(g => g.video_kind === 'upload' && g.video_ref).map(g => g.video_ref);

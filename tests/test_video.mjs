@@ -12,8 +12,8 @@ test('organizers and the super watch any game; players only their own', () => {
   assert.ok(canWatch({ role: 'organizer' }, game));
   assert.ok(canWatch({ role: 'player', player_id: 3 }, game));
   assert.ok(canWatch({ role: 'player', player_id: '3' }, game));
-  assert.ok(!canWatch({ role: 'player', player_id: 9 }, game));
-  assert.ok(!canWatch({ role: 'player', player_id: null }, game));
+  assert.ok(canWatch({ role: 'player', player_id: 9 }, game));       // every player watches every game
+  assert.ok(canWatch({ role: 'player', player_id: null }, game));
   assert.ok(!canWatch({ role: 'rater', player_id: 3 }, game));      // raters aren't players in the club sense
   assert.ok(!canWatch(null, game));
 });
@@ -98,7 +98,7 @@ test('invite and reset emails', async () => {
   const { accountEmail } = await import('../netlify/lib/email.mjs');
   const inv = accountEmail({ kind: 'invite', name: 'Sara', role: 'player', link: 'https://s/?token_hash=a&type=invite' });
   assert.equal(inv.subject, 'You\'re invited to SetMe');
-  assert.match(inv.text, /^Hi Sara,/); assert.match(inv.text, /watch videos of the games you played in/);
+  assert.match(inv.text, /^Hi Sara,/); assert.match(inv.text, /watch videos of the games\./);
   assert.match(inv.text, /^https:\/\/s\/\?token_hash=a&type=invite$/m);
   assert.equal(inv.html, undefined);
   const reset = accountEmail({ kind: 'reset', name: 'Sara', link: 'l' });
