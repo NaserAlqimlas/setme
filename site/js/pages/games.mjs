@@ -1,6 +1,6 @@
 // Games page: game days and their games, and for each game on one page its video, its tagged stats (team numbers
-// and a box score with everyone's line) and your own. Organizers and the super see every game; a player sees the
-// games they played in, on published game days (netlify/functions/game-view.mjs). The super also uploads videos
+// and a box score with everyone's line) and your own. Organizers and the super see every game; a player sees every
+// game on published game days (netlify/functions/game-view.mjs). The super also uploads videos
 // here (Upload several) and can go from a game to tagging it.
 import { ask, callFn, fill, h, me, pageHead, q, sb, bigVideoButton, isBigVideo, spinner, TEAM_COLORS, toast, withSpinner } from '../ui.mjs';
 import { jumpTo, playAt, rallyAt } from '../rallytimes.mjs';
@@ -27,7 +27,7 @@ const day = d => new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'sh
 export async function gamesPage() {
   const wrap = h('div');
   const bulkBox = me.role === 'super' ? bulkCard() : null;
-  const head = pageHead('Games', me.role === 'player' ? 'Your games: the video, the stats, and how you did.' : 'Every game: the video and the tagged stats.');
+  const head = pageHead('Games', me.role === 'player' ? 'Every game: the video, the stats, and how you did in yours.' : 'Every game: the video and the tagged stats.');
   let data;
   try { data = await callFn('game-view', { action: 'days' }); }
   catch (e) { return h('div', {}, head, bulkBox, h('p', { class: 'warn' }, e.message)); }
@@ -53,7 +53,7 @@ export async function gamesPage() {
   const show = () => {
     const g = all.find(x => x.id === openGame);
     if (g) return fill(wrap, gameView(g, () => { openGame = null; show(); scrollTo(0, 0); }));
-    if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games you play show up here once the organizers publish the day.' : 'No games yet.'), consent);
+    if (!data.days.length) return fill(wrap, head, bulkBox, h('div', { class: 'card empty' }, me.role === 'player' ? 'No games yet. Games show up here once the organizers publish the day.' : 'No games yet.'), consent);
     paintList();
     fill(wrap, head, bulkBox, me.role === 'super' && data.unscored > 0 && soundCard(data.unscored), me.role === 'super' && toTagCard(data.days), filters, list, consent);
   };

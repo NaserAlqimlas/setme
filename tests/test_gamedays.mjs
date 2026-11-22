@@ -22,12 +22,11 @@ test('organizers see every game day and game, newest first, with team names from
   assert.deepEqual(g.a.players.map(p => p.name), ['Ali', 'Omar']);
 });
 
-test('a player sees only games they played in, on published days, numbered as on the day', () => {
+test('a player sees every game on published days, numbered as on the day, with their own marked', () => {
   const days = buildDays({ sessions, games, players, me: { role: 'player', player_id: 3 } });
   assert.equal(days.length, 1);                                   // Nov 10 isn't published
-  assert.deepEqual(days[0].games.map(g => [g.id, g.n, g.mine]), [[101, 1, 'a']]);   // not game 2: they sat out
-  assert.deepEqual(buildDays({ sessions, games, players, me: { role: 'player', player_id: 5 } })[0].games.map(g => g.n), [2]);
-  assert.deepEqual(buildDays({ sessions, games, players, me: { role: 'player', player_id: 99 } }), []);
+  assert.deepEqual(days[0].games.map(g => [g.id, g.n, g.mine]), [[101, 1, 'a'], [102, 2, null]]);   // game 2: they sat out
+  assert.deepEqual(buildDays({ sessions, games, players, me: { role: 'player', player_id: 99 } })[0].games.map(g => g.n), [1, 2]);
 });
 
 test('an earlier round keeps its own team names', () => {
