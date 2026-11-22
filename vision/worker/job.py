@@ -100,24 +100,50 @@ def probe(path: Path) -> float:
     return d
 
 
-def viewing_command(src: Path, dest: Path):
+HDR_TRANSFERS = ('smpte2084', 'arib-std-b67')   # PQ (HDR10, Dolby Vision) and HLG (iPhone HDR video)
+
+
+def is_hdr(path: Path) -> bool:
+    """Was it filmed in HDR (an iPhone's default)? Then its colours need turning into ordinary (SDR) ones."""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=color_transfer',
+                          '-of', 'json', str(path)], capture_output=True, text=True)
+    try:
+        return json.loads(out.stdout)['streams'][0].get('color_transfer') in HDR_TRANSFERS
+    except (KeyError, IndexError, json.JSONDecodeError):
+        return False
+
+
+# HDR to ordinary colour: to linear light, to BT.709 primaries, tone mapped (hable keeps highlights from blowing
+# out), back to BT.709. Squeezing HDR into 8 bits without this is what made a video come out washed out and too bright.
+TONEMAP = 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,'
+
+
+def viewing_command(src: Path, dest: Path, hdr: bool = False):
     """720p H.264 with the index at the front (faststart), so it starts playing before it's all downloaded and any
-    phone or browser plays it. HDR phone video is turned into ordinary 8-bit colour. Never made bigger than it was."""
+    phone or browser plays it. HDR phone video is tone mapped to ordinary 8-bit colour, and the copy is labelled
+    BT.709 so players don't guess. Never made bigger than it was."""
     return ['ffmpeg', '-y', '-v', 'error', '-i', str(src),
-            '-vf', f"scale=-2:'min({VIEW_HEIGHT},ih)',format=yuv420p",
+            '-vf', f"{TONEMAP if hdr else ''}scale=-2:'min({VIEW_HEIGHT},ih)',format=yuv420p",
+            '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-profile:v', 'high',
             '-c:a', 'aac', '-b:a', '96k', '-ac', '2',
             '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', str(dest)]
 
 
-def make_viewing(src: Path, dest: Path, duration: float, on_progress=None):
-    p = subprocess.Popen(viewing_command(src, dest), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def make_viewing(src: Path, dest: Path, duration: float, on_progress=None, hdr: bool = None):
+    """The copy to watch. An HDR video whose tone mapping fails (an ffmpeg without zscale) is made the old way."""
+    if hdr is None:
+        hdr = is_hdr(src)
+    p = subprocess.Popen(viewing_command(src, dest, hdr), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     for line in p.stdout:
         m = re.match(r'out_time_us=(\d+)', line)
         if m and on_progress:
             on_progress(int(m.group(1)) / 1e6 / duration)
     err = p.stderr.read()
     if p.wait():
+        if hdr:
+            print(f'tone mapping failed, making the copy without it: {err.strip()[-300:]}', file=sys.stderr)
+            return make_viewing(src, dest, duration, on_progress, hdr=False)
         raise RuntimeError(f"The copy to watch couldn't be made: {err.strip().splitlines()[-1] if err.strip() else 'ffmpeg failed'}")
 
 
