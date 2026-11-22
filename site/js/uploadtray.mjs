@@ -1,7 +1,7 @@
 // The upload panel, bottom right on every page (like Google Drive's): each video uploading or waiting, with its
 // progress and a Stop, while you carry on around SetMe. Also offers to finish uploads a reload or a dropped
 // connection cut short. The super only (only the super uploads). Uploads stop if the tab is closed.
-import { ask, h, toast } from './ui.mjs';
+import { ask, fill, h, toast } from './ui.mjs';
 import { forgetUpload, onTray, savedUpload, trayClearFinished, trayItems, unfinishedUploads, uploadVideo } from './upload.mjs';
 import { sameFile, sentShare } from './uploadparts.mjs';
 
@@ -41,7 +41,7 @@ function paint() {
   }
   shape = now;
   const done = items.filter(i => i.state === 'done').length;
-  box.replaceChildren(
+  fill(box,
     h('div', { class: 'up-head' },
       h('b', {}, headOf(items, left)),
       h('button', { type: 'button', class: 'up-icon', 'aria-label': small ? 'Show uploads' : 'Hide the list', 'aria-expanded': String(!small), onclick: () => { small = !small; paint(); } }, small ? '▴' : '▾'),
