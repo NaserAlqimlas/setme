@@ -861,7 +861,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const court = courtOf(s), likely = passersOf(s, court);
     const btn = (p, spot) => h('button', { type: 'button', class: `tag-player${likely.has(p) ? ' likely' : ''}`, 'aria-pressed': String(sel?.p === p), onclick: () => pick(p),
       title: likely.has(p) ? 'Often passes from here' : null },
-      avatar(pname.get(p) ?? '?', 26), h('span', {}, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
+      avatar(pname.get(p) ?? '?', 26), h('span', { class: 'tag-name' }, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
     if (!court || Object.keys(court.spots).length < 3) return h('div', { class: 'tag-players' }, here(s).map(p => btn(p)));
     const cell = k => court.spots[k] != null ? btn(court.spots[k], k) : h('span', { class: 'tag-empty muted small' }, `${k}`);
     return h('div', { class: 'tag-court' },
