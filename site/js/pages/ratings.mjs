@@ -3,6 +3,7 @@ import { combineRatings, RATED, SKILLS, weightedTotal } from '../teams.mjs';
 import { metrics, SETME_CLEARS, SKILL_STATS, statRatings, tallyFromCounts, withDays } from '../stats.mjs';
 import { raterPicker } from './teams.mjs';
 import { pct, pts } from './scores.mjs';
+import { band, BAND_WORD, MIN_PLAYERS, MIN_TAGGED_GAMES, RATING_SKILLS } from '../averages.mjs';
 
 // All ratings / My ratings: coverage, rating history charts, raters.
 
@@ -128,9 +129,55 @@ export async function ratingsPage() {
       seg([['all', 'All'], ['rated', 'Rated'], ['unrated', all ? 'Unrated' : 'Not rated yet']], show, v => { show = v; draw(); }, 'Show')),
     h('div', { class: 'card scroll' }, stacked(h('table', {}, h('thead', {}, h('tr', {}, [...heads.values()])), body))),
     hist.el,
+    all && clubAveragesCard(),
     all && coverageCard(players, ratings, short),
     all && matchStatsCard(players, ratings, profiles.find(p => p.setme)?.id ?? null, isSuper),
     all && extra);
+}
+
+// Organizers and the super: where each active player stands next to the club (averages.mjs, club-averages), by
+// ratings (as each player sees them on their profile: the plain average of their raters) and by match stats. For
+// answering "am I above or below average?". Each number is marked above, about or below average.
+const shortBand = { above: '▲', about: '', below: '▼' };
+function clubAveragesCard() {
+  const card = foldCard('club-averages', 'Club averages', spinner('Working out the averages…'));
+  let view = 'ratings', d = null;
+  const cell = (v, s, f) => {
+    const b = band(v, s);
+    return h('td', { class: `num${b && b !== 'about' ? ` band-${b}` : ''}`, title: b ? BAND_WORD[b] : null }, v == null ? '–' : `${f(v)}${b ? ` ${shortBand[b]}` : ''}`);
+  };
+  const club = (cols, label, get) => h('tr', { class: 'club-row' }, h('td', {}, h('b', {}, label)), cols.map(c => h('td', { class: 'num' }, get(c))));
+  const paint = () => {
+    const rows = view === 'ratings' ? ratingsTable() : statsTable();
+    card.body.replaceChildren(
+      h('p', { class: 'muted small', style: 'margin:0 0 8px' }, 'Each player next to the club\'s middle player. ▲ above average and ▼ below: past the club\'s middle and in its top or bottom third. Unmarked is about average. Ratings are the plain average of everyone who rated them, as on their profile, and move in steps of .25, so tell people the band rather than the number. Only active players count.'),
+      seg([['ratings', 'Ratings'], ['stats', 'Match stats']], view, v => { view = v; paint(); }, 'Show'), rows);
+  };
+  const ratingsTable = () => {
+    const { players, club: c } = d.ratings;
+    const cols = [...RATING_SKILLS.map(s => ({ key: s, label: SHORT?.[s] ?? LABEL[s], get: p => p.skills[s], s: c.skills[s], f: fmt })), { key: 'weighted', label: 'Weighted', get: p => p.weighted, s: c.weighted, f: v => v.toFixed(2) }];
+    if (cols.every(x => !x.s)) return h('p', { class: 'muted' }, `Not enough players rated yet: each skill needs ${MIN_PLAYERS}.`);
+    const list = [...players].sort((a, b) => (b.weighted ?? -1) - (a.weighted ?? -1) || a.name.localeCompare(b.name));
+    return h('div', { class: 'table-wrap' }, stacked(h('table', { class: 'club-avg' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Player'), cols.map(x => h('th', { class: 'num' }, x.label)))),
+      h('tbody', {}, club(cols, 'Club middle', x => x.s ? x.f(x.s.mid) : '–'), club(cols, 'Most players', x => x.s ? `${x.f(x.s.low)}–${x.f(x.s.high)}` : '–'),
+        list.map(p => h('tr', {}, h('td', {}, h('a', { href: `#player/${p.id}` }, p.name)), cols.map(x => cell(x.get(p), x.s, x.f))))))));
+  };
+  const statsTable = () => {
+    const { players, club: c } = d.stats, names = new Map(d.ratings.players.map(p => [p.id, p.name]));
+    const n2 = v => (Math.round(v * 100) / 100).toFixed(2);
+    const cols = [['aceRate', 'Aces', pct], ['passAvg', 'Pass avg', n2], ['killRate', 'Kills', pct], ['attackEff', 'Attack eff', n2],
+      ['stuffsPerGame', 'Blocks/game', n2], ['digsPerGame', 'Digs/game', n2], ['digAvg', 'Dig avg', n2]].map(([key, label, f]) => ({ key, label, f, s: c[key], get: m => m[key] }));
+    const list = Object.entries(players).map(([id, m]) => ({ id: Number(id), name: names.get(Number(id)) ?? 'Player', m })).sort((a, b) => a.name.localeCompare(b.name));
+    if (cols.every(x => !x.s)) return h('p', { class: 'muted' }, `Not enough tagged games yet: a stat needs ${MIN_PLAYERS} players with ${MIN_TAGGED_GAMES} or more tagged games each.`);
+    return h('div', {}, h('p', { class: 'muted small', style: 'margin:8px 0' }, `Players with ${MIN_TAGGED_GAMES} or more tagged games.`),
+      h('div', { class: 'table-wrap' }, stacked(h('table', { class: 'club-avg' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Player'), h('th', { class: 'num' }, 'Games'), cols.map(x => h('th', { class: 'num' }, x.label)))),
+        h('tbody', {}, h('tr', { class: 'club-row' }, h('td', {}, h('b', {}, 'Club middle')), h('td'), cols.map(x => h('td', { class: 'num' }, x.s ? x.f(x.s.mid) : '–'))),
+          list.map(p => h('tr', {}, h('td', {}, h('a', { href: `#player/${p.id}` }, p.name)), h('td', { class: 'num' }, String(p.m.games)), cols.map(x => cell(x.get(p.m), x.s, x.f)))))))));
+  };
+  callFn('club-averages', {}).then(r => { d = r; paint(); }, e => card.body.replaceChildren(h('p', { class: 'warn' }, e.message)));
+  return card;
 }
 
 // A card that folds shut by tapping its title. Open or shut is remembered on this device; open the first time.

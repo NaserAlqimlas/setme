@@ -8,6 +8,7 @@ import { pct, plusPts, withEarlier } from './scores.mjs';
 import { openHistory, signed, svg } from './ratings.mjs';
 import { GUIDE, STEPS } from './rate.mjs';
 import { focusAreas, sentence } from '../focus.mjs';
+import { band, BAND_WORD, MIN_TAGGED_GAMES } from '../averages.mjs';
 
 // Club pages: Sign up, Lineup (players and raters) and player profiles.
 
@@ -152,17 +153,22 @@ function guideFor(s, v) {
       h('dd', { class: i === here ? 'here' : null }, text, i === here && h('span', { class: 'muted small' }, ' · closest to you'))])));
 }
 const OWN_SKILLS = ['receiving', 'hitting', 'hustle', 'serve', 'blocking', 'setting_skill', 'consistency'];
+// Next to the club (averages.mjs): a short Above / About / Below average chip, and where the middle player is.
+const SHORT_BAND = { above: 'Above avg', about: 'About avg', below: 'Below avg' };
+const bandChip = (b, long = false) => b && h('span', { class: `band ${b}` }, long ? BAND_WORD[b] : SHORT_BAND[b]);
+const clubLine = (s, f) => s && h('p', { class: 'muted small club-line' }, `Club middle ${f(s.mid)}; most players ${f(s.low)} to ${f(s.high)}.`);
 async function ownRatingCard(player, pending) {
   const card = h('div', { class: 'card own-rating' }, h('h3', {}, 'Your rating'));
   let res;
   try { res = await pending; }
   catch { card.append(h('p', { class: 'muted' }, 'Your rating couldn\'t load right now. Try again later.')); return card; }
   if (!res?.linked) return null;
-  const { current: cur, history: hist } = res;
+  const { current: cur, history: hist } = res, club = res.club ?? null;
   const withTotal = p => ({ ...p, overall: totalOf(p.skills), weighted: weightedOf(p.skills) });
   const current = withTotal(cur), history = hist.map(withTotal);
   const skills = OWN_SKILLS.filter(s => forPlayer(s, player));
-  card.append(h('p', { class: 'muted small' }, 'Each skill is the average of what everyone who rated you gave, from 0 to 1, Total adds up the five main skills (0 to 5), and Weighted counts them the way team building does (also 0 to 5), like everywhere else. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.'));
+  card.append(h('p', { class: 'muted small' }, 'Each skill is the average of what everyone who rated you gave, from 0 to 1, Total adds up the five main skills (0 to 5), and Weighted counts them the way team building does (also 0 to 5), like everywhere else. It never shows who rated you, and each skill shows once at least two people have rated it. Tap a skill to see what each level means.',
+    club && ' The mark on each bar is the club\'s middle player, and the label says where you stand next to the club.'));
   if (current.overall == null && !skills.some(s => current.skills[s] != null)) {
     card.append(h('p', {}, 'Not enough ratings yet.'));
     return card;
@@ -173,14 +179,16 @@ async function ownRatingCard(player, pending) {
     current.overall != null && h('div', { class: 'own-totals' }, [['overall', 'Total', ` of 5 · ${wordFor(current.overall / SKILLS.length)}`], ['weighted', 'Weighted', ' of 5 · as team building counts it']]
       .map(([k, label, sub]) => h('div', { class: 'own-overall' }, h('span', { class: 'stat' }, fmt(current[k])),
         h('div', {}, h('b', {}, label), h('span', { class: 'muted small' }, sub),
+          club?.[k] && h('p', { class: 'small', style: 'margin:2px 0 0' }, bandChip(band(current[k], club[k]), true), h('span', { class: 'muted' }, ` · club middle ${fmt(club[k].mid)}`)),
           prev?.[k] != null && prev[k] !== current[k] && h('p', { class: 'small muted', style: 'margin:2px 0 0' }, `${moved(prev[k], current[k])} since ${prev.date ? shortDate(prev.date) : 'before'}`))))),
     h('ul', { class: 'own-skills' }, skills.map(s => {
-      const v = current.skills[s];
+      const v = current.skills[s], c = club?.skills?.[s] ?? null;
       return h('li', {}, h('details', {},
         h('summary', {}, h('span', {}, LABEL[s]),
           v == null ? h('span', { class: 'muted small' }, 'Not enough ratings yet')
-            : [h('span', { class: 'bar', 'aria-hidden': 'true' }, h('span', { style: `width:${v * 100}%` })), h('b', {}, fmt(v))]),
-        guideFor(s, v)));
+            : [h('span', { class: 'bar', 'aria-hidden': 'true' }, h('span', { style: `width:${v * 100}%` }), c && h('i', { class: 'bar-mid', style: `left:${c.mid * 100}%` })),
+              h('b', {}, fmt(v)), bandChip(band(v, c)) || h('span')]),
+        clubLine(c, fmt), guideFor(s, v)));
     }))].filter(Boolean));
   // Wide screens: where they stand on the left, the chart beside it.
   const chart = ownChart(history, skills);
@@ -252,9 +260,15 @@ function ownChart(history, skills) {
 
 // Match stats as tiles (Ratings page numbers for one player). m: metrics(tally).
 const num2 = v => v == null ? '–' : (Math.round(v * 100) / 100).toFixed(2);
-const statTiles = m => h('div', { class: 'tiles' }, [[pct(m.aceRate), 'Aces', `${m.serves} serves`], [num2(m.passAvg), 'Pass average', `${m.passes} passes, 0–3`],
-  [pct(m.killRate), 'Kills', `${m.attacks} attacks`], [num2(m.attackEff), 'Attack efficiency', 'kills − errors − blocked'],
-  [num2(m.stuffsPerGame), 'Blocks a game'], [num2(m.digsPerGame), 'Digs a game'], [num2(m.digAvg), 'Dig average', `${m.digs} digs, 0–3`]].map(([v, l, sub]) => h('div', { class: 'card tile' }, h('span', { class: 'stat' }, v), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub))));
+// club (averages.mjs statAverages): the club's middle per stat, shown under each tile, with where they stand once
+// they've played MIN_TAGGED_GAMES tagged games (fewer is too few to say).
+const statTiles = (m, club = null) => h('div', { class: 'tiles' }, [['aceRate', pct, 'Aces', `${m.serves} serves`], ['passAvg', num2, 'Pass average', `${m.passes} passes, 0–3`],
+  ['killRate', pct, 'Kills', `${m.attacks} attacks`], ['attackEff', num2, 'Attack efficiency', 'kills − errors − blocked'],
+  ['stuffsPerGame', num2, 'Blocks a game'], ['digsPerGame', num2, 'Digs a game'], ['digAvg', num2, 'Dig average', `${m.digs} digs, 0–3`]].map(([k, f, l, sub]) => {
+    const c = club?.[k];
+    return h('div', { class: 'card tile' }, h('span', { class: 'stat' }, f(m[k])), h('b', {}, l), sub && h('span', { class: 'muted small' }, sub),
+      c && h('span', { class: 'small tile-club' }, m.games >= MIN_TAGGED_GAMES && bandChip(band(m[k], c)), h('span', { class: 'muted' }, ` club middle ${f(c.mid)}`)));
+  }));
 // One game in a line: what they did, counted.
 const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 export function gameLine(c) {
@@ -285,7 +299,7 @@ async function ownStatsCard(pending) {
     h('div', { class: 'small' }, gameLine(g.tally.counts)));
   return h('div', { class: 'card' }, h('h3', {}, 'Your match stats'),
     h('p', { class: 'muted small' }, `Official stats from ${plural(m.games, 'game')} you played in, each one watched and tagged touch by touch by a person. Only you and the organizers see these totals; each game's own stats, on Games, are seen by every player.`),
-    statTiles(m),
+    statTiles(m, res.stats_club),
     h('h4', {}, 'Game by game'), h('ul', { class: 'own-games' }, first.map(row)),
     ...(rest.length ? [h('details', {}, h('summary', { class: 'small' }, `${plural(rest.length, 'earlier game')}`), h('ul', { class: 'own-games' }, rest.map(row)))] : []));
 }
