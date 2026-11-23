@@ -85,7 +85,11 @@ async function boot() {
   render();
 }
 
+// Each render is numbered; one that finishes after a newer one has started (a tab tapped, then another straight
+// away) drops its result instead of painting over the newer page.
+let renderSeq = 0;
 async function render() {
+  const run = ++renderSeq, stale = () => run !== renderSeq;
   if (location.hash === '#videos') history.replaceState(null, '', '#games');   // Videos became Games (older emails link there)
   document.body.classList.remove('guide-open'); // only the Rate page has the guide drawer
   const nav = document.getElementById('nav'), who = document.getElementById('who');
@@ -95,12 +99,15 @@ async function render() {
   if (mustSetPassword) return app.replaceChildren(passwordPage());
   try {
     if (!me) {
-      setMe(await q(sb.from('profiles').select('*').eq('id', session.user.id).single()));
+      const profile = await q(sb.from('profiles').select('*').eq('id', session.user.id).single());
+      if (stale()) return;
+      setMe(profile);
       me.real_role = me.role;
       const as = savedViewAs();
       if (me.role === 'super' && VIEW_ROLES.some(r => r[0] === as)) me.role = as;
     }
   } catch {
+    if (stale()) return;
     return app.replaceChildren(h('p', { class: 'warn' }, 'Your account has no profile. Ask the organizer to check your invite.'));
   }
   // Players (linked to a player) start on Me, then Lineup and Games. Everyone else keeps PAGES order.
@@ -126,9 +133,10 @@ async function render() {
   nav.querySelector('a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   app.replaceChildren(spinner());
   try {
-    app.replaceChildren(await current.view());
+    const page = await current.view();
+    if (!stale()) app.replaceChildren(page);
   } catch (e) {
-    app.replaceChildren(h('p', { class: 'warn' }, `Something went wrong: ${e.message}`));
+    if (!stale()) app.replaceChildren(h('p', { class: 'warn' }, `Something went wrong: ${e.message}`));
   }
 }
 
