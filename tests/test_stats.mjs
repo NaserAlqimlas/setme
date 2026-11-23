@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt, rootOf, inSpot } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt, rootOf, inSpot, startRotation } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -339,6 +339,34 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('sub: the starter played rallies 1-4 only', pos.a.players.get(3).reduce((n, r) => n + r.rallies, 0) === 0 || pos.a.players.get(3).reduce((n, r) => n + r.rallies, 0) <= 4);
   const gm = { ...g, middle_set: true, middle_a: 3, middle_b: null };
   ok('sub: a front-middle starter\'s sub stays front middle', courtNow(more, gm, 'a').spots[3] === 13, courtNow(more, gm, 'a').spots);
+}
+
+// A starting rotation set by hand: a had 1 in position 1, 2 in 2, … 6 in 6; b had 12, 11, 10, 9, 8, 7.
+{
+  const R = (seq, serve, won, ...touches) => ({ seq, serve, won, touches });
+  const g = { players_a: [1, 2, 3, 4, 5, 6], players_b: [7, 8, 9, 10, 11, 12], rotation: { a: [1, 2, 3, 4, 5, 6], b: [12, 11, 10, 9, 8, 7] } };
+  ok('rot: read as given', startRotation(g, 'a', g.players_a).join() === '1,2,3,4,5,6');
+  ok('rot: wrong players: ignored', startRotation({ ...g, rotation: { a: [1, 2, 3, 4, 5, 99] } }, 'a', g.players_a) === null);
+  ok('rot: a repeat: ignored', startRotation({ ...g, rotation: { a: [1, 1, 3, 4, 5, 6] } }, 'a', g.players_a) === null);
+  const ca = serveCycle([], g, 'a');
+  ok('rot: whole order known before anyone serves', ca.order.join() === '2,3,4,5,6,1' && ca.size === 6 && ca.how === 'set', ca);
+  const court = courtNow([], g, 'a');
+  ok('rot: the court from rally 1', court && court.spots[1] === 1 && court.spots[4] === 4 && court.spots[6] === 6, court?.spots);
+  const cb = courtNow([], g, 'b');
+  ok('rot: the other team too', cb && cb.spots[1] === 12 && cb.spots[3] === 10, cb?.spots);
+  const cyc = s => serveCycle([], g, s).order;
+  ok('rot: a serves first: position 1', nextServer([], 'a', g.players_a, null, [], cyc('a')) === 1);
+  // a serves rally 1 and loses it: b sides out, rotates, so b's first server is who started in 2.
+  const r1 = [R(1, 'a', 'b', T(1, 'serve', 1))];
+  ok('rot: after a side-out, position 2 serves', nextServer(r1, 'b', g.players_b, null, [], cyc('b')) === 11, nextServer(r1, 'b', g.players_b, null, [], cyc('b')));
+  const r2 = [...r1, R(2, 'b', 'a', T(11, 'serve', 1))];
+  ok('rot: a wins it back: 2 serves', nextServer(r2, 'a', g.players_a, null, [], cyc('a')) === 2);
+  const r3 = [...r2, R(3, 'a', 'a', T(2, 'serve', 3))];
+  ok('rot: kept the serve: same server', nextServer(r3, 'a', g.players_a, null, [], cyc('a')) === 2);
+  const after = courtNow(r3, g, 'a');
+  ok('rot: rotated once: 2 in position 1, 1 in 6', after.spots[1] === 2 && after.spots[6] === 1, after.spots);
+  ok('rot: positions count from rally 1 (1 was in position 1 for rallies 1 and 2)', positions(r3, g).a.players.get(1)[0].rallies === 2, positions(r3, g).a.players.get(1));
+  ok('rot: a front-middle player set overrides it', serveCycle([], { ...g, middle_set: true, middle_a: 3 }, 'a').how !== 'set');
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

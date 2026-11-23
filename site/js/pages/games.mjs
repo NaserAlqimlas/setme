@@ -198,7 +198,7 @@ function gameView(g, back) {
     else fill(fix, h('p', { class: 'muted' }, 'This game can\'t be fixed here. Fix it on Scores.'));
     const rallies = fromRows(d.rallies ?? []);
     const game = { team_a: g.a.k, team_b: g.b.k, players_a: g.a.players.map(p => p.id), players_b: g.b.players.map(p => p.id), score_a: g.a.score, score_b: g.b.score,
-      middle_set: !!d.middle?.set, middle_a: d.middle?.a ?? null, middle_b: d.middle?.b ?? null, joins: d.joins ?? [] };
+      middle_set: !!d.middle?.set, middle_a: d.middle?.a ?? null, middle_b: d.middle?.b ?? null, joins: d.joins ?? [], rotation: d.rotation ?? null };
     const name = new Map([...g.a.players, ...g.b.players].map(p => [p.id, p.name]));
     const side = { a: g.a, b: g.b };
 
