@@ -1,5 +1,5 @@
 // Run: node tests/test_stats.mjs
-import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt, rootOf, inSpot, startRotation } from '../site/js/stats.mjs';
+import { bestPlayers, gameScore, isSetter, flipSides, recap, score, suggestAction, nextServer, teamSummary, tally, tallyFromCounts, fromRows, metrics, statRatings, levelOf, SKILL_STATS, withDays, endsRally, rotations, gameDetail, positions, serveCycle, courtNow, usualSetter, passSpots, lineupAt, rootOf, inSpot, startRotation, linkGame } from '../site/js/stats.mjs';
 
 let fail = 0;
 const ok = (title, cond, ...info) => { if (!cond) { fail++; console.log('FAIL', title, ...info); } };
@@ -367,6 +367,21 @@ ok('levels between steps', Math.abs(levelOf(SKILL_STATS.receiving.steps, 1.4) - 
   ok('rot: rotated once: 2 in position 1, 1 in 6', after.spots[1] === 2 && after.spots[6] === 1, after.spots);
   ok('rot: positions count from rally 1 (1 was in position 1 for rallies 1 and 2)', positions(r3, g).a.players.get(1)[0].rallies === 2, positions(r3, g).a.players.get(1));
   ok('rot: a front-middle player set overrides it', serveCycle([], { ...g, middle_set: true, middle_a: 3 }, 'a').how !== 'set');
+}
+
+// Rotation and late players read from their tables (game_links.sql) come out in the shapes used above.
+{
+  const rows = { id: 1, players_a: [1, 2, 3, 4, 5, 6, 13],
+    game_rotation: [6, 5, 4, 3, 2, 1].map((p, i) => ({ side: 'a', position: 6 - i, player_id: p })).concat([{ side: 'b', position: 1, player_id: 7 }]),
+    game_joins: [{ side: 'a', player_id: 13, from_seq: 5, after_player: null, replaces: 3 }, { side: 'b', player_id: 14, from_seq: null, after_player: null, replaces: null }] };
+  const g = linkGame(rows);
+  ok('links: rotation in position order', g.rotation.a.join() === '1,2,3,4,5,6', g.rotation);
+  ok('links: a team with fewer than six rows has none', !('b' in g.rotation));
+  ok('links: a substitution', JSON.stringify(g.joins[0]) === JSON.stringify({ p: 13, side: 'a', from: 5, after: null, for: 3 }), g.joins[0]);
+  ok('links: a late player has no for', !('for' in g.joins[1]) && g.joins[1].from === null);
+  ok('links: marked, embedded rows gone', g.links === true && !('game_rotation' in g) && !('game_joins' in g));
+  ok('links: works with the rest', lineupAt(g, 'a', 6).join() === '1,2,4,5,6,13');
+  ok('links: before the tables, unchanged', linkGame({ id: 2, joins: [] }).links === undefined);
 }
 
 console.log(fail ? `${fail} failed` : 'stats: all passed');

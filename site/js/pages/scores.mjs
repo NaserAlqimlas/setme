@@ -5,7 +5,7 @@ import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
 import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
-import { ACTIONS, courtNow, endsRally, inSpot, joinsOf, lineupAt, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
+import { ACTIONS, courtNow, endsRally, GAME_LINKS, inSpot, joinsOf, lineupAt, linkGame, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
 import { dayTitle, evenness, GAP_SCALE, num2, recapButton, setGameDate, previewPng } from './teams.mjs';
@@ -68,7 +68,9 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   if (!sessions.length) return [h('div', { class: 'card empty' }, 'No teams saved yet. On Teams, build or check a lineup and tap ', h('b', {}, 'Save'), '.')];
   if (!sessions.some(s => s.played_on === scoresDay)) scoresDay = sessions[0].played_on;
   const ses = sessions.find(s => s.played_on === scoresDay);
-  let games = await q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at'));
+  // With each game's rotation and late players (game_links.sql); before it, the JSON columns on games.
+  let games = await q(sb.from('games').select(`*,${GAME_LINKS}`).eq('session_id', ses.id).order('created_at')).then(gs => gs.map(linkGame),
+    () => q(sb.from('games').select('*').eq('session_id', ses.id).order('created_at')));
   // Finished rallies tagged per game (null = the match stats SQL hasn't been run).
   const tags = games.length ? await q(sb.from('rallies').select('game_id').in('game_id', games.map(g => g.id)).not('won_by', 'is', null))
     .then(rows => rows.reduce((m, r) => m.set(r.game_id, (m.get(r.game_id) ?? 0) + 1), new Map()), () => null) : new Map();
@@ -776,7 +778,9 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   let arriving = null;   // player id whose "came in after" is being picked
   let subbing = null;    // { s, off } while picking who came on
   const saveJoins = async (joins, extra = {}) => {
-    const { error } = await sb.from('games').update({ joins, ...extra }).eq('id', g.id);
+    const { error } = g.links
+      ? await sb.rpc('set_game_joins', { p_game: g.id, p_joins: joins }).then(r => r.error || !Object.keys(extra).length ? r : sb.from('games').update(extra).eq('id', g.id))
+      : await sb.from('games').update({ joins, ...extra }).eq('id', g.id);
     if (error) { paintLate(); toast(/joins/.test(error.message) ? 'This needs the database upgrade first: run supabase/late_players.sql in the Supabase SQL Editor.' : error.message); return false; }
     Object.assign(g, { joins }, extra);
     if (sel?.auto) sel = null;
@@ -863,11 +867,12 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // Set rotation (rotation.sql): who stood in each spot as the game began, for a team that started with six.
   let rotEdit = null;   // the side being set
   const starters = s => lineupAt(g, s, 1);
-  const canRotate = s => !ro && 'rotation' in g && starters(s).length === 6;
+  const canRotate = s => !ro && (g.links || 'rotation' in g) && starters(s).length === 6;
   const saveRotation = async (s, ids) => {
     const rotation = { ...(g.rotation ?? {}) };
     if (ids) rotation[s] = ids; else delete rotation[s];
-    const { error } = await sb.from('games').update({ rotation: Object.keys(rotation).length ? rotation : null }).eq('id', g.id);
+    const { error } = g.links ? await sb.rpc('set_game_rotation', { p_game: g.id, p_side: s, p_players: ids ?? null })
+      : await sb.from('games').update({ rotation: Object.keys(rotation).length ? rotation : null }).eq('id', g.id);
     if (error) return toast(error.message);
     g.rotation = Object.keys(rotation).length ? rotation : null;
     rotEdit = null; if (sel?.auto) sel = null;

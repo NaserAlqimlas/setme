@@ -13,6 +13,7 @@ import { caller, json, rest } from '../lib/supabase.mjs';
 import { r2 } from '../lib/r2.mjs';
 import { buildDays, teamsOf } from '../lib/gamedays.mjs';
 import { teamNames } from '../../site/js/teams.mjs';
+import { GAME_LINKS, linkGame } from '../../site/js/stats.mjs';
 import { canWatch, LINK_SECONDS, shownOnly } from '../lib/video.mjs';
 
 const enc = encodeURIComponent;
@@ -81,7 +82,9 @@ export default async (req) => {
     }
 
     if (body.action === 'game') {
-      const [g] = await rest(`games?id=eq.${Number(body.game)}&select=*,sessions(published)`);
+      // With its rotation and late players (game_links.sql); before it, the JSON columns on games.
+      const [g] = await rest(`games?id=eq.${Number(body.game)}&select=*,sessions(published),${GAME_LINKS}`).then(r => r.map(linkGame),
+        () => rest(`games?id=eq.${Number(body.game)}&select=*,sessions(published)`));
       if (!g || !canWatch(me) || (isPlayer && !g.sessions?.published)) return json({ error: 'That game day isn\'t published yet' }, 403);
       const rallies = await allRows(`rallies?game_id=eq.${g.id}&select=id,seq,video_t,serving,won_by,touches(seq,player_id,action,grade,video_t)&order=seq`).catch(() => []);
       let video = null;
