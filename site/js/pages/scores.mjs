@@ -513,7 +513,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // The rally being tagged (or the next one), and who is on court for it: late players only once they came in.
   const curSeq = () => open()?.seq ?? Math.max(0, ...rallies.map(r => r.seq)) + 1;
   const here = s => lineupAt(g, s, curSeq());
-  const upNext = () => nextServer(rallies, serving(), here(serving()), serveCycle(rallies, g, serving()).fixed, joinsOf(g, serving()));
+  const upNext = () => { const c = serveCycle(rallies, g, serving()); return nextServer(rallies, serving(), here(serving()), c.fixed, joinsOf(g, serving()), c.how === 'set' ? c.order : null); };
   const autoSel = () => {
     if (sel || skipAuto) return;
     const r = open(), last = r?.touches.at(-1);
@@ -860,15 +860,56 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const sideKey = `setme-court-${g.id}`;
   let leftTeam = (() => { try { return localStorage.getItem(sideKey) === 'b' ? 'b' : 'a'; } catch { return 'a'; } })();
   const HALF = { left: [[5, 4], [6, 3], [1, 2]], right: [[2, 1], [3, 6], [4, 5]] };
+  // Set rotation (rotation.sql): who stood in each spot as the game began, for a team that started with six.
+  let rotEdit = null;   // the side being set
+  const starters = s => lineupAt(g, s, 1);
+  const canRotate = s => !ro && 'rotation' in g && starters(s).length === 6;
+  const saveRotation = async (s, ids) => {
+    const rotation = { ...(g.rotation ?? {}) };
+    if (ids) rotation[s] = ids; else delete rotation[s];
+    const { error } = await sb.from('games').update({ rotation: Object.keys(rotation).length ? rotation : null }).eq('id', g.id);
+    if (error) return toast(error.message);
+    g.rotation = Object.keys(rotation).length ? rotation : null;
+    rotEdit = null; if (sel?.auto) sel = null;
+    toast(ids ? `${name[s]}'s rotation set` : `${name[s]}'s rotation cleared`); paintPad();
+  };
+  const rotationEditor = (s, where) => {
+    const now = g.rotation?.[s] ?? [], who = starters(s);
+    const pickers = new Map();
+    const spot = k => {
+      const el = h('select', { 'aria-label': `${name[s]} position ${k}`, class: 'rot-pick' }, h('option', { value: '' }, `${k}`),
+        who.map(p => h('option', { value: p, selected: Number(now[k - 1]) === p }, pn(p))));
+      pickers.set(k, el);
+      el.onchange = () => {   // a player picked here leaves any other spot
+        for (const [j, o] of pickers) if (j !== k && o.value && o.value === el.value) o.value = '';
+      };
+      return h('label', { class: 'rot-spot' }, h('small', { class: 'tag-spot' }, String(k)), el);
+    };
+    const cells = HALF[where].flat().map(spot);
+    const save = () => {
+      const ids = [1, 2, 3, 4, 5, 6].map(k => Number(pickers.get(k).value));
+      if (ids.some(p => !p) || new Set(ids).size !== 6) return toast('Put one player in each spot');
+      saveRotation(s, ids);
+    };
+    return h('div', { class: `court-half ${where} rot-edit` },
+      h('p', { class: 'muted small rot-help' }, 'Where each player stood when the game began.'),
+      h('div', { class: 'court-spots' }, cells),
+      h('div', { class: 'rot-actions' }, h('button', { type: 'button', class: 'sm', onclick: save }, 'Save'),
+        h('button', { type: 'button', class: 'ghost sm', onclick: () => { rotEdit = null; paintPad(); } }, 'Cancel'),
+        g.rotation?.[s] && h('button', { type: 'button', class: 'ghost sm', onclick: () => saveRotation(s, null) }, 'Clear')));
+  };
   const half = (s, where) => {
+    if (rotEdit === s) return rotationEditor(s, where);
+    const setBtn = canRotate(s) && h('button', { type: 'button', class: 'ghost sm rot-btn', onclick: () => { rotEdit = s; paintPad(); } },
+      g.rotation?.[s] ? 'Change rotation' : 'Set rotation');
     const court = courtOf(s), likely = passersOf(s, court);
     const btn = (p, spot) => h('button', { type: 'button', class: `tag-player${likely.has(p) ? ' likely' : ''}`, 'aria-pressed': String(sel?.p === p), onclick: () => pick(p),
       title: likely.has(p) ? 'Often passes from here' : null },
       avatar(pname.get(p) ?? '?', 24), h('span', { class: 'tag-name' }, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
-    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: `court-half ${where} list` }, here(s).map(p => btn(p)));
+    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: `court-half ${where}` }, h('div', { class: 'court-list' }, here(s).map(p => btn(p))), setBtn);
     const cell = k => court.spots[k] != null ? btn(court.spots[k], k) : h('span', { class: 'tag-empty muted small' }, `${k}`);
     return h('div', { class: `court-half ${where}` }, h('div', { class: 'court-spots' }, HALF[where].flat().map(cell)),
-      court.unplaced.length > 0 && h('div', { class: 'court-bench' }, court.unplaced.map(p => btn(p))));
+      court.unplaced.length > 0 && h('div', { class: 'court-bench' }, court.unplaced.map(p => btn(p))), setBtn);
   };
   const courtView = sv => {
     const L = leftTeam, R = L === 'a' ? 'b' : 'a';

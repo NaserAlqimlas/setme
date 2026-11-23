@@ -87,9 +87,20 @@ const nextSeq = rallies => { const r = rallies.at(-1); return r && !r.won ? r.se
 // serve, the order carries on from the player who served before them.
 // lineup: who is on court now (lineupAt); joins: the side's late players (joinsOf), put in the order where they came in.
 // Substitutes (joins with `for`) count as the player they replaced: the answer is whoever is on court in that spot.
-export function nextServer(rallies, side, lineup, fixed = null, joins = []) {
+// cycle: the full serving order when it's known from a starting rotation (serveCycle with how 'set'), position 1 last.
+export function nextServer(rallies, side, lineup, fixed = null, joins = [], cycle = null) {
   const g = { joins: joins.map(j => ({ ...j, side })) }, root = p => rootOf(g, side, p);
   const occ = r => lineup.find(p => root(p) === r) ?? r;
+  if (cycle?.length) {
+    const prev = rallies.filter(r => r.won).at(-1);
+    const serves = [...rallies].reverse().flatMap(r => r.serve === side ? r.touches.filter(t => t.a === 'serve') : []);
+    // Its first serve: position 1 when it serves the game's first rally; after winning the serve back it has
+    // rotated, so position 2.
+    if (!serves.length) return occ(rallies.some(r => r.won) ? cycle[0] : cycle.at(-1));
+    const last = root(serves[0].p);
+    if (prev && prev.serve === side && prev.won === side) return occ(last);           // kept the serve
+    return occ(cycle[(cycle.indexOf(last) + 1) % cycle.length] ?? cycle.at(-1));
+  }
   const late = joins.filter(j => j.for == null);
   const turn = lineup.map(root).filter(p => p !== root(fixed));
   const first = [];
@@ -167,6 +178,9 @@ export function serveCycle(rallies, game, s) {
     return { order: withJoins(order, js.filter(j => j.p !== fixed)), stints };   // front middle never joins the rotation
   };
   const picked = frontMiddle(game, s), chosen = picked == null ? picked : rootOf(game, s, picked);
+  // A starting rotation set by hand (startRotation): the whole order is known from the first rally.
+  const start = chosen == null ? startRotation(game, s, lineup) : null;
+  if (start) return { order: [...start.slice(1), start[0]], size: 6, fixed: null, how: 'set', serverOf };
   if (chosen !== undefined) {
     const { order } = build(chosen), rotating = lineup.filter(p => p !== chosen).length;
     return { order, size: order.length >= rotating ? order.length : null, fixed: chosen, how: chosen != null ? 'chosen' : null, serverOf };
@@ -188,6 +202,17 @@ export function serveCycle(rallies, game, s) {
     return { order, size: fixed ? 5 : 6, fixed, how: fixed != null ? 'sets' : null, serverOf };
   }
   return { order, size: order.length >= lineup.length ? order.length : null, fixed: null, how: null, serverOf };
+}
+
+// The starting rotation a person set for side s (games.rotation, rotation.sql): { a: [pid in 1, in 2, … in 6], b }
+// as the game began, or null when none is set or it doesn't fit the players who started (six of them, each once).
+// The serving order follows: position 1 serves first, then whoever was in 2, and so on round the court. serveCycle
+// lists it starting from position 2, so that before the team's first serve its last entry is in position 1.
+export function startRotation(game, s, lineup) {
+  const r = game?.rotation?.[s];
+  if (!Array.isArray(r) || r.length !== 6) return null;
+  const ids = r.map(p => rootOf(game, s, Number(p)));
+  return new Set(ids).size === 6 && ids.every(p => lineup.includes(p)) && lineup.length === 6 ? ids : null;
 }
 
 // Each team's rotations in one game, named by the player serving in it (position 1). A team stays in a rotation

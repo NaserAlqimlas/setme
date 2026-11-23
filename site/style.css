@@ -534,7 +534,13 @@ tr.dim td { color: var(--muted); }
 .court-swap { align-self: center; min-height: 32px; padding: 2px 8px; }
 .court-side { min-width: 0; padding: 6px; border-radius: 10px; background: color-mix(in srgb, var(--tc) 7%, transparent); }
 .court-spots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.court-half.list { display: flex; flex-direction: column; gap: 6px; }
+.court-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }   /* before the rotation is known */
+.rot-btn { width: 100%; margin-top: 6px; }
+.rot-help { margin: 0 0 6px; }
+.rot-spot { position: relative; display: block; min-width: 0; }
+.rot-spot select { width: 100%; min-height: 52px; margin: 0; padding: 14px 4px 4px; font-size: .86rem; font-weight: 600; text-align: center; }
+.rot-spot .tag-spot { z-index: 1; pointer-events: none; }
+.rot-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .court-bench { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 .court-net { width: 16px; display: grid; place-items: center; border-radius: 3px;
   background: repeating-linear-gradient(0deg, var(--line-strong) 0 2px, transparent 2px 7px), repeating-linear-gradient(90deg, var(--line-strong) 0 2px, transparent 2px 7px); }
