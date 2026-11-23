@@ -853,27 +853,42 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // A team's player buttons laid out like its half of the court, seen from behind its own end line: front row
   // (4 3 2) at the net, back row (5 6 1) behind. Players without a known spot yet go in a row below; with no
   // rotation known at all, the plain list.
-  const players = s => {
+  // The court, as seen in the video: both teams facing each other across the net, each in its half. Which team is
+  // on the left is up to you (Swap sides), remembered on this device per game; team a starts on the left.
+  // A team on the left faces right, so its left hand (position 4, 5) is at the top; on the right it's at the bottom.
+  // Rows top to bottom, the column next to the net second on the left and first on the right.
+  const sideKey = `setme-court-${g.id}`;
+  let leftTeam = (() => { try { return localStorage.getItem(sideKey) === 'b' ? 'b' : 'a'; } catch { return 'a'; } })();
+  const HALF = { left: [[5, 4], [6, 3], [1, 2]], right: [[2, 1], [3, 6], [4, 5]] };
+  const half = (s, where) => {
     const court = courtOf(s), likely = passersOf(s, court);
     const btn = (p, spot) => h('button', { type: 'button', class: `tag-player${likely.has(p) ? ' likely' : ''}`, 'aria-pressed': String(sel?.p === p), onclick: () => pick(p),
       title: likely.has(p) ? 'Often passes from here' : null },
-      avatar(pname.get(p) ?? '?', 26), h('span', { class: 'tag-name' }, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
-    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: 'tag-players' }, here(s).map(p => btn(p)));
+      avatar(pname.get(p) ?? '?', 24), h('span', { class: 'tag-name' }, pn(p)), spot && h('small', { class: 'tag-spot', 'aria-hidden': 'true' }, String(spot)));
+    if (!court || Object.keys(court.spots).length < 3) return h('div', { class: `court-half ${where} list` }, here(s).map(p => btn(p)));
     const cell = k => court.spots[k] != null ? btn(court.spots[k], k) : h('span', { class: 'tag-empty muted small' }, `${k}`);
-    return h('div', { class: 'tag-court' },
-      h('div', { class: 'tag-row' }, h('span', { class: 'tag-row-label muted small' }, 'Net'), [4, 3, 2].map(cell)),
-      h('div', { class: 'tag-row' }, h('span', { class: 'tag-row-label muted small' }, 'Back'), [5, 6, 1].map(cell)),
-      court.unplaced.length > 0 && h('div', { class: 'tag-players' }, court.unplaced.map(p => btn(p))));
+    return h('div', { class: `court-half ${where}` }, h('div', { class: 'court-spots' }, HALF[where].flat().map(cell)),
+      court.unplaced.length > 0 && h('div', { class: 'court-bench' }, court.unplaced.map(p => btn(p))));
   };
-
+  const courtView = sv => {
+    const L = leftTeam, R = L === 'a' ? 'b' : 'a';
+    const head = (s, where) => h('div', { class: `court-head ${where}`, style: `--tc:${color[s]}` },
+      h('b', {}, name[s]), sv === s && h('span', { class: 'badge set' }, 'Serving'),
+      !sel && courtOf(s) && h('span', { class: 'muted small tag-keys' }, keySide() === s ? 'keys 1–6' : 'Shift 1–6'));
+    const swap = h('button', { type: 'button', class: 'ghost sm court-swap', title: 'Put each team on the side it plays on in the video', 'aria-label': 'Swap sides',
+      onclick: () => { leftTeam = R; try { localStorage.setItem(sideKey, leftTeam); } catch { /* this time only */ } paintPad(); } }, '⇄');
+    return h('div', { class: 'court' },
+      head(L, 'left'), swap, head(R, 'right'),
+      h('div', { class: 'court-side', style: `--tc:${color[L]}` }, half(L, 'left')),
+      h('div', { class: 'court-net', 'aria-hidden': 'true' }, h('span', {}, 'Net')),
+      h('div', { class: 'court-side', style: `--tc:${color[R]}` }, half(R, 'right')),
+      h('button', { type: 'button', class: 'ghost sm tag-point', style: `--tc:${color[L]}`, onclick: () => point(L) }, `Point ${name[L]}`),
+      h('span'),
+      h('button', { type: 'button', class: 'ghost sm tag-point right', style: `--tc:${color[R]}`, onclick: () => point(R) }, `Point ${name[R]}`));
+  };
   const paintPad = () => {
     autoSel();
     const r = open(), sv = serving();
-    const col = s => h('div', { class: 'tag-team', style: `--tc:${color[s]}` },
-      h('div', { class: 'tag-team-head' }, h('b', {}, name[s]), sv === s && h('span', { class: 'badge set' }, 'Serving'), h('span', { class: 'grow' }),
-        !sel && courtOf(s) && h('span', { class: 'muted small tag-keys' }, keySide() === s ? 'keys 1–6' : 'Shift 1–6')),
-      players(s),
-      h('button', { type: 'button', class: 'ghost sm tag-point', onclick: () => point(s) }, `Point ${name[s]}`));
     const choose = sel && h('div', { class: 'tag-choose' },
       h('div', { class: 'muted small' }, h('b', {}, pname.get(sel.p)), sel.auto === 'serve' ? ' is up to serve' : sel.auto === 'set' ? ' usually sets' : '', ' · pick what they did'),
       seg(Object.entries(ACTIONS).map(([a, d]) => [a, d.label]), sel.a, a => { sel = { ...sel, a, auto: false }; paintPad(); }, 'Action'),
@@ -886,7 +901,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
         h('span', { class: 'grow' }),
         !rallies.length && h('span', { class: 'row' }, h('span', { class: 'muted small' }, 'First serve'), seg([['a', name.a], ['b', name.b]], firstServe, v => { firstServe = v; sel = null; paintPad(); }, 'First serve')),
         h('button', { class: 'ghost sm', onclick: undo, disabled: !history.length }, 'Undo')),
-      h('div', { class: 'tag-teams' }, col('a'), col('b')),
+      courtView(sv),
       ...(choose ? [choose] : []));
   };
 

@@ -522,19 +522,28 @@ tr.dim td { color: var(--muted); }
 .tag-source input[type=url] { flex: 1 1 200px; min-width: 0; }
 .tag-found { flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .tag-rally-head { flex-wrap: wrap; gap: 8px 12px; margin-bottom: 10px; }
-.tag-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.tag-team { border-top: 3px solid var(--tc); padding-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-.tag-team-head { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.tag-team-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* one line, so both courts line up */
-.tag-team-head .badge { flex: none; }
-/* The tag screen's court layout (scores.mjs players): front row at the net, back row behind; 1–6 = position. */
-.tag-court { display: flex; flex-direction: column; gap: 6px; }
-.tag-row { display: grid; grid-template-columns: 2.6em repeat(3, minmax(0, 1fr)); gap: 6px; align-items: stretch; }
-.tag-row + .tag-row { padding-top: 6px; border-top: 1px dashed var(--line); }
-.tag-row-label { align-self: center; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+/* The tag screen's court (scores.mjs courtView): both teams facing each other across the net, as in the video.
+   Three columns: left half, net, right half; team names above, Point buttons below. 1–6 = court position. */
+.court { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px 6px; align-items: stretch; }
+.court-head { display: flex; align-items: center; gap: 6px; min-width: 0; padding-bottom: 6px; border-bottom: 3px solid var(--tc); }
+.court-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.court-head .badge { flex: none; }
+.court-head.right { flex-direction: row-reverse; text-align: right; }
+.court-head .tag-keys { margin-left: auto; white-space: nowrap; }
+.court-head.right .tag-keys { margin-left: 0; margin-right: auto; }
+.court-swap { align-self: center; min-height: 32px; padding: 2px 8px; }
+.court-side { min-width: 0; padding: 6px; border-radius: 10px; background: color-mix(in srgb, var(--tc) 7%, transparent); }
+.court-spots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.court-half.list { display: flex; flex-direction: column; gap: 6px; }
+.court-bench { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.court-net { width: 16px; display: grid; place-items: center; border-radius: 3px;
+  background: repeating-linear-gradient(0deg, var(--line-strong) 0 2px, transparent 2px 7px), repeating-linear-gradient(90deg, var(--line-strong) 0 2px, transparent 2px 7px); }
+.court-net span { writing-mode: vertical-rl; font-size: .62rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--surface); padding: 4px 0; }
+.court .tag-point.right { justify-self: end; }
+.court .tag-point { justify-self: start; border-color: var(--tc); }
 /* In a court spot the circle sits above the name, so narrow spots still fit both. */
-.tag-court button.tag-player { position: relative; min-width: 0; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 4px 6px; text-align: center; }
-.tag-court .tag-name { max-width: 100%; font-size: .9rem; }
+.court button.tag-player { position: relative; min-width: 0; flex-direction: column; justify-content: center; gap: 3px; padding: 8px 4px 6px; text-align: center; }
+.court .tag-name { max-width: 100%; font-size: .86rem; }
 .tag-spot { position: absolute; top: 2px; right: 5px; font-size: .66rem; font-weight: 600; color: var(--muted); }
 .tag-empty { display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 8px; min-height: 64px; }
 .touch-edit { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
@@ -542,7 +551,6 @@ tr.dim td { color: var(--muted); }
 .tag-grade.current { box-shadow: inset 0 0 0 2px var(--primary); }
 .tag-keys { font-size: .72rem; }
 button.tag-player.likely { border-style: dashed; border-color: var(--tc); background: color-mix(in srgb, var(--tc) 8%, var(--surface-2)); }
-.tag-players { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
 button.tag-player { display: flex; align-items: center; gap: 8px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); padding: 6px 10px; text-align: left; font-weight: 600; }
 button.tag-player .tag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.tag-player[aria-pressed=true] { border-color: var(--tc); box-shadow: inset 0 0 0 2px var(--tc); background: color-mix(in srgb, var(--tc) 14%, var(--surface-2)); }
@@ -567,9 +575,8 @@ button.tag-grade.lost { border-color: var(--danger); background: color-mix(in sr
 .chip button.touch-btn { width: auto; border-radius: 6px; padding: 0 4px; font-size: .82rem; font-weight: 600; color: var(--fg); }
 .chip button.touch-btn:hover { background: transparent; color: var(--primary); }
 @media (max-width: 640px) {
-  .tag-teams { grid-template-columns: 1fr; }
-  .tag-players { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
-  .tag-court button.tag-player .avatar { display: none; }
+  .court button.tag-player .avatar { display: none; }
+  .court .tag-keys { display: none; }
   .tag-empty { min-height: 40px; }
 }
 
