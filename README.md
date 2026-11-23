@@ -88,7 +88,7 @@ Highlights: paste and run `supabase/highlights.sql` after `video.sql` (adds `hig
 
 Setters not setting: paste and run `supabase/nosetters.sql` after `rounds.sql` (adds `no_set` to game days and rounds) so the Scores page predicts games with the setters who sat out setting. Safe to run again. Until then saving works as before.
 
-Starting rotation: paste and run `supabase/rotation.sql` (adds `games.rotation`). Safe to run again. Until then the tag screen doesn't offer Set rotation, and the court appears once three players on a team have served, as before.
+Starting rotation, late players and substitutions as tables: paste and run `supabase/game_links.sql` after `match_stats.sql` and `tag_window.sql` (adds `game_rotation` and `game_joins`, copies what `rotation.sql` and `late_players.sql` kept as JSON on `games`, then drops those columns). Safe to run again. Until then the tag screen keeps using the JSON columns.
 
 Club emails: paste and run `supabase/emails.sql` (adds `email_prefs` and `games.tagged_emailed_at`). Safe to run again. Until then no club emails go out and Settings says the upgrade is needed; the uploader's own "ready to watch" email works as before.
 

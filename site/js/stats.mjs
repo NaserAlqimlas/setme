@@ -52,6 +52,21 @@ export function suggestAction(rally, side, game) {
 // null while they haven't come yet; after: who they came in after in the serving order. Everyone else was there
 // from the start. A substitute has `for`: the player they replaced (hurt, say), who is off court from rally `from`
 // on; the substitute takes that player's spot in the rotation, so the serving order and positions carry on as before.
+// A game read with its rows from game_rotation and game_joins (game_links.sql; GAME_LINKS, embedded by the
+// database) -> the game with .rotation { a: [pid in 1 … 6], b } and .joins as above, the shapes everything here uses.
+// links: true when the tables exist (then writes go to them). Before game_links.sql the game keeps its JSON columns.
+export const GAME_LINKS = 'game_rotation(side,position,player_id),game_joins(side,player_id,from_seq,after_player,replaces)';
+export function linkGame(g) {
+  if (!g || !Array.isArray(g.game_rotation) || !Array.isArray(g.game_joins)) return g;
+  const rotation = {};
+  for (const s of ['a', 'b']) {
+    const rows = g.game_rotation.filter(r => r.side === s).sort((x, y) => x.position - y.position);
+    if (rows.length === 6) rotation[s] = rows.map(r => r.player_id);
+  }
+  const joins = g.game_joins.map(j => ({ p: j.player_id, side: j.side, from: j.from_seq, after: j.after_player, ...(j.replaces != null ? { for: j.replaces } : {}) }));
+  const { game_rotation, game_joins, ...rest } = g;
+  return { ...rest, rotation: Object.keys(rotation).length ? rotation : null, joins, links: true };
+}
 export const joinsOf = (game, s) => (Array.isArray(game?.joins) ? game.joins : []).filter(j => j?.side === s);
 const lateOf = (game, s) => joinsOf(game, s).filter(j => j.for == null);
 export const subsOf = (game, s) => joinsOf(game, s).filter(j => j.for != null && j.from != null);
