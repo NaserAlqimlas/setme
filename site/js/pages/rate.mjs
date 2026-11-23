@@ -111,38 +111,34 @@ export async function ratePage() {
   // What a skill row shows: the number, U if they said don't know, or nothing pressed if not answered yet.
   const shown = (r, s) => r?.[s] != null ? Number(r[s]) : (hasUnknown ? unknownOf(r).includes(s) : r != null) ? 'U' : undefined;
   let onlyPlaying = false, onlyUnrated = false, onlyLook = false, search = '';
-  // Why a player is worth a (fresh) look: ids only from the server, never which way. Organizers and the super can see
-  // every rating anyway, so for them the server also says how (queue.how).
-  const how = queue?.how;
-  const resultsWhy = id => {
-    const x = how?.[id];
-    if (!x) return 'Results don\'t match their ratings';
-    const better = x.over > 0;
-    return `Their teams do ${Math.abs(x.over).toFixed(1)} points a game ${better ? 'better' : 'worse'} than rated (won ${x.wins} of ${x.games}): maybe rated too ${better ? 'low' : 'high'}`;
-  };
-  const sets = { results: new Set(queue?.results), few: new Set(queue?.few), anchors: new Set(queue?.anchors ?? players.filter(p => p.anchor).map(p => p.id)) };
+  // Why a player is worth a (fresh) look: few people have rated them, an anchor to rate first, or your own rating is
+  // old. Results against the ratings aren't here (decided 2026-11-23: over a season's games they're mostly luck and
+  // stressed people out); Adjust for results on Teams uses them, and Insights shows them.
+  const sets = { few: new Set(queue?.few), anchors: new Set(queue?.anchors ?? players.filter(p => p.anchor).map(p => p.id)) };
   const reasons = p => {
     const r = byPlayer.get(p.id), out = [];
     if (sets.anchors.has(p.id) && !done(p)) out.push('Anchor player: rate them first');
-    if (sets.results.has(p.id)) out.push(resultsWhy(p.id));
     if (sets.few.has(p.id)) out.push('Few people have rated them');
     if (r?.updated_at && Date.now() - Date.parse(r.updated_at) > STALE_DAYS * 864e5) out.push(`Your rating is over ${Math.round(STALE_DAYS / 30)} months old`);
     return out;
   };
-  const lookCard = h('div', { class: 'card' });
+  // Folds (details.fold); open or closed is remembered on this device.
+  const LOOK_KEY = 'setme-look-open';
+  const lookCard = h('details', { class: 'card fold', open: (() => { try { return localStorage.getItem(LOOK_KEY) !== '0'; } catch { return true; } })() });
+  lookCard.addEventListener('toggle', () => { try { localStorage.setItem(LOOK_KEY, lookCard.open ? '1' : '0'); } catch { /* not remembered */ } });
   const paintLook = () => {
     const list = players.map(p => ({ p, why: reasons(p) })).filter(x => x.why.length);
     const anchorsLeft = players.filter(p => sets.anchors.has(p.id) && !done(p));
     lookCard.hidden = !list.length;
     lookCard.replaceChildren(
-      h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Worth a fresh look'),
-        h('p', { class: 'muted small', style: 'margin:2px 0 0' }, anchorsLeft.length
+      h('summary', {}, h('h3', {}, 'Worth a fresh look'), h('span', { class: 'muted small fold-state' }, `${list.length} player${list.length === 1 ? '' : 's'}`)),
+      h('div', { class: 'fold-body' },
+        h('p', { class: 'muted small', style: 'margin:0 0 8px' }, anchorsLeft.length
           ? `New here? Start with the ${anchorsLeft.length} anchor player${anchorsLeft.length === 1 ? '' : 's'} everyone rates; it tells SetMe how you rate compared with the others, and until then your ratings count for less.`
-          : how ? 'Players where another look helps most. You see which way because you can see everyone\'s ratings; raters see only the names, so they rate what they see.'
-            : 'Players where another look helps most. Nothing here says which way; just rate what you see.'))),
+          : 'Players few people have rated yet, or whose rating from you is a while old. Just rate what you see.'),
       h('ul', { class: 'look-list' }, list.map(({ p, why }) => h('li', { title: why.join('\n') },
         h('button', { type: 'button', class: 'look-name', onclick: () => jumpTo(p.id), 'aria-label': `Go to ${p.name}` }, p.name),
-        h('span', { class: 'muted small' }, why[0] + (why.length > 1 ? `, and ${why.length - 1} more` : ''))))));
+        h('span', { class: 'muted small' }, why[0] + (why.length > 1 ? `, and ${why.length - 1} more` : '')))))));
   };
   paintLook();
   const grid = h('div', { class: 'grid' });
