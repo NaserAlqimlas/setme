@@ -4,9 +4,12 @@
 //   [{ id, played_on, mine, theirs }]; touches: their own touches, [{ game_id, action, grade }];
 //   club: everyone else's touches added together, per action and grade ({ serve: { 0: n, 1: n, … }, … }), for What to
 //   work on. An action is left out until at least MIN_OTHERS other players have touches of it, so no one's own numbers show.
+//   stats_club: the club's middle and usual range for each match stat on the profile (averages.mjs statAverages),
+//   over active players with a few tagged games.
 // Nothing about other players: no names, no one else's touches.
 import { caller, json, rest } from '../lib/supabase.mjs';
 import { clubCounts } from '../../site/js/focus.mjs';
+import { statAverages } from '../../site/js/averages.mjs';
 
 // Every row, a page at a time (the API returns at most 1,000 rows per request).
 async function allRows(path) {
@@ -55,5 +58,6 @@ export default async (req) => {
   }).sort((a, b) => String(b.played_on).localeCompare(String(a.played_on)) || String(b.at).localeCompare(String(a.at)))
     .map(({ at, ...g }) => g);
   const touches = raw.map(t => ({ game_id: t.rallies?.game_id, action: t.action, grade: t.grade })).filter(t => tagged.has(t.game_id));
-  return json({ linked: true, total: total ?? null, games: out, touches, club: clubCounts(everyone, pid) });
+  const active = new Set((await rest('players?active=eq.true&select=id').catch(() => [])).map(p => p.id));
+  return json({ linked: true, total: total ?? null, games: out, touches, club: clubCounts(everyone, pid), stats_club: statAverages(everyone, active).club });
 };
