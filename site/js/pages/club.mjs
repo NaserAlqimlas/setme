@@ -1,6 +1,6 @@
 import { ask, avatar, callFn, canProfile, datePicker, fmt, LABEL, forPlayer, h, me, missing, needsUpgrade, pageHead, profileLink, q, render, sb, SHORT, stacked, TEAM_COLORS, toast, today, toggle } from '../ui.mjs';
 import { combineRatings, RATED, SKILLS, teamNames, weightedTotal } from '../teams.mjs';
-import { analyze, playerStats, resultAdjustments } from '../scores.mjs';
+import { analyze, playerStats, resultAdjustments, scoreText } from '../scores.mjs';
 import { gameTallies, metrics, score, tallyFromCounts } from '../stats.mjs';
 import { attendance, record } from '../club.mjs';
 import { courtShare, dayTitle, setterBadge } from './teams.mjs';
@@ -121,7 +121,7 @@ export async function lineupPage() {
       d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
         roundsWithGames.flatMap(n => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${n}`),
           h('ol', { class: 'game-list' }, d.games.filter(g => (g.round ?? 1) === n).map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${nameIn(g.team_a, n)} v ${nameIn(g.team_b, n)}`)),
-            h('span', { class: 'game-score' }, `${g.score_a}–${g.score_b}`))))])),
+            h('span', { class: 'game-score' }, scoreText(g.score_a, g.score_b)))))])),
       [...past].reverse().map(r => h('details', { class: 'round-past' },
         h('summary', {}, h('b', {}, `Round ${r.n} teams`)),
         h('div', { class: 'team-grid' }, r.teams.map((ps, k) => h('article', { class: 'team', style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
@@ -370,7 +370,7 @@ export async function profilePage(id) {
     if (recent.length) parts.push(h('div', { class: 'card' }, h('h3', {}, 'Recent game days'),
       h('ol', { class: 'game-list' }, recent.map(d => {
         const res = record(d.games, id);
-        const score = g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return `${us > them ? 'W' : 'L'} ${us}–${them}`; };
+        const score = g => { const a = g.players_a.includes(id); const [us, them] = a ? [g.score_a, g.score_b] : [g.score_b, g.score_a]; return us == null || them == null ? 'Incomplete' : `${us > them ? 'W' : 'L'} ${us}–${them}`; };
         // Rounds (rounds.sql): each round's teams, so the team they were on is named per round. Without them (older
         // SQL, or a day not published yet) it's the team number as before.
         const rounds = Array.isArray(d.rounds) ? d.rounds : null;

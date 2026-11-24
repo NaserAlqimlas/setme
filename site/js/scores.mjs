@@ -6,7 +6,14 @@ import { SKILLS, WEIGHTS } from './teams.mjs';
 export const TARGET = 25;
 // Games stopped early (time up) are scaled to a game to 25, so 12-8 counts like 25-17 (rounded only for display).
 export const margin25 = (a, b) => { const top = Math.max(a, b); return top >= TARGET ? a - b : top ? (a - b) * TARGET / top : 0; };
-export const finished = g => Math.max(g.score_a, g.score_b) >= TARGET;
+// Incomplete game: only part of it was filmed and the final score isn't known (score_unknown.sql). Both scores are
+// empty (null). Results, records, standings and rating adjustments leave it out; its tags still count for player stats.
+export const scoreKnown = g => g.score_a != null && g.score_b != null;
+export const scoreText = (a, b) => a == null || b == null ? 'Incomplete' : `${a}–${b}`;
+// Saving an empty score before score_unknown.sql has run fails on the old NOT NULL rule: say what to run.
+export const scoreError = e => /null value in column "score_[ab]"/.test(e?.message ?? '')
+  ? 'Saving a game with an unknown score needs the database upgrade first: run supabase/score_unknown.sql in the Supabase SQL Editor.' : e?.message ?? String(e);
+export const finished = g => scoreKnown(g) && Math.max(g.score_a, g.score_b) >= TARGET;
 export const CLOSE = 3, BLOWOUT = 10;
 
 // Predicted gap: team A's weighted total minus team B's.
@@ -95,7 +102,7 @@ function fitWeights(rows, k) {
 export function playerStats(games, k) {
   const by = new Map();
   for (const g of games) {
-    if (!g.predicted || !(g.score_a || g.score_b)) continue;
+    if (!g.predicted || !scoreKnown(g) || !(g.score_a || g.score_b)) continue;
     const m = margin25(g.score_a, g.score_b), gap = gapOf(g);
     for (const [ids, sign] of [[g.players_a, 1], [g.players_b, -1]]) for (const id of ids ?? []) {
       const s = by.get(id) ?? { id, games: 0, wins: 0, margin: 0, over: 0 };
