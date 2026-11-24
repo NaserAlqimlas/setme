@@ -78,12 +78,14 @@ export async function recapImage(data, { title, subtitle = '', name, colors, tea
       ctx.fillText(`ROUND ${round}`, PAD, y + 36); y += ROUND_H;
     }
     for (const r of data.results.filter(x => (x.round ?? 1) === round)) {
-      const aWon = r.score_a > r.score_b, mid = W / 2;
+      // Incomplete (score unknown): both names full strength, and the word where the score goes.
+      const known = r.score_a != null && r.score_b != null, aWon = known ? r.score_a > r.score_b : null, mid = W / 2;
       const a = teamName(r.team_a, round).toUpperCase(), b = teamName(r.team_b, round).toUpperCase();
-      fit(a, side, 42); ctx.textAlign = 'right'; ctx.fillStyle = color(r.team_a); ctx.globalAlpha = aWon ? 1 : .55; ctx.fillText(a, mid - 100, y + 48);
-      fit(b, side, 42); ctx.textAlign = 'left'; ctx.fillStyle = color(r.team_b); ctx.globalAlpha = aWon ? .55 : 1; ctx.fillText(b, mid + 100, y + 48);
+      fit(a, side, 42); ctx.textAlign = 'right'; ctx.fillStyle = color(r.team_a); ctx.globalAlpha = aWon === false ? .55 : 1; ctx.fillText(a, mid - 100, y + 48);
+      fit(b, side, 42); ctx.textAlign = 'left'; ctx.fillStyle = color(r.team_b); ctx.globalAlpha = aWon === true ? .55 : 1; ctx.fillText(b, mid + 100, y + 48);
       ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.fillStyle = '#ffffff';
-      ctx.font = `700 46px ${HEAD}`; ctx.fillText(`${r.score_a} – ${r.score_b}`, mid, y + 50);
+      if (known) { ctx.font = `700 46px ${HEAD}`; ctx.fillText(`${r.score_a} – ${r.score_b}`, mid, y + 50); }
+      else { ctx.font = `700 26px ${HEAD}`; ctx.fillStyle = SOFT; ctx.fillText('INCOMPLETE', mid, y + 46); }
       y += RESULT_H;
     }
   }

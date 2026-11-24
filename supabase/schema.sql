@@ -165,8 +165,9 @@ create table public.games (
   team_b smallint not null,
   players_a bigint[] not null,  -- who was on each team for this game
   players_b bigint[] not null,
-  score_a smallint not null check (score_a between 0 and 99),
-  score_b smallint not null check (score_b between 0 and 99),
+  score_a smallint check (score_a between 0 and 99),   -- both null: incomplete game, score unknown (score_unknown.sql)
+  score_b smallint check (score_b between 0 and 99),
+  constraint games_score_both check ((score_a is null) = (score_b is null)),
   predicted jsonb,              -- team numbers from the ratings when the game was saved
   created_by uuid default auth.uid(),
   created_at timestamptz not null default now()

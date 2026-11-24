@@ -68,7 +68,9 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const BRAND = { navy: '#0f1630', blue: '#1d3fbf', ball: '#ffc531', ballFg: '#2a1f00', bg: '#f3f4f8', line: '#e3e6ef', muted: '#5d6680', display: "'Barlow Condensed','Arial Narrow',Arial,sans-serif", body: "Inter,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" };
 export function clubEmail({ kind, label, game = null, link, settings }) {
   const video = kind === 'videos';
-  const teams = game ? `${game.a} ${game.sa}–${game.sb} ${game.b}` : null;
+  // An incomplete game (score unknown) is named without a score and gets no scoreboard.
+  const known = game && game.sa != null && game.sb != null;
+  const teams = game ? (known ? `${game.a} ${game.sa}–${game.sb} ${game.b}` : `${game.a} v ${game.b}`) : null;
   const subject = video ? `${label}: the video is up` : `${label}: the stats are up`;
   const lead = video ? `The video of ${label}${teams ? ` (${teams})` : ''} is ready to watch on Games.`
     : `${label}${teams ? ` (${teams})` : ''} has been tagged touch by touch. Its stats and box score are on Games.`;
@@ -78,7 +80,7 @@ export function clubEmail({ kind, label, game = null, link, settings }) {
   const side = (name, pts, win) => `<td width="50%" align="center" style="padding:14px 8px;">
         <div style="font:600 14px/1.3 ${B.body};color:${win ? B.navy : B.muted};">${esc(name)}</div>
         <div style="font:800 44px/1.1 ${B.display};color:${win ? B.blue : B.muted};">${esc(pts)}</div></td>`;
-  const board = game ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${B.bg};border-radius:12px;margin:18px 0 22px;">
+  const board = known ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${B.bg};border-radius:12px;margin:18px 0 22px;">
       <tr>${side(game.a, game.sa, game.sa > game.sb)}<td style="font:700 22px ${B.display};color:${B.muted};">–</td>${side(game.b, game.sb, game.sb > game.sa)}</tr></table>` : '<div style="height:18px"></div>';
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light"><title>${esc(subject)}</title>

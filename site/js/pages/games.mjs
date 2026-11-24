@@ -8,6 +8,7 @@ import { ACTIONS, bestPlayers, FRONT_ROW, fromRows, gameDetail, gradeLabel, POSI
 import { matchFiles, numbered, problems } from '../bulkmatch.mjs';
 import { trayDrop, trayPut, uploadVideo } from '../upload.mjs';
 import { openTagging } from './scores.mjs';
+import { scoreError, scoreText } from '../scores.mjs';
 import { dayTitle } from './teams.mjs';
 import { gameLine } from './club.mjs';
 import { searchDays, toTag } from '../gamesearch.mjs';
@@ -91,7 +92,7 @@ function toTagCard(days) {
     paint();
   };
   const line = (g, ...end) => h('span', { class: 'gd-score' },
-    h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('b', {}, ` ${g.a.score}–${g.b.score} `), h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name), ...end);
+    h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('b', {}, ` ${scoreText(g.a.score, g.b.score)} `), h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name), ...end);
   const paint = () => {
     const games = toTag(days), off = all().filter(g => g.not_recorded && !g.tagged);
     const shown = showAllToTag ? games : games.slice(0, FEW);
@@ -123,11 +124,11 @@ function dayCard(d, open, highlights = 0, bloopers = 0) {
         highlights > 0 && h('a', { class: 'chip plain gd-reel', href: `#reel/${d.session_id}` }, `★ Highlights (${highlights})`),
         bloopers > 0 && h('a', { class: 'chip plain gd-reel', href: `#bloopers/${d.session_id}` }, `🙈 Bloopers (${bloopers})`))),
     h('ul', { class: 'gd-games' }, d.games.map(g => {
-      const res = g.mine && (g[g.mine].score > g[g.mine === 'a' ? 'b' : 'a'].score ? 'Won' : g[g.mine].score < g[g.mine === 'a' ? 'b' : 'a'].score ? 'Lost' : 'Tied');
+      const res = g.mine && g.a.score != null && g.b.score != null && (g[g.mine].score > g[g.mine === 'a' ? 'b' : 'a'].score ? 'Won' : g[g.mine].score < g[g.mine === 'a' ? 'b' : 'a'].score ? 'Lost' : 'Tied');
       return h('li', {}, h('button', { type: 'button', class: 'gd-game', onclick: () => open(g.id) },
         h('span', { class: 'muted small gd-n' }, `Game ${g.n}`),
         h('span', { class: 'gd-score' },
-          h('span', { style: `--tc:${color(g.a.k)}`, class: g.mine === 'a' ? 'mine' : null }, g.a.name), h('b', {}, ` ${g.a.score}–${g.b.score} `),
+          h('span', { style: `--tc:${color(g.a.k)}`, class: g.mine === 'a' ? 'mine' : null }, g.a.name), h('b', {}, ` ${scoreText(g.a.score, g.b.score)} `),
           h('span', { style: `--tc:${color(g.b.k)}`, class: g.mine === 'b' ? 'mine' : null }, g.b.name)),
         h('span', { class: 'gd-tags' }, res && h('span', { class: `chip plain ${res === 'Won' ? 'won' : ''}` }, res),
           g.video && h('span', { class: 'chip plain' }, '▶ Video'),
@@ -139,14 +140,16 @@ function dayCard(d, open, highlights = 0, bloopers = 0) {
 // teams' lineups and is predicted again (as on Scores), then the page loads again with the fix.
 function fixCard(g, fix, tagged, close) {
   const pick = (v, label) => h('select', { 'aria-label': label }, fix.teams.map(t => h('option', { value: t.k, selected: t.k === v }, t.name)));
-  const num = (v, label) => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: v, 'aria-label': label });
+  const num = (v, label) => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: v ?? '', placeholder: '?', 'aria-label': label });
   const ta = pick(g.a.k, 'First team'), tb = pick(g.b.k, 'Second team'), sa = num(g.a.score, 'First team score'), sB = num(g.b.score, 'Second team score');
   const save = h('button', { class: 'sm' }, 'Save');
   save.onclick = async () => {
-    const a = Number(ta.value), b = Number(tb.value), A = Number(sa.value), B = Number(sB.value);
+    // Both scores empty: incomplete, score unknown.
+    const none = sa.value === '' && sB.value === '';
+    const a = Number(ta.value), b = Number(tb.value), A = none ? null : Number(sa.value), B = none ? null : Number(sB.value);
     if (a === b) return toast('Pick two different teams');
-    if (sa.value === '' || sB.value === '' || ![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99)) return toast('Scores are whole numbers from 0 to 99');
-    if (A === B) return toast('A game can\'t end in a tie');
+    if (!none && (sa.value === '' || sB.value === '' || ![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99))) return toast('Scores are whole numbers from 0 to 99, or leave both empty if the score is unknown');
+    if (!none && A === B) return toast('A game can\'t end in a tie');
     const teamsChanged = a !== g.a.k || b !== g.b.k;
     if (!teamsChanged && A === g.a.score && B === g.b.score) return close();
     if (teamsChanged && tagged && !await ask(`Change game ${g.n}'s teams?`, `It has ${tagged} tagged rallies, tagged with the players saved now. Check its tags afterwards.`, 'Change teams')) return;
@@ -163,10 +166,10 @@ function fixCard(g, fix, tagged, close) {
       } catch (e) { toast(`Saved without a prediction: ${e.message}`); }
     }
     try { await q(sb.from('games').update(upd).eq('id', g.id)); toast('Game fixed'); render(); }
-    catch (e) { toast(e.message); save.disabled = false; save.textContent = 'Save'; }
+    catch (e) { toast(scoreError(e)); save.disabled = false; save.textContent = 'Save'; }
   };
   return [h('h3', {}, `Fix game ${g.n}`),
-    h('p', { class: 'muted small' }, 'Picked the wrong teams or typed a wrong score? Choose the teams that played and their score.'),
+    h('p', { class: 'muted small' }, 'Picked the wrong teams or typed a wrong score? Choose the teams that played and their score. Leave both scores empty if only part of the game was filmed and the score is unknown.'),
     h('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px;align-items:center' }, ta, sa, h('span', { class: 'muted' }, 'v'), sB, tb, save,
       h('button', { class: 'ghost sm', onclick: close }, 'Cancel'))];
 }
@@ -181,8 +184,11 @@ function gameView(g, back) {
       h('button', { class: 'ghost sm', onclick: back }, '← Games'),
       h('div', { class: 'grow' }, h('h3', { style: 'margin:0' }, `Game ${g.n} · ${day(g.played_on)}`),
         h('div', { class: 'gd-score big' },
-          h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name, ' ', h('b', {}, String(g.a.score))), h('span', { class: 'muted' }, ' – '),
-          h('span', { style: `--tc:${color(g.b.k)}` }, h('b', {}, String(g.b.score)), ' ', g.b.name))),
+          ...(g.a.score == null || g.b.score == null
+            ? [h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name), h('span', { class: 'muted' }, ' v '), h('span', { style: `--tc:${color(g.b.k)}` }, g.b.name),
+              h('span', { class: 'chip plain', style: 'margin-left:8px', title: 'Only part of this game was filmed and the score is unknown' }, 'Incomplete')]
+            : [h('span', { style: `--tc:${color(g.a.k)}` }, g.a.name, ' ', h('b', {}, String(g.a.score))), h('span', { class: 'muted' }, ' – '),
+              h('span', { style: `--tc:${color(g.b.k)}` }, h('b', {}, String(g.b.score)), ' ', g.b.name)]))),
       me.role === 'super' && h('button', { class: 'ghost sm', onclick: () => { fix.hidden = !fix.hidden; } }, 'Fix teams or score'),
       me.role === 'super' && h('button', { class: 'ghost sm', onclick: () => openTagging(g.played_on, g.id) }, 'Tag this game')),
     fix,
@@ -502,7 +508,7 @@ function paintBulk() {
     const sel = h('select', { 'aria-label': `Game for ${r.file.name}`, disabled: locked || r.skip },
       h('option', { value: '' }, 'Pick a game…'),
       days.map(d => h('optgroup', { label: day(d) }, bulk.games.filter(g => g.played_on === d).map(g =>
-        h('option', { value: g.id, selected: g.id === r.game }, `Game ${g.n} · ${g.score_a}–${g.score_b}${g.video_kind === 'upload' ? ' · has a video' : ''}`)))));
+        h('option', { value: g.id, selected: g.id === r.game }, `Game ${g.n} · ${scoreText(g.score_a, g.score_b)}${g.video_kind === 'upload' ? ' · has a video' : ''}`)))));
     sel.onchange = () => { r.game = sel.value ? Number(sel.value) : null; r.how = null; paintBulk(); };
     const skip = h('input', { type: 'checkbox', checked: r.skip, disabled: locked });
     skip.onchange = () => { r.skip = skip.checked; paintBulk(); };

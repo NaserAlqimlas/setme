@@ -4,7 +4,7 @@ import { highlightBox } from '../highlights.mjs';
 import { moments } from '../suggest.mjs';
 import { activeUpload, savedUpload, sentShare, uploadVideo } from '../upload.mjs';
 import { SKILLS, teamNames, WEIGHTS } from '../teams.mjs';
-import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, TARGET } from '../scores.mjs';
+import { ADJUST_MIN_GAMES, analyze, BLOWOUT, CLOSE, finished, MIN_FIT, nextPairing, playerStats, PRIOR_GAMES, resultAdjustments, scoreError, scoreKnown, scoreText, TARGET } from '../scores.mjs';
 import { ACTIONS, courtNow, endsRally, GAME_LINKS, inSpot, joinsOf, lineupAt, linkGame, flipSides, fromRows, gradeLabel, nextServer, other, passSpots, recap, score, serveCycle, sideOf, suggestAction, tally, teamSummary, usualSetter } from '../stats.mjs';
 import { attendance, MIN_GAMES_FOR_RECORD, record, REGULAR_GAP, seasonRecap } from '../club.mjs';
 import { seasonImage } from '../seasonimg.mjs';
@@ -132,7 +132,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     paintTeams(); paintEntry(); paintBalance();
   };
   const record = (k, n = cur) => {
-    const mine = inRound(n).filter(g => g.team_a === k || g.team_b === k);
+    const mine = inRound(n).filter(g => (g.team_a === k || g.team_b === k) && scoreKnown(g));
     const won = mine.filter(g => (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a) > 0).length;
     const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
     return mine.length ? `${won}–${mine.length - won} · ${diff > 0 ? '+' : ''}${diff}` : 'No games yet';
@@ -210,19 +210,24 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     const sa = num('First team score'), sB = num('Second team score');
     const btn = h('button', { class: 'ball' }, 'Save game');
     const note = h('p', { class: 'muted small' });
+    // Only part of the game filmed and nobody knows the score: saved incomplete, with no score.
+    const unknown = h('input', { type: 'checkbox' });
+    unknown.onchange = () => { sa.disabled = sB.disabled = unknown.checked; hint(); };
+    const unknownBox = h('label', { class: 'muted small', style: 'display:inline-flex;gap:6px;align-items:center;margin-top:8px' }, unknown, 'Score unknown (only part of the game was filmed)');
     const hint = () => {
       const a = Number(sa.value), b = Number(sB.value);
-      note.textContent = sa.value === '' || sB.value === '' ? `Games go to ${TARGET}. Time up? Save the score as it stood.`
+      note.textContent = unknown.checked ? 'Saved as incomplete: left out of results and standings. You can still tag what was filmed.'
+        : sa.value === '' || sB.value === '' ? `Games go to ${TARGET}. Time up? Save the score as it stood.`
         : Math.max(a, b) < TARGET ? `Saved as stopped early (time up). It counts as if scaled to a game to ${TARGET}.` : '';
     };
     sa.oninput = sB.oninput = hint; hint();
     btn.onclick = async () => {
       const a = Number(ta.value), b = Number(tb.value);
       if (a === b) return toast('Pick two different teams');
-      if (sa.value === '' || sB.value === '') return toast('Enter both scores');
-      const A = Number(sa.value), B = Number(sB.value);
-      if (![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99)) return toast('Scores are whole numbers from 0 to 99');
-      if (A === B) return toast('A game can\'t end in a tie');
+      if (!unknown.checked && (sa.value === '' || sB.value === '')) return toast('Enter both scores, or tick Score unknown');
+      const A = unknown.checked ? null : Number(sa.value), B = unknown.checked ? null : Number(sB.value);
+      if (!unknown.checked && ![A, B].every(v => Number.isInteger(v) && v >= 0 && v <= 99)) return toast('Scores are whole numbers from 0 to 99');
+      if (!unknown.checked && A === B) return toast('A game can\'t end in a tie');
       btn.disabled = true; btn.textContent = 'Saving…';
       const players_a = ses.teams[a - 1], players_b = ses.teams[b - 1];
       const allGame = allGameFor([...players_a, ...players_b]);
@@ -236,12 +241,12 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
         games = [...games, g];
         if (predicted) toast('Game saved');
         paintTeams(); paintEntry(); paintList();
-      } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Save game'; }
+      } catch (e) { toast(scoreError(e)); btn.disabled = false; btn.textContent = 'Save game'; }
     };
     entry.replaceChildren(h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, `Game ${games.length + 1}`),
       h('p', { class: 'muted small', style: 'margin:2px 0 0' }, N() > 2 ? 'Next up from the rotation; change it if you played someone else.' : 'Same two teams until time is up.'))),
       h('div', { class: 'score-row' }, h('div', { class: 'score-side' }, ta, sa), h('span', { class: 'muted vs' }, 'v'), h('div', { class: 'score-side right' }, sB, tb), btn),
-      note);
+      unknownBox, note);
   };
 
   // Saved games, newest first. Scores can be fixed in place. The super can also fix which two teams played (picked
@@ -279,23 +284,28 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     // Newest round first, each round's games newest first. Game numbers run through the whole day.
     list.replaceChildren(h('h3', {}, 'Games'), ...[...rounds].reverse().filter(r => inRound(r.n).length).flatMap(r => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${r.n}`), h('ol', { class: 'game-list' }, [...inRound(r.n)].reverse().map(g => {
       const n = games.indexOf(g) + 1;
-      const input = (key, label) => {
-        const el = h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: g[key], 'aria-label': label });
-        el.onchange = async () => {
-          const v = Number(el.value);
-          if (!Number.isInteger(v) || v < 0 || v > 99) { el.value = g[key]; return toast('Scores are whole numbers from 0 to 99'); }
-          try { await q(sb.from('games').update({ [key]: v }).eq('id', g.id)); g[key] = v; toast('Saved'); paintTeams(); }
-          catch (e) { el.value = g[key]; toast(e.message); }
-        };
-        return el;
+      // Both scores, or neither (clear both: incomplete, score unknown). One cleared waits for the other.
+      const mk = (key, label) => h('input', { type: 'number', min: 0, max: 99, inputmode: 'numeric', class: 'score-in sm', value: g[key] ?? '', placeholder: '?', 'aria-label': label });
+      const ea = mk('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), eb = mk('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`);
+      const reset = () => { ea.value = g.score_a ?? ''; eb.value = g.score_b ?? ''; };
+      ea.onchange = eb.onchange = async () => {
+        const read = el => el.value.trim() === '' ? null : Number(el.value);
+        const A = read(ea), B = read(eb);
+        if ((A == null) !== (B == null)) return;
+        if ([A, B].some(v => v != null && !(Number.isInteger(v) && v >= 0 && v <= 99))) { reset(); return toast('Scores are whole numbers from 0 to 99'); }
+        if (A === g.score_a && B === g.score_b) return;
+        try {
+          await q(sb.from('games').update({ score_a: A, score_b: B }).eq('id', g.id)); g.score_a = A; g.score_b = B;
+          toast(A == null ? 'Saved as incomplete: score unknown' : 'Saved'); paintTeams(); paintList();
+        } catch (e) { reset(); toast(scoreError(e)); }
       };
       const changed = [lineup(g.players_a, g.team_a, roundOf(g)) && `${teamName(g.team_a, roundOf(g))}${lineup(g.players_a, g.team_a, roundOf(g))}`, lineup(g.players_b, g.team_b, roundOf(g)) && `${teamName(g.team_b, roundOf(g))}${lineup(g.players_b, g.team_b, roundOf(g))}`].filter(Boolean).join(' · ');
       return h('li', {},
         h('span', { class: 'game-no muted' }, String(n)),
         fixing === g.id ? h('div', { class: 'grow' }, fixTeams(g, n)) : h('div', { class: 'grow' }, h('b', {}, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}`),
-          !finished(g) && h('span', { class: 'muted small' }, ' · time up'),
+          scoreKnown(g) ? !finished(g) && h('span', { class: 'muted small' }, ' · time up') : h('span', { class: 'muted small' }, ' · incomplete, score unknown'),
           changed && h('div', { class: 'muted small' }, changed)),
-        h('span', { class: 'game-score' }, input('score_a', `Game ${n} ${teamName(g.team_a, roundOf(g))} score`), '–', input('score_b', `Game ${n} ${teamName(g.team_b, roundOf(g))} score`)),
+        h('span', { class: 'game-score' }, ea, '–', eb),
         tagClosed(ses.played_on) ? h('button', { class: 'ghost sm', disabled: !tags?.get(g.id) && g.video_kind !== 'upload', title: 'Only the super tags; you can see the tags and the video',
           onclick: () => { taggingGame = g.id; render(); } }, tags?.get(g.id) ? `View tags (${tags.get(g.id)})` : g.video_kind === 'upload' ? 'Watch' : 'Not tagged') :
         h('button', { class: 'ghost sm', title: 'Tag who did what from the game\'s video', onclick: () => {
@@ -305,7 +315,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
         me.role === 'super' && fixing !== g.id && h('button', { class: 'ghost sm', title: 'Fix which two teams played this game', 'aria-label': `Fix game ${n}'s teams`,
           onclick: () => { fixing = g.id; paintList(); } }, 'Teams'),
         h('button', { class: 'ghost sm', 'aria-label': `Delete game ${n}`, onclick: async () => {
-          if (!await ask(`Delete game ${n}?`, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${g.score_a}–${g.score_b}${tags?.get(g.id) ? `, and its ${tags.get(g.id)} tagged rallies` : ''}. This can't be undone.`, 'Delete game')) return;
+          if (!await ask(`Delete game ${n}?`, `${teamName(g.team_a, roundOf(g))} v ${teamName(g.team_b, roundOf(g))}, ${scoreText(g.score_a, g.score_b)}${tags?.get(g.id) ? `, and its ${tags.get(g.id)} tagged rallies` : ''}. This can't be undone.`, 'Delete game')) return;
           try { await q(sb.from('games').delete().eq('id', g.id)); games = games.filter(x => x !== g); paintTeams(); paintEntry(); paintList(); }
           catch (e) { toast(e.message); }
         } }, 'Delete'));
@@ -313,7 +323,7 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
   };
   // Once the day is ended the entry box gives way to the final standings: most wins, then point difference.
   const standings = (n = cur) => teamsIn(n).map((_, i) => {
-    const k = i + 1, mine = inRound(n).filter(g => g.team_a === k || g.team_b === k);
+    const k = i + 1, mine = inRound(n).filter(g => (g.team_a === k || g.team_b === k) && scoreKnown(g));
     const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
     const won = mine.filter(g => (g.team_a === k ? g.score_a > g.score_b : g.score_b > g.score_a)).length;
     return { k, won, lost: mine.length - won, diff };
@@ -569,6 +579,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   const counted = () => end == null ? rallies : rallies.filter(r => r.seq <= end);
   // Where the tags first reach the saved score, if more rallies were tagged after it: the likely end of the game.
   const endsAt = () => {
+    if (!scoreKnown(g)) return null;
     const s = { a: 0, b: 0 };
     for (const [i, r] of rallies.entries()) {
       if (r.won) s[r.won]++;
@@ -585,10 +596,12 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const ts = teamSummary(rallies, g), done = rallies.filter(r => r.won).length;
     const line = k => `${name[k]}: side-out ${ts[k].sideOutRate == null ? '—' : `${Math.round(ts[k].sideOutRate * 100)}%`}, ${ts[k].aces} aces, ${ts[k].kills} kills, ${ts[k].stuffs} blocks, ${ts[k].errors} errors`;
     // Only once the tags cover as many points as the saved score.
-    const off = done >= g.score_a + g.score_b && (s.a !== g.score_a || s.b !== g.score_b);
+    // An incomplete game has no saved score to check against.
+    const off = scoreKnown(g) && done >= g.score_a + g.score_b && (s.a !== g.score_a || s.b !== g.score_b);
     const after = end == null ? 0 : rallies.filter(r => r.seq > end).length;
     const at = off && end == null && hasEnd && !ro ? endsAt() : null;
     summary.replaceChildren(...(done ? [h('div', {}, line('a')), h('div', {}, line('b'))] : []),
+      ...(!scoreKnown(g) ? [h('div', { class: 'muted' }, 'Incomplete game: only part of it was filmed and the score is unknown. Its tags count for player stats; the game is left out of results.')] : []),
       ...(off ? [h('div', { class: 'warn' }, `Tags give ${s.a}–${s.b}; the saved score is ${g.score_a}–${g.score_b}.`,
         at != null ? [` The tags reach ${g.score_a}–${g.score_b} after rally ${at + 1}. `,
           h('button', { class: 'ghost sm', onclick: () => setEnd(rallies[at].seq) }, `Game ended after rally ${at + 1}`)]
@@ -989,7 +1002,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     paintFilter();
     const mine = t => only == null || t.p === only;
     const shown = [...rallies.entries()].reverse().filter(([, r]) => only == null || r.touches.some(mine));
-    const markable = hasEnd && !ro && end == null && rallies.filter(r => r.won).length > g.score_a + g.score_b;
+    const markable = hasEnd && !ro && end == null && scoreKnown(g) && rallies.filter(r => r.won).length > g.score_a + g.score_b;
     const divider = h('li', { class: 'end-mark muted small' }, 'Game ended here · rallies above were played on after it');
     list.replaceChildren(...shown.flatMap(([i, r]) => [...(end != null && r.seq === end && i < rallies.length - 1 ? [divider] : []), h('li', { class: end != null && r.seq > end ? 'after-end' : null },
       h('div', { class: 'rally-head' },
@@ -1052,8 +1065,8 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
   // Tagged the wrong game: move these tags (and the video) to the right one. If it has tags too, the two swap.
   const others = day.games.filter(x => x.id !== g.id);
   const moveTags = async () => {
-    const gameLabel = x => `Game ${day.games.indexOf(x) + 1} · ${tname(x.session_id, x.team_a, roundOf(x))} v ${tname(x.session_id, x.team_b, roundOf(x))} (${x.score_a}–${x.score_b})`;
-    const to = await choose('Move these tags to another game', `They're on Game ${n} (${g.score_a}–${g.score_b}). Pick the game they belong to. If it has tags too, the two games swap tags.`,
+    const gameLabel = x => `Game ${day.games.indexOf(x) + 1} · ${tname(x.session_id, x.team_a, roundOf(x))} v ${tname(x.session_id, x.team_b, roundOf(x))} (${scoreText(x.score_a, x.score_b)})`;
+    const to = await choose('Move these tags to another game', `They're on Game ${n} (${scoreText(g.score_a, g.score_b)}). Pick the game they belong to. If it has tags too, the two games swap tags.`,
       others.map(x => [x, gameLabel(x) + (day.tags?.get(x.id) ? ' · has tags, swap' : '')]));
     if (!to) return;
     await save();
@@ -1084,7 +1097,7 @@ async function tagView(g, n, pname, tname, back, ro = false, day = { games: [g],
     const btn = h('button', { class: 'sm' }, 'Done tagging');
     btn.onclick = async () => {
       if (!rallies.some(r => r.won)) return toast('Tag some rallies first');
-      const t = score(counted()), off = t.a !== g.score_a || t.b !== g.score_b;
+      const t = score(counted()), off = scoreKnown(g) && (t.a !== g.score_a || t.b !== g.score_b);
       if (!await ask(`Done tagging game ${n}?`, `${off ? `The tags give ${t.a}–${t.b}; the saved score is ${g.score_a}–${g.score_b}. ` : ''}Everyone who can watch this game gets an email that its stats are up. It goes once, so mark it when the tags are final.`, 'Done, send it')) return;
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
