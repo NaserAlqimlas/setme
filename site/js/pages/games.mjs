@@ -239,12 +239,31 @@ function gameView(g, back) {
     // ----- rallies -----
     const done = rallies.filter(r => r.won);
     const lastTouch = r => { const t = r.touches.at(-1); return t ? `${name.get(t.p) ?? 'Someone'} ${ACTIONS[t.a]?.label.toLowerCase() ?? t.a} ${gradeLabel(t.a, t.g).toLowerCase()}` : ''; };
-    const rallyCard = done.length ? h('div', { class: 'card' }, h('h3', {}, 'Rallies'),
-      h('p', { class: 'muted small' }, video ? 'Tap a rally to watch it.' : 'How each point ended.'),
-      h('ol', { class: 'gd-rallies' }, done.map((r, i) => h('li', {}, h('button', { type: 'button', disabled: !video || r.t == null, onclick: () => seek(r.t) },
-        h('span', { class: 'muted small' }, `${i + 1}`), r.t != null && video ? h('span', { class: 'small' }, `▶ ${clock(r.t)}`) : null,
-        h('span', { class: 'chip plain point', style: `--tc:${color(side[r.won].k)}` }, side[r.won].name),
-        h('span', { class: 'small muted grow' }, lastTouch(r))))))) : null;
+    // Pick a player to list only their touches, each one a jump into the video.
+    let only = null;
+    const rallyList = h('ol', { class: 'gd-rallies' }), rallyHint = h('p', { class: 'muted small' });
+    const rallyRow = (i, t, body) => h('li', {}, h('button', { type: 'button', disabled: !video || t == null, onclick: () => seek(t) },
+      h('span', { class: 'muted small' }, `${i + 1}`), t != null && video ? h('span', { class: 'small' }, `▶ ${clock(t)}`) : null, ...body));
+    const paintRallies = () => {
+      if (only == null) {
+        rallyHint.textContent = video ? 'Tap a rally to watch it.' : 'How each point ended.';
+        return fill(rallyList, done.map((r, i) => rallyRow(i, r.t, [
+          h('span', { class: 'chip plain point', style: `--tc:${color(side[r.won].k)}` }, side[r.won].name),
+          h('span', { class: 'small muted grow' }, lastTouch(r))])));
+      }
+      const rows = done.flatMap((r, i) => r.touches.filter(t => t.p === only).map(t => rallyRow(i, t.t ?? r.t, [
+        h('span', { class: 'small grow' }, `${ACTIONS[t.a]?.label ?? t.a} ${gradeLabel(t.a, t.g).toLowerCase()}`),
+        h('span', { class: 'chip plain point', style: `--tc:${color(side[r.won].k)}` }, side[r.won].name)])));
+      const nr = done.filter(r => r.touches.some(t => t.p === only)).length, first = (name.get(only) ?? 'They').split(' ')[0];
+      rallyHint.textContent = rows.length ? `${first}: ${rows.length} touch${rows.length === 1 ? '' : 'es'} in ${nr} rall${nr === 1 ? 'y' : 'ies'}.${video ? ' Tap one to watch it.' : ''}` : '';
+      fill(rallyList, rows.length ? rows : h('li', { class: 'muted small' }, `${first} has no touches tagged in this game.`));
+    };
+    const picker = h('select', { 'aria-label': 'Show one player\'s touches', onchange: e => { only = e.target.value ? Number(e.target.value) : null; paintRallies(); } },
+      h('option', { value: '' }, 'Everyone'),
+      [g.a, g.b].map(t => h('optgroup', { label: t.name }, [...t.players].sort((x, y) => x.name.localeCompare(y.name)).map(p => h('option', { value: p.id }, p.name)))));
+    if (done.length) paintRallies();
+    const rallyCard = done.length ? h('div', { class: 'card' }, h('div', { class: 'rally-list-head' }, h('h3', {}, 'Rallies'), h('span', { class: 'rally-filter' }, picker)),
+      rallyHint, rallyList) : null;
     fill(left, videoCard, rallyCard);
 
     // ----- the numbers -----
