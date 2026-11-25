@@ -20,7 +20,7 @@ export function buildDays({ sessions, rounds = [], games, players, tagged = new 
       const nameOf = (round, k) => {
         if (!names.has(round)) {
           const t = teamsOf(s, rounds, round);
-          names.set(round, teamNames((t?.teams ?? []).map(team => (Array.isArray(team) ? team : []).map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? [])));
+          names.set(round, teamNames((t?.teams ?? []).map(team => (Array.isArray(team) ? team : []).map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []), t?.captains));
         }
         return names.get(round)[k - 1] ?? `Team ${k}`;
       };

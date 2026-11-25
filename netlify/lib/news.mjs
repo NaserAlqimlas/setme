@@ -26,7 +26,7 @@ export async function tellClub({ kind, gameId, origin, skip = null }) {
   let game = null;
   try {
     const t = teamsOf(s, rounds, g.round ?? 1), pl = new Map(players.map(p => [p.id, p]));
-    const names = teamNames((t?.teams ?? []).map(ids => (Array.isArray(ids) ? ids : []).map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []));
+    const names = teamNames((t?.teams ?? []).map(ids => (Array.isArray(ids) ? ids : []).map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []), t?.captains);
     game = { a: names[g.team_a - 1] ?? `Team ${g.team_a}`, b: names[g.team_b - 1] ?? `Team ${g.team_b}`, sa: g.score_a, sb: g.score_b };
   } catch { /* the label alone */ }
   const msg = clubEmail({ kind, label, game, link: `${origin}/#games`, settings: `${origin}/#settings` });

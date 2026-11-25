@@ -117,7 +117,7 @@ export async function lineupPage() {
         h('button', { class: 'sm', onclick: () => share() }, 'Share image')),
       h('div', { class: 'team-grid' }, teams.map((t, k) => h('article', { class: `team${k === mineAt ? ' mine' : ''}`, style: `--tc: ${TEAM_COLORS[k % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, tn[k])),
-        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), setterBadge(p))))))),
+        h('ul', {}, t.players.map(p => h('li', {}, avatar(p.name, 28), h('span', { class: 'pname' }, p.id === me.player_id ? h('b', {}, p.name) : p.name), p.captain && h('span', { class: 'badge captain', title: 'Captain' }, 'C'), setterBadge(p))))))),
       d.games.length > 0 && h('div', { class: 'card', style: 'margin-top:12px' }, h('h3', {}, d.ended ? 'Final scores' : d.ended === false ? 'Scores so far' : 'Scores'),
         roundsWithGames.flatMap(n => [cur > 1 && h('h4', { class: 'round-head' }, `Round ${n}`),
           h('ol', { class: 'game-list' }, d.games.filter(g => (g.round ?? 1) === n).map(g => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${nameIn(g.team_a, n)} v ${nameIn(g.team_b, n)}`)),

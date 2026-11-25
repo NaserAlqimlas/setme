@@ -447,9 +447,13 @@ const clamp = v => Math.min(1, Math.max(0, v));
 // teams: [[player, ...], ...] with name and setting (M main, B backup, N not a setter); allGame: ids of setters who set
 // all game (a player's own allGame flag counts too). More than one setter: the all-game setter, then main, then backup,
 // then whoever is listed first. Teams that would share a name keep their numbers.
-export function teamNames(teams, allGame = new Set()) {
+// Each team is named after its captain ("Sara's Team"): the one picked (captains: a player id or null per team, in
+// team order, as saved on the game day; or a player marked captain: true, as lineup_names sends them), else its
+// setter. A captain who has moved to another team doesn't name this one. Two teams with the same name: Team 1, Team 2.
+export function teamNames(teams, allGame = new Set(), captains = null) {
   const rank = p => !p || (p.setting !== 'M' && p.setting !== 'B') ? null : p.allGame || allGame.has(p.id) ? 0 : p.setting === 'M' ? 1 : 2;
-  const caps = teams.map(t => (t ?? []).filter(p => rank(p) != null).sort((a, b) => rank(a) - rank(b))[0]?.name?.trim() || null);
+  const picked = (t, k) => { const id = Array.isArray(captains) ? captains[k] : null; return (id != null && t.find(p => p?.id === Number(id))) || t.find(p => p?.captain) || null; };
+  const caps = teams.map((t, k) => picked(t ?? [], k)?.name?.trim() || (t ?? []).filter(p => rank(p) != null).sort((a, b) => rank(a) - rank(b))[0]?.name?.trim() || null);
   return caps.map((c, k) => c && caps.filter(x => x === c).length === 1 ? `${c}'s Team` : `Team ${k + 1}`);
 }
 
