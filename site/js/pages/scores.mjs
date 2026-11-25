@@ -26,7 +26,7 @@ let scoresEditNext = false;
 // (the session's own teams); earlier ones come from rounds (rows: that table, null before rounds.sql).
 function roundsOf(ses, rows) {
   const kept = (rows ?? []).filter(r => r.session_id === ses.id).sort((a, b) => a.n - b.n);
-  return [...kept.map(r => ({ ...r, current: false })), { n: kept.length + 1, teams: ses.teams, raters: ses.raters, all_game: ses.all_game, source: ses.source, current: true }];
+  return [...kept.map(r => ({ ...r, current: false })), { n: kept.length + 1, teams: ses.teams, raters: ses.raters, all_game: ses.all_game, source: ses.source, captains: ses.captains ?? null, current: true }];
 }
 // Sessions with their earlier rounds' teams attached (earlier), so attendance counts everyone who was on a team.
 export const withEarlier = (sessions, rows) => sessions.map(s => ({ ...s, earlier: roundsOf(s, rows).filter(r => !r.current).map(r => r.teams) }));
@@ -39,7 +39,7 @@ function sessionTeamNamer(sessions, players, rounds) {
     const s = byS.get(sid);
     const rs = s ? roundsOf(s, rounds) : [];
     const r = rs.find(x => x.n === round) ?? rs.at(-1);
-    const names = r && Array.isArray(r.teams) ? teamNames(r.teams.map(t => (Array.isArray(t) ? t : []).map(id => byId.get(id)).filter(Boolean)), new Set(r.all_game ?? [])) : [];
+    const names = r && Array.isArray(r.teams) ? teamNames(r.teams.map(t => (Array.isArray(t) ? t : []).map(id => byId.get(id)).filter(Boolean)), new Set(r.all_game ?? []), r.captains) : [];
     return names[k - 1] ?? `Team ${k}`;
   };
 }
@@ -137,6 +137,22 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
     const diff = mine.reduce((a, g) => a + (g.team_a === k ? g.score_a - g.score_b : g.score_b - g.score_a), 0);
     return mine.length ? `${won}–${mine.length - won} · ${diff > 0 ? '+' : ''}${diff}` : 'No games yet';
   };
+  // Captains (captains.sql): one per team, saved straight away; the team is named after them everywhere.
+  const captainOf = i => Array.isArray(ses.captains) ? ses.captains[i] ?? null : null;
+  const setCaptain = async (i, id) => {
+    const before = ses.captains ?? null;
+    ses.captains = ses.teams.map((_, j) => j === i ? id : captainOf(j));
+    try { await q(sb.from('sessions').update({ captains: ses.captains }).eq('id', ses.id)); toast(id ? `${pname.get(id)} is captain` : 'Captain cleared: named after its setter'); }
+    catch (e) { ses.captains = before; toast(/captains/.test(e.message) ? 'Captains need the database upgrade first: run supabase/captains.sql in the Supabase SQL Editor.' : e.message); }
+    paintTeams(); paintEntry(); paintList();
+  };
+  const captainPick = (ids, i) => {
+    const now = captainOf(i), sel = h('select', { class: 'captain-pick', 'aria-label': `Captain of ${teamName(i + 1)}` },
+      h('option', { value: '' }, 'Captain: none'),
+      ids.map(id => h('option', { value: id, selected: id === now }, `Captain: ${pname.get(id) ?? 'Removed player'}`)));
+    sel.onchange = () => setCaptain(i, sel.value ? Number(sel.value) : null);
+    return sel;
+  };
   const paintTeams = () => {
     const active = players.filter(p => p.active);
     const canRound = hasRounds && !editing && !ses.ended && inRound(cur).length > 0;
@@ -167,7 +183,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
         : [avatar(pname.get(id) ?? '?', 28), h('span', { class: 'pname' }, pname.get(id) ?? 'Removed player')];
       return h('article', { class: `team${picked?.[0] === i ? ' from' : ''}`, style: `--tc: ${TEAM_COLORS[i % TEAM_COLORS.length]}` },
         h('header', {}, h('h4', {}, teamName(k)), h('span', { class: 'muted small' }, record(k))),
-        h('ul', {}, ids.map(id => h('li', {}, who(id),
+        captainPick(ids, i),
+        h('ul', {}, ids.map(id => h('li', {}, who(id), id === captainOf(i) && h('span', { class: 'badge captain', title: 'Captain' }, 'C'),
           editing && h('button', { type: 'button', class: 'ghost sm', 'aria-label': `Remove ${pname.get(id)}`,
             onclick: () => ids.length > 1 ? saveTeams(ses.teams.map((t, j) => j === i ? t.filter(x => x !== id) : t)) : toast('A team needs at least one player') }, '×')))),
         add);
@@ -190,6 +207,8 @@ async function gamesView(sessions, players, pname, tname, roundRows) {
       const args = { p_session: ses.id, p_teams: ses.teams, p_raters: ses.raters ?? null, p_all_game: ses.all_game ?? [], p_source: ses.source ?? null };
       // The new round keeps who isn't setting; before nosetters.sql start_round has no p_no_set.
       await q(sb.rpc('start_round', { ...args, p_no_set: noSet })).catch(e => /p_no_set|function/i.test(e.message) ? q(sb.rpc('start_round', args)) : Promise.reject(e));
+      // Same teams, same captains (a new round starts with none).
+      if (Array.isArray(ses.captains)) await q(sb.from('sessions').update({ captains: ses.captains }).eq('id', ses.id)).catch(() => {});
       toast(`Round ${cur + 1} started. Swap players, then tap Done.`);
       scoresEditNext = true; render();
     } catch (e) { toast(e.message); }

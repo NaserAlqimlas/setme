@@ -36,7 +36,7 @@ async function fixOf(g) {
   if (!s) return null;
   const t = teamsOf(s, rounds, g.round ?? 1), pl = new Map(players.map(p => [p.id, p]));
   const teams = (t?.teams ?? []).map(team => (Array.isArray(team) ? team : []));
-  const names = teamNames(teams.map(ids => ids.map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []));
+  const names = teamNames(teams.map(ids => ids.map(id => pl.get(id)).filter(Boolean)), new Set(t?.all_game ?? []), t?.captains);
   return { teams: teams.map((ids, i) => ({ k: i + 1, name: names[i], ids })), raters: t?.raters ?? null, all_game: t?.all_game ?? [], no_set: t?.no_set ?? [],
     middles: players.filter(p => p.setting === 'M').map(p => p.id) };
 }
@@ -61,7 +61,7 @@ export default async (req) => {
       const ids = merged.map(g => g.id);
       const [sessions, rounds, players, rallies, jobs, unrecorded, marks] = await Promise.all([
         rest(`sessions?id=in.(${sids.join(',')})&select=*`),
-        rest(`rounds?session_id=in.(${sids.join(',')})&select=session_id,n,teams,all_game`).catch(() => []),
+        rest(`rounds?session_id=in.(${sids.join(',')})&select=*`).catch(() => []),
         allRows('players?select=id,name,setting&order=id'),
         allRows(`rallies?game_id=in.(${ids.join(',')})&won_by=not.is.null&select=game_id&order=game_id`).catch(() => []),
         rest(`video_jobs?game_id=in.(${ids.join(',')})&status=eq.done&viewing_key=not.is.null&select=id,game_id`).catch(() => []),

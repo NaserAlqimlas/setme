@@ -1081,3 +1081,7 @@ table.club-avg td, table.club-avg th { white-space: nowrap; }
 table.club-avg tr.club-row td { background: var(--surface-2); font-weight: 600; }
 table.club-avg td.band-above { color: var(--ok); font-weight: 600; }
 table.club-avg td.band-below { color: var(--up); font-weight: 600; }
+
+/* Team captains (captains.sql): the pick under each team's name, and a C by the captain. */
+.captain-pick { width: 100%; margin: 8px 0 4px; font-size: .85rem; padding: 5px 8px; }
+.badge.captain { background: color-mix(in srgb, var(--tc, var(--primary)) 18%, var(--surface)); color: var(--fg); border-color: var(--tc, var(--primary)); font-weight: 800; justify-content: center; min-width: 1.6em; padding: 2px 6px; }
