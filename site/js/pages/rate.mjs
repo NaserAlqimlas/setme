@@ -102,6 +102,10 @@ export async function ratePage() {
     // The unknown column (rating_unknown.sql) tells don't know apart from not answered yet.
     q(sb.from('ratings').select('unknown').limit(1)).then(() => true, () => false),
   ]);
+  // Private notes (rating_notes.sql): organizers and the super, each their own; the database shows nobody else's.
+  // null: not set up yet, or not an organizer.
+  const noteRows = ['organizer', 'super'].includes(me.role) ? await q(sb.from('rating_notes').select('player_id,body')).catch(() => null) : null;
+  const notes = noteRows && new Map(noteRows.map(r => [r.player_id, r.body]));
   const byPlayer = new Map(mine.map(r => [r.player_id, r]));
   const asked = p => RATED.filter(s => forPlayer(s, p));
   const unknownOf = r => r?.unknown ?? [];
@@ -185,6 +189,32 @@ export async function ratePage() {
       if (rowEl) { rowEl.classList.remove('just-saved'); void rowEl.offsetWidth; rowEl.classList.add('just-saved'); }
     } catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
+  // Your private note on a player: folded under the card, saved as you type (and when you leave the box). Empty deletes it.
+  const noteBox = p => {
+    const ta = h('textarea', { rows: 3, maxlength: 4000, class: 'note-in', placeholder: 'Only you can see this.', 'aria-label': `Your private note on ${p.name}` });
+    ta.value = notes.get(p.id) ?? '';
+    const status = h('span', { class: 'muted small', role: 'status' });
+    const peek = h('span', { class: 'muted small note-peek' });
+    const paintPeek = () => { const b = notes.get(p.id); peek.textContent = b ? b.split('\n')[0] : ''; };
+    let timer = null;
+    const flush = async () => {
+      clearTimeout(timer);
+      const body = ta.value.trim();
+      if (body === (notes.get(p.id) ?? '')) return;
+      status.textContent = 'Saving…';
+      try {
+        if (body) await q(sb.from('rating_notes').upsert({ author_id: me.id, player_id: p.id, body }));
+        else await q(sb.from('rating_notes').delete().eq('author_id', me.id).eq('player_id', p.id));
+        if (body) notes.set(p.id, body); else notes.delete(p.id);
+        status.textContent = body ? 'Saved' : 'Note deleted'; paintPeek();
+      } catch (e) { status.textContent = ''; toast(`Note not saved: ${e.message}`); }
+    };
+    ta.oninput = () => { status.textContent = ''; clearTimeout(timer); timer = setTimeout(flush, 900); };
+    ta.onblur = flush;
+    paintPeek();
+    return h('details', { class: 'rate-note' }, h('summary', {}, h('span', {}, '🔒 Private note'), peek),
+      ta, h('div', { class: 'row', style: 'justify-content:space-between' }, h('span', { class: 'muted small' }, 'Only you can see your notes, not other organizers or the player.'), status));
+  };
   // Totals follow the doc's rule: U if any skill is unknown.
   const totals = new Map();
   const card = p => {
@@ -213,7 +243,7 @@ export async function ratePage() {
         row.append(seg(RATING_OPTIONS, shown(r, s), v => save(p.id, s, v, row), `${p.name} ${LABEL[s]}`));
         return row;
       }),
-      totalEl);
+      totalEl, notes && noteBox(p));
   };
   // Still to rate = not every skill answered, same as the progress count. A card stays put after a tap until the list is redrawn.
   const shownList = () => players.filter(p => (!onlyPlaying || p.playing) && (!onlyUnrated || !done(p)) && (!onlyLook || reasons(p).length) && p.name.toLowerCase().includes(search))

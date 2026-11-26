@@ -1085,3 +1085,10 @@ table.club-avg td.band-below { color: var(--up); font-weight: 600; }
 /* Team captains (captains.sql): the pick under each team's name, and a C by the captain. */
 .captain-pick { width: 100%; margin: 8px 0 4px; font-size: .85rem; padding: 5px 8px; }
 .badge.captain { background: color-mix(in srgb, var(--tc, var(--primary)) 18%, var(--surface)); color: var(--fg); border-color: var(--tc, var(--primary)); font-weight: 800; justify-content: center; min-width: 1.6em; padding: 2px 6px; }
+
+/* Private notes on the Rate page (rating_notes.sql): folded under each card. */
+.rate-note { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.rate-note summary { display: flex; gap: 8px; align-items: baseline; cursor: pointer; font-size: .88rem; font-weight: 600; min-width: 0; }
+.rate-note .note-peek { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.rate-note[open] .note-peek { display: none; }
+.rate-note .note-in { width: 100%; margin: 8px 0 4px; resize: vertical; font: inherit; }
