@@ -39,7 +39,8 @@ const GUESTS = /\s*\+\s*(\d{1,2})\s*$/;
 // Everyone after a "Waitlist" line goes to waitlist instead of matched. Lines before the first name that aren't
 // numbered, and lines about the date, time or place, are skipped rather than reported as unrecognized.
 // host: the player bringing the guests (null for a bare "+1").
-export function matchPasted(text, players, aliases = []) {
+// allNames: every line is a name (a typed list of people, not a group message), so none is skipped as a header.
+export function matchPasted(text, players, aliases = [], { allNames = false } = {}) {
   const roster = players.map(p => ({ p, key: compact(p.name) })).filter(r => r.key);
   const byId = new Map(players.map(p => [p.id, p]));
   const alias = new Map(aliases.filter(a => byId.has(a.player_id)).map(a => [a.alias, { p: byId.get(a.player_id), key: a.alias }]));
@@ -63,7 +64,7 @@ export function matchPasted(text, players, aliases = []) {
     }
     hit ??= lookup(key, roster);
     if (!hit) {
-      if ((!matched.length && !waitlist.length && !numbered) || INFO.test(line)) skipped.push(line);
+      if ((!allNames && !matched.length && !waitlist.length && !numbered) || INFO.test(line)) skipped.push(line);
       else unmatched.push(line);
       continue;
     }

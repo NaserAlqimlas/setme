@@ -8,6 +8,8 @@ import { closestPlayers, compact, matchPasted } from '../paste.mjs';
 let playingUndo = null;
 // Playing only: kept while the app is open, so it stays on after a paste or Undo redraws the page.
 let onlyPlaying = false;
+// Core members, plus ones, or everyone (plus_ones.sql); kept while the app is open.
+let memberView = 'all';
 export async function playersPage() {
   const [players, savedAliases] = await Promise.all([
     q(sb.from('players').select('*').order('name')),
@@ -15,8 +17,12 @@ export async function playersPage() {
   ]);
   // Names matched by hand: remembered ones (aliases.sql), plus this visit's when they can't be remembered.
   const aliases = [...(savedAliases ?? [])];
+  // Plus ones (plus_ones.sql): players who aren't core members, and who brought them. Off until the column exists.
+  const hasPlus = players.length > 0 && 'plus_one' in players[0];
+  const byId = new Map(players.map(p => [p.id, p]));
+  const hostName = p => p.brought_by != null ? byId.get(p.brought_by)?.name ?? null : null;
   const update = async (p, patch) => {
-    try { Object.assign(p, await q(sb.from('players').update(patch).eq('id', p.id).select().single())); toast('Saved'); count(); }
+    try { Object.assign(p, await q(sb.from('players').update(patch).eq('id', p.id).select().single())); toast('Saved'); count(); paintViews(); }
     catch (e) { toast(`Not saved: ${e.message}`); return false; }
   };
   const countEl = h('span', { class: 'stat' });
@@ -35,7 +41,9 @@ export async function playersPage() {
     const toggleEdit = () => { editingId = open ? null : p.id; draw(); if (!open) grid.querySelector('.roster-row.open input[aria-label="Name"]')?.focus(); };
     const head = h('div', { class: 'roster-head' },
       avatar(p.name),
-      h('span', { class: 'roster-name' }, h('b', {}, p.name), setter, p.gender === 'U' && h('span', { class: 'muted small' }, ' · gender not set')),
+      h('span', { class: 'roster-name' }, h('b', {}, p.name), setter, hasPlus && p.plus_one && h('span', { class: 'badge plus-one', title: 'Plus one: not a core member' }, '+1'),
+        hasPlus && p.plus_one && hostName(p) && h('span', { class: 'muted small' }, ` of ${hostName(p)}`),
+        p.gender === 'U' && h('span', { class: 'muted small' }, ' · gender not set')),
       toggle('Playing', p.playing, v => update(p, { playing: v })),
       h('button', { type: 'button', class: 'ghost sm', 'aria-expanded': String(open), 'aria-label': `${open ? 'Close' : 'Edit'} ${p.name}`, onclick: toggleEdit }, open ? 'Done' : 'Edit'));
     if (!open) { el.append(head); return el; }
@@ -52,7 +60,10 @@ export async function playersPage() {
         h('label', { class: 'field' }, h('span', {}, 'Name'), nameIn),
         h('div', { class: 'fields' },
           h('div', { class: 'field' }, h('span', {}, 'Gender'), seg([['M', 'M'], ['F', 'F'], ['U', 'U', 'u']], p.gender, v => update(p, { gender: v }), `${p.name} gender`)),
-          h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, async v => { await update(p, { setting: v }); draw(); }, `${p.name} setter role`))),
+          h('div', { class: 'field' }, h('span', {}, 'Setter'), seg([['M', 'Main'], ['B', 'Backup'], ['N', 'No']], p.setting, async v => { await update(p, { setting: v }); draw(); }, `${p.name} setter role`)),
+          hasPlus && h('div', { class: 'field' }, h('span', {}, 'Member'), seg([['core', 'Core member'], ['plus', 'Plus one']], p.plus_one ? 'plus' : 'core',
+            async v => { await update(p, v === 'plus' ? { plus_one: true } : { plus_one: false, brought_by: null }); draw(); }, `${p.name} membership`)),
+          hasPlus && p.plus_one && h('label', { class: 'field' }, h('span', {}, 'Brought by'), hostPick(p.brought_by, `Who brought ${p.name}`, v => update(p, { brought_by: v }).then(draw), p.id))),
         h('div', { class: 'row' },
           // Anchor players: every rater rates them first (only once the club upgrade adds the column).
           me.role === 'super' && 'anchor' in p && toggle('Anchor', p.anchor, v => update(p, { anchor: v })),
@@ -68,14 +79,29 @@ export async function playersPage() {
       players.splice(players.indexOf(p), 1); draw(); count(); toast(`${p.name} deleted`);
     } catch (e) { toast(e.message); }
   };
+  // Who brought a plus one: a core member (or nobody). onpick(id or null).
+  function hostPick(value, label, onpick, self = null) {
+    const sel = h('select', { 'aria-label': label }, h('option', { value: '' }, 'Nobody / not sure'),
+      players.filter(x => x.active && !x.plus_one && x.id !== self).map(x => h('option', { value: x.id, selected: x.id === value }, x.name)));
+    sel.onchange = () => onpick(sel.value ? Number(sel.value) : null);
+    return sel;
+  }
+  const inView = p => memberView === 'all' || (memberView === 'plus') === !!p.plus_one;
+  const viewSlot = h('span');
+  function paintViews() {
+    if (!hasPlus) return;
+    const active = players.filter(p => p.active), plus = active.filter(p => p.plus_one).length;
+    viewSlot.replaceChildren(seg([['all', `All (${active.length})`], ['core', `Core members (${active.length - plus})`], ['plus', `Plus ones (${plus})`]],
+      memberView, v => { memberView = v; draw(); }, 'Show'));
+  }
   const draw = () => {
     // Unticking someone while Playing only is on leaves them listed until the next search or filter change,
     // so a mis-tap can be ticked again.
-    const list = players.filter(p => p.name.toLowerCase().includes(search) && (!onlyPlaying || (p.playing && p.active)));
+    const list = players.filter(p => p.name.toLowerCase().includes(search) && (!onlyPlaying || (p.playing && p.active)) && inView(p));
     const none = onlyPlaying && !search ? 'Nobody is ticked as playing. Paste the group\'s list above, or turn off Playing only to tick players.' : 'No players match.';
     grid.replaceChildren(...(list.length ? list.map(card) : [h('p', { class: 'empty' }, none)]));
   };
-  draw();
+  draw(); paintViews();
   const playingChip = filterChip('Playing only', v => { onlyPlaying = v; draw(); });
   playingChip.setAttribute('aria-pressed', String(onlyPlaying));
 
@@ -163,6 +189,64 @@ export async function playersPage() {
     return h('div', { class: 'unknown-row' }, h('span', { class: 'chip plain off' }, line), sel);
   };
 
+  // Add plus ones from a list: names that match a player get marked plus ones; the rest can be added as new players
+  // marked plus ones (the super only: only they add players), matched to someone after all, or left out. Nothing
+  // changes until Save. Brought by, when picked, goes on everyone in the list.
+  const plusBox = h('textarea', { rows: 4, placeholder: 'Paste or type the plus ones, one per line…', 'aria-label': 'Plus ones to add' });
+  const plusResult = h('div');
+  const canAdd = me.role === 'super';
+  const choice = new Map();   // unrecognized line -> 'new' | 'skip' | player id
+  let plusHost = null;
+  const checkPlus = () => {
+    const { matched, waitlist, unmatched, guests } = matchPasted(plusBox.value, players, aliases, { allNames: true });
+    const seen = new Set(), found = [...matched, ...waitlist].filter(m => !seen.has(m.player.id) && seen.add(m.player.id));
+    const pickOf = line => choice.get(line) ?? (canAdd ? 'new' : 'skip');
+    // Unrecognized names matched to someone after all count as found.
+    for (const line of unmatched) { const v = pickOf(line); if (typeof v === 'number' && !seen.has(v)) { seen.add(v); found.push({ line, player: byId.get(v) }); } }
+    if (!found.length && !unmatched.length) return plusResult.replaceChildren();
+    const flipping = found.filter(m => !m.player.plus_one), already = found.filter(m => m.player.plus_one);
+    const fresh = unmatched.filter(l => pickOf(l) === 'new');
+    const rowFor = line => {
+      const active = players.filter(p => p.active), near = closestPlayers(line, active, 3), v = pickOf(line);
+      const sel = h('select', { 'aria-label': `What to do with ${line}` },
+        canAdd && h('option', { value: 'new', selected: v === 'new' }, 'Add as a new plus one'),
+        h('option', { value: 'skip', selected: v === 'skip' }, 'Leave out'),
+        h('optgroup', { label: 'It\'s actually' }, near.map(p => h('option', { value: p.id, selected: v === p.id }, p.name))),
+        h('optgroup', { label: 'Everyone' }, active.filter(p => !near.includes(p)).map(p => h('option', { value: p.id, selected: v === p.id }, p.name))));
+      sel.onchange = () => { choice.set(line, sel.value === 'new' || sel.value === 'skip' ? sel.value : Number(sel.value)); checkPlus(); };
+      return h('div', { class: 'unknown-row' }, h('span', { class: `chip plain${v === 'skip' ? ' off' : ''}` }, line),
+        sel, near[0] && v === 'new' && h('span', { class: 'muted small' }, `Not ${near[0].name}? Check it isn't the same person.`));
+    };
+    const total = found.length + fresh.length;
+    const save = async () => {
+      const ids = found.map(m => m.player.id).filter(id => id !== plusHost);
+      const host = plusHost != null ? { brought_by: plusHost } : {};
+      try {
+        if (ids.length) await q(sb.from('players').update({ plus_one: true, ...host }).in('id', ids));
+        if (fresh.length) await q(sb.from('players').insert(fresh.map(name => ({ name, tier: 'beginner', plus_one: true, ...host }))));
+        toast(`${total} plus one${total === 1 ? '' : 's'} saved${fresh.length ? `, ${fresh.length} new` : ''}`);
+        memberView = 'plus'; render();
+      } catch (e) { toast(`Not saved: ${e.message}`); }
+    };
+    // A line matched to a differently written name says so ("Sara A → Sara"): a new person can share a first name.
+    const chips = (list, cls = '') => h('div', { class: 'chips' }, list.map(m => h('span', { class: `chip plain ${cls}`, title: m.line },
+      compact(m.line) === compact(m.player.name) ? m.player.name : `${m.line} → ${m.player.name}`)));
+    plusResult.replaceChildren(h('div', {},
+      flipping.length > 0 && h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, `${flipping.length} already player${flipping.length === 1 ? '' : 's'}`), h('span', { class: 'muted' }, ' · marked as plus ones (they\'re core members now)')),
+      flipping.length > 0 && chips(flipping),
+      already.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 6px' }, h('b', {}, `${already.length} already plus one${already.length === 1 ? '' : 's'}`)),
+      already.length > 0 && chips(already, 'off'),
+      unmatched.length > 0 && h('p', { class: 'small', style: 'margin:12px 0 6px' }, h('b', {}, `${unmatched.length} not players yet`),
+        h('span', { class: 'muted' }, canAdd ? ' · added as new players unless you pick otherwise' : ' · only the super can add new players; match them to someone or leave them out')),
+      unmatched.length > 0 && h('div', { class: 'unknown-list' }, unmatched.map(rowFor)),
+      guests.length > 0 && h('p', { class: 'small muted', style: 'margin:12px 0 0' }, `Lines like "${guests[0].line}" are skipped: write each plus one's name instead.`),
+      h('label', { class: 'field', style: 'margin-top:12px' }, h('span', {}, 'Brought by (optional, for everyone in this list)'), hostPick(plusHost, 'Brought by', v => { plusHost = v; })),
+      h('div', { class: 'row', style: 'margin-top:12px' },
+        h('button', { class: 'ball', onclick: save, disabled: !total }, `Save ${total} plus one${total === 1 ? '' : 's'}`),
+        h('span', { class: 'muted small' }, fresh.length ? `${fresh.length} new player${fresh.length === 1 ? '' : 's'}, level beginner until rated.` : ''))));
+  };
+  plusBox.addEventListener('input', checkPlus);
+
   const clearPlaying = async () => {
     if (!await ask('Clear the playing list?', 'Everyone is unticked. You can undo it right after.', 'Clear list')) return;
     const before = players.filter(p => p.playing).map(p => p.id);
@@ -191,12 +275,17 @@ export async function playersPage() {
       h('div', { class: 'card-head' }, h('div', {}, h('h3', {}, 'Paste from WhatsApp'),
         h('p', { class: 'muted small', style: 'margin:2px 0 0' }, 'Paste the group\'s list to tick everyone who\'s playing.'))),
       box, pasteResult),
+    hasPlus && h('details', { class: 'card fold' }, h('summary', {}, h('h3', {}, 'Add plus ones')),
+      h('div', { class: 'fold-body' }, h('p', { class: 'muted small', style: 'margin:0 0 8px' }, 'Plus ones are players who aren\'t core members. They\'re rated, put on teams and counted in stats like everyone else; this list just keeps them apart. Names that are already players get marked as plus ones.'),
+        plusBox, plusResult)),
+    !hasPlus && me.role === 'super' && h('p', { class: 'muted small' }, 'Plus ones need the database upgrade: run supabase/plus_ones.sql in the Supabase SQL Editor.'),
     me.role === 'super' && players.length && 'anchor' in players[0] && h('p', { class: 'muted small' }, h('b', {}, 'Anchor'),
       ': a well-known player every rater rates first. Pick 4 to 6 across the range (strong, average, newer), so a new rater\'s lean is known quickly.'),
     h('div', { class: 'card toolbar' },
       h('input', { type: 'search', placeholder: 'Search players', 'aria-label': 'Search players', oninput: e => { search = e.target.value.trim().toLowerCase(); draw(); } }),
       playingChip,
       h('button', { class: 'ghost', onclick: clearPlaying }, 'Clear playing list')),
+    hasPlus && h('div', { class: 'member-view' }, viewSlot),
     grid,
     h('p', { class: 'muted small', style: 'margin-top:16px' }, 'Main setters: one per team. Backups: at most one per team.'));
 }
