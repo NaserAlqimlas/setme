@@ -1092,3 +1092,7 @@ table.club-avg td.band-below { color: var(--up); font-weight: 600; }
 .rate-note .note-peek { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
 .rate-note[open] .note-peek { display: none; }
 .rate-note .note-in { width: 100%; margin: 8px 0 4px; resize: vertical; font: inherit; }
+
+/* Plus ones (plus_ones.sql) on Players. */
+.badge.plus-one { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, transparent); margin-left: 6px; }
+.member-view { margin: 0 0 12px; overflow-x: auto; }
